@@ -172,6 +172,9 @@ configs:
   Blacklist:
     description: Enter the names of FATEs you want to blacklist, separated by commas (e.g., FATE Name 1, FATE Name 2, FATE Name 3)
     default: ""
+  Discord Webhook URL:
+    description: URL to send notifications to when the script stops or encounters an error. Leave blank to disable.
+    default: ""
 [[End Metadata]]
 --]=====]
 --[[
@@ -264,8 +267,38 @@ This Plugins are Optional and not needed unless you have it enabled in the setti
 local FateFarming = {}
 FateFarming.__index = FateFarming
 
+-- Load .NET assemblies for Discord notifications
+luanet.load_assembly("System")
+local WebClient = luanet.import_type("System.Net.WebClient")
+local Encoding = luanet.import_type("System.Text.Encoding")
+
 function FateFarming:new()
     return setmetatable({}, FateFarming)
+end
+
+local function SendDiscordMessage(message)
+    if DiscordWebhookUrl == nil or DiscordWebhookUrl == "" then
+        return
+    end
+
+    local client = WebClient()
+    client.Encoding = Encoding.UTF8
+    client.Headers:Add("Content-Type", "application/json")
+
+    local payload = string.format('{"content": "%s", "username": "SND Fate Bot"}', message)
+
+    -- Use pcall to prevent script crash if network fails
+    local status, err = pcall(function()
+        client:UploadString(DiscordWebhookUrl, "POST", payload)
+    end)
+    
+    client:Dispose()
+
+    if not status then
+        Dalamud.Log("[FATE] Failed to send Discord notification: " .. tostring(err))
+    else
+        Dalamud.Log("[FATE] Sent Discord notification: " .. message)
+    end
 end
 
 local AcceptNPCFateOrRejectOtherYesno
@@ -3022,7 +3055,9 @@ end
 
 function Ready()
     if SelectedZone == nil or SelectedZone.zoneId == nil then
-        yield("/echo [FATE] ERROR: SelectedZone is not set! Aborting.")
+        local msg = "ERROR: SelectedZone is not set! Aborting."
+        yield("/echo [FATE] " .. msg)
+        SendDiscordMessage(msg)
         StopScript = true
         return
     end
@@ -3077,13 +3112,17 @@ function Ready()
 
     if Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
         if not SelectedZone or not SelectedZone.aetheryteList or not SelectedZone.aetheryteList[1] then
-            yield("/echo [FATE] ERROR: No aetheryte found for selected zone. Cannot teleport. Stopping script.")
+            local msg = "ERROR: No aetheryte found for selected zone. Cannot teleport. Stopping script."
+            yield("/echo [FATE] " .. msg)
+            SendDiscordMessage(msg)
             StopScript = true
             return
         end
         local teleSuccess = TeleportTo(SelectedZone.aetheryteList[1].aetheryteName)
         if teleSuccess == false then
-            yield("/echo [FATE] ERROR: Teleportation failed. Stopping script.")
+            local msg = "ERROR: Teleportation failed. Stopping script."
+            yield("/echo [FATE] " .. msg)
+            SendDiscordMessage(msg)
             StopScript = true
             return
         end
@@ -3711,6 +3750,9 @@ function FateFarming:Run()
     elseif configRotationPlugin == "bossmod" and HasPlugin("BossMod") then
         RotationPlugin = "VBM"
     else
+        local msg = "ERROR: Invalid Rotation Plugin selected or plugin not installed! Aborting."
+        yield("/echo [FATE] " .. msg)
+        SendDiscordMessage(msg)
         StopScript = true
     end
     RSRAoeType                 = "Full" --Options: Cleave/Full/Off
@@ -3781,6 +3823,7 @@ function FateFarming:Run()
     ShouldGrandCompanyTurnIn = Config.Get("Dump extra gear at GC?")
     Echo                     = string.lower(Config.Get("Echo logs"))
     CompanionScriptMode      = Config.Get("Companion Script Mode")
+    DiscordWebhookUrl        = Config.Get("Discord Webhook URL")
 
     -- Plugin warnings
     if Retainers and not HasPlugin("AutoRetainer") then
