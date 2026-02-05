@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.5
+version: 3.1.6
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -182,6 +182,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.6    修正: セルフ修理OFF時でもボーナスバフ中に修理移動するように変更
     -> 3.1.5    Added HW fate definitions
     -> 3.1.4    Modified VBM/BMR combat commands to use IPCs
     -> 3.1.3    Companion script echo logic changed to true only
@@ -3086,7 +3087,9 @@ function Ready()
         end
     end
 
-    if RemainingDurabilityToRepair > 0 and needsRepair.Count > 0 and (not shouldWaitForBonusBuff or (SelfRepair and Inventory.GetItemCount(33916) > 0)) then
+    -- 修正: セルフ修理OFFのときはボーナスバフ中でも修理(リムサ移動)を止めない
+    local bonusBuffBlocksRepair = shouldWaitForBonusBuff and SelfRepair and Inventory.GetItemCount(33916) <= 0
+    if RemainingDurabilityToRepair > 0 and needsRepair.Count > 0 and not bonusBuffBlocksRepair then
         State = CharacterState.repair
         Dalamud.Log("[FATE] State Change: Repair")
         return
