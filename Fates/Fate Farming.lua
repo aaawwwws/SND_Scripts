@@ -111,6 +111,9 @@ configs:
   Teleport to next zone if no FATEs?:
     description: Cycle to the next Dawntrail zone when no eligible FATEs remain.
     default: true
+  Stay on current map only?:
+    description: Never change to another zone. Keeps farming in current map (instance changes can still happen).
+    default: false
   Exchange bicolor gemstones for:
     description: Choose none if you dont want to spend your bicolors.
     default: "Bicolor Gemstone Voucher"
@@ -183,7 +186,7 @@ configs:
     default: false
   Blacklist:
     description: Enter the names of FATEs you want to blacklist, separated by commas (e.g., FATE Name 1, FATE Name 2, FATE Name 3)
-    default: ""
+    default: "空飛ぶ鍋奉行「ペルペルイーター」"
   Discord Webhook URL:
     description: URL to send notifications to when the script stops or encounters an error. Leave blank to disable.
     default: ""
@@ -3137,11 +3140,20 @@ function DoFate()
             if NoCombatStartTime == nil then
                 NoCombatStartTime = os.clock()
             elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
-                Dalamud.Log("[FATE] No combat started within timeout. Switching zones.")
+                if StayOnCurrentMapOnly then
+                    Dalamud.Log("[FATE] No combat started within timeout. Staying in current map due to setting.")
+                else
+                    Dalamud.Log("[FATE] No combat started within timeout. Switching zones.")
+                end
                 NoCombatStartTime = nil
                 WaitingForFateRewards = nil
                 yield("/vnav stop")
-                SelectNextDawntrailZone()
+                if StayOnCurrentMapOnly then
+                    CurrentFate = nil
+                    NextFate = nil
+                else
+                    SelectNextDawntrailZone()
+                end
                 State = CharacterState.ready
                 return
             end
@@ -3397,7 +3409,7 @@ function Ready()
 
     if NextFate == nil then
         local hasInstances = GetZoneInstance() > 0
-        if AutoTeleportToNextZone and not shouldWaitForBonusBuff and not CompanionScriptMode then
+        if AutoTeleportToNextZone and not StayOnCurrentMapOnly and not shouldWaitForBonusBuff and not CompanionScriptMode then
             if EnableChangeInstance and hasInstances and SuccessiveInstanceChanges < NumberOfInstances then
                 State = CharacterState.changingInstances
                 Dalamud.Log("[FATE] State Change: ChangingInstances")
@@ -4142,6 +4154,7 @@ function FateFarming:Run()
     -- Config settings
     EnableChangeInstance           = Config.Get("Change instances if no FATEs?")
     AutoTeleportToNextZone         = Config.Get("Teleport to next zone if no FATEs?")
+    StayOnCurrentMapOnly           = Config.Get("Stay on current map only?")
     ShouldExchangeBicolorGemstones = Config.Get("Exchange bicolor gemstones?")
     ItemToPurchase                 = Config.Get("Exchange bicolor gemstones for")
     if ItemToPurchase == "None" then
@@ -4295,11 +4308,20 @@ function FateFarming:Run()
                         and not Svc.Condition[CharacterCondition.betweenAreas]
                         and not IPC.Lifestream.IsBusy()
                     if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
-                        Dalamud.Log("[FATE] No movement detected. Switching zones.")
+                        if StayOnCurrentMapOnly then
+                            Dalamud.Log("[FATE] No movement detected. Staying in current map due to setting.")
+                        else
+                            Dalamud.Log("[FATE] No movement detected. Switching zones.")
+                        end
                         LastMoveTimestamp = os.clock()
                         LastMovePosition = currentPos
                         yield("/vnav stop")
-                        SelectNextDawntrailZone()
+                        if StayOnCurrentMapOnly then
+                            CurrentFate = nil
+                            NextFate = nil
+                        else
+                            SelectNextDawntrailZone()
+                        end
                         State = CharacterState.ready
                     end
                 end
