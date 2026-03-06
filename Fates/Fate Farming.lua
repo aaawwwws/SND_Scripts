@@ -186,7 +186,11 @@ configs:
     default: false
   Blacklist:
     description: Enter the names of FATEs you want to blacklist, separated by commas (e.g., FATE Name 1, FATE Name 2, FATE Name 3)
+<<<<<<< HEAD
     default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」"
+=======
+    default: "空飛ぶ鍋奉行「ペルペルイーター」"
+>>>>>>> ebc341363acb1f8f38727a226a28424d3ef9e910
   Discord Webhook URL:
     description: URL to send notifications to when the script stops or encounters an error. Leave blank to disable.
     default: ""
