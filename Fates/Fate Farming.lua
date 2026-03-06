@@ -164,7 +164,7 @@ configs:
   Stuck movement threshold:
     description: この距離未満しか動いていないとスタックとみなします。
     default: 3
-    min: 0.5
+    min: 0
     max: 20
   Print session summary?:
     description: 停止時に周回統計（時間・完了数・失敗数・時給など）を出力します。
