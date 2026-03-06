@@ -220,7 +220,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -461,6 +461,7 @@ local UpdateCombatModeByNearbyEnemies
 local WaitForContinuation
 local ResetMovementStuckState
 local ResetExchangeMovementStuckState
+local SetExchangeMovementStuckGrace
 local SetStopReason
 
 -- 出現中FATEデータ保存用の設定/状態
@@ -475,6 +476,8 @@ local FateDataLogError
 local ExchangeMoveLastCheckTime
 local ExchangeMoveLastPosition
 local ExchangeMoveStuckCount
+local ExchangeMoveLastDistanceToShop
+local ExchangeMoveGraceUntil
 
 -- 通常移動時のスタック検知用
 local MoveStuckLastCheckTime
@@ -3958,9 +3961,32 @@ function ResetExchangeMovementStuckState()
     ExchangeMoveLastCheckTime = 0
     ExchangeMoveLastPosition = nil
     ExchangeMoveStuckCount = 0
+    ExchangeMoveLastDistanceToShop = nil
+    ExchangeMoveGraceUntil = 0
+end
+
+function SetExchangeMovementStuckGrace(seconds)
+    local graceSeconds = tonumber(seconds) or 0
+    if graceSeconds < 0 then
+        graceSeconds = 0
+    end
+    ExchangeMoveGraceUntil = os.clock() + graceSeconds
+    ExchangeMoveLastCheckTime = 0
+    ExchangeMoveLastPosition = GetLocalPlayerPosition()
+    ExchangeMoveStuckCount = 0
+    ExchangeMoveLastDistanceToShop = nil
 end
 
 function HandleExchangeMovementStuck()
+    if SelectedBicolorExchangeData ~= nil
+        and SelectedBicolorExchangeData.zoneId == 1186
+        and Svc.ClientState.TerritoryType == 1186
+    then
+        -- Solution Nine exchange route often has short nav pauses; skip exchange stuck recovery there.
+        ResetExchangeMovementStuckState()
+        return
+    end
+
     if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
         return
     end
@@ -3976,7 +4002,24 @@ function HandleExchangeMovementStuck()
         return
     end
 
-    if ExchangeMoveLastPosition ~= nil and DistanceBetween(playerPos, ExchangeMoveLastPosition) < 1.5 then
+    local distanceToShop = GetDistanceToPoint(SelectedBicolorExchangeData.position)
+    if ExchangeMoveGraceUntil ~= nil and now < ExchangeMoveGraceUntil then
+        ExchangeMoveLastPosition = playerPos
+        ExchangeMoveLastDistanceToShop = distanceToShop
+        return
+    end
+
+    local movedDistance = math.maxinteger
+    if ExchangeMoveLastPosition ~= nil then
+        movedDistance = DistanceBetween(playerPos, ExchangeMoveLastPosition)
+    end
+
+    local madeShopProgress = false
+    if ExchangeMoveLastDistanceToShop ~= nil then
+        madeShopProgress = (ExchangeMoveLastDistanceToShop - distanceToShop) >= 0.8
+    end
+
+    if ExchangeMoveLastPosition ~= nil and movedDistance < 1.5 and not madeShopProgress then
         ExchangeMoveStuckCount = ExchangeMoveStuckCount + 1
         Dalamud.Log("[FATE] Exchange pathing stuck. Repath attempt #" .. tostring(ExchangeMoveStuckCount))
         yield("/vnav stop")
@@ -3991,15 +4034,16 @@ function HandleExchangeMovementStuck()
         end
         IPC.vnavmesh.PathfindAndMoveTo(retryTarget, false)
 
-        if ExchangeMoveStuckCount >= 3 then
+        if ExchangeMoveStuckCount >= 5 then
             Dalamud.Log("[FATE] Exchange pathing still stuck. Returning to aetheryte and retrying.")
             yield("/vnav stop")
+            ResetExchangeMovementStuckState()
+            SetExchangeMovementStuckGrace(15)
             if SelectedBicolorExchangeData.miniAethernet ~= nil then
                 yield("/li " .. SelectedBicolorExchangeData.miniAethernet.name)
             else
                 TeleportTo(SelectedBicolorExchangeData.aetheryteName)
             end
-            ResetExchangeMovementStuckState()
             return
         end
     else
@@ -4007,6 +4051,7 @@ function HandleExchangeMovementStuck()
     end
 
     ExchangeMoveLastPosition = playerPos
+    ExchangeMoveLastDistanceToShop = distanceToShop
 end
 
 function ExecuteBicolorExchange()
@@ -4027,6 +4072,7 @@ function ExecuteBicolorExchange()
 
         if Svc.ClientState.TerritoryType ~= SelectedBicolorExchangeData.zoneId then
             ResetExchangeMovementStuckState()
+            SetExchangeMovementStuckGrace(20)
             TeleportTo(SelectedBicolorExchangeData.aetheryteName)
             return
         end
@@ -4040,6 +4086,7 @@ function ExecuteBicolorExchange()
             if distanceToShop > (miniToShopDistance + 10) then
                 Dalamud.Log("[FATE] Exchange route: using aetheryte first, then pathfinding.")
                 ResetExchangeMovementStuckState()
+                SetExchangeMovementStuckGrace(15)
                 yield("/li " .. SelectedBicolorExchangeData.miniAethernet.name)
                 yield("/wait 1")
                 return
@@ -4591,50 +4638,52 @@ function FateFarming:Run()
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
-    StopScript                  = false
-    DidFate                     = false
-    RsrDynamicSingleApplied     = false
-    GemAnnouncementLock         = false
-    DeathAnnouncementLock       = false
-    MovingAnnouncementLock      = false
-    SuccessiveInstanceChanges   = 0
-    LastInstanceChangeTimestamp = 0
-    LastTeleportTimeStamp       = 0
-    NoCombatStartTime           = nil
-    LastMoveTimestamp           = os.clock()
-    LastMovePosition            = nil
-    GotCollectionsFullCredit    = false
-    WaitingForFateRewards       = nil
-    LastFateEndTime             = os.clock()
-    LastStuckCheckTime          = os.clock()
-    local initialPosition       = GetLocalPlayerPosition()
-    LastStuckCheckPosition      = initialPosition or Vector3(0, 0, 0)
-    ExchangeMoveLastCheckTime   = 0
-    ExchangeMoveLastPosition    = nil
-    ExchangeMoveStuckCount      = 0
-    MoveStuckLastCheckTime      = 0
-    MoveStuckLastPosition       = nil
-    MoveStuckCount              = 0
-    MainClass                   = Player.Job
-    BossFatesClass              = nil
-    BicolorGemExchangeThreshold = 1400
-    ClusterMoveLastRefresh      = 0
-    ClusterMoveCachedFateId     = nil
-    ClusterMoveCachedPosition   = nil
-    SessionStartClock           = os.clock()
-    SessionStartGemCount        = Inventory.GetItemCount(26807)
-    SessionFatesStarted         = 0
-    SessionFatesCompleted       = 0
-    SessionFatesFailed          = 0
-    SessionStuckRepathCount     = 0
-    SessionStuckAetheryteCount  = 0
-    SessionStuckZoneSwitchCount = 0
-    SessionStopReason           = nil
+    StopScript                     = false
+    DidFate                        = false
+    RsrDynamicSingleApplied        = false
+    GemAnnouncementLock            = false
+    DeathAnnouncementLock          = false
+    MovingAnnouncementLock         = false
+    SuccessiveInstanceChanges      = 0
+    LastInstanceChangeTimestamp    = 0
+    LastTeleportTimeStamp          = 0
+    NoCombatStartTime              = nil
+    LastMoveTimestamp              = os.clock()
+    LastMovePosition               = nil
+    GotCollectionsFullCredit       = false
+    WaitingForFateRewards          = nil
+    LastFateEndTime                = os.clock()
+    LastStuckCheckTime             = os.clock()
+    local initialPosition          = GetLocalPlayerPosition()
+    LastStuckCheckPosition         = initialPosition or Vector3(0, 0, 0)
+    ExchangeMoveLastCheckTime      = 0
+    ExchangeMoveLastPosition       = nil
+    ExchangeMoveStuckCount         = 0
+    ExchangeMoveLastDistanceToShop = nil
+    ExchangeMoveGraceUntil         = 0
+    MoveStuckLastCheckTime         = 0
+    MoveStuckLastPosition          = nil
+    MoveStuckCount                 = 0
+    MainClass                      = Player.Job
+    BossFatesClass                 = nil
+    BicolorGemExchangeThreshold    = 1400
+    ClusterMoveLastRefresh         = 0
+    ClusterMoveCachedFateId        = nil
+    ClusterMoveCachedPosition      = nil
+    SessionStartClock              = os.clock()
+    SessionStartGemCount           = Inventory.GetItemCount(26807)
+    SessionFatesStarted            = 0
+    SessionFatesCompleted          = 0
+    SessionFatesFailed             = 0
+    SessionStuckRepathCount        = 0
+    SessionStuckAetheryteCount     = 0
+    SessionStuckZoneSwitchCount    = 0
+    SessionStopReason              = nil
 
     --Forlorns
-    IgnoreForlorns              = false
-    IgnoreBigForlornOnly        = false
-    Forlorns                    = string.lower(Config.Get("Forlorns"))
+    IgnoreForlorns                 = false
+    IgnoreBigForlornOnly           = false
+    Forlorns                       = string.lower(Config.Get("Forlorns"))
     if Forlorns == "none" then
         IgnoreForlorns = true
     elseif Forlorns == "small" then
