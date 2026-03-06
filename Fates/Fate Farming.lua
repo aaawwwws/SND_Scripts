@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.5
+version: 3.1.7
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -78,6 +78,17 @@ configs:
   Do other NPC FATEs?:
     description: Disable to ignore FATEs that require talking to an NPC.
     default: false
+  Save active FATE data?:
+    description: 出現中FATEの情報をJSONLに保存する
+    default: true
+  FATE data log interval (secs):
+    description: 連続保存の最小間隔
+    default: 30
+    min: 5
+    max: 600
+  FATE data log path:
+    description: 保存先(相対パスはSNDスクリプト基準)
+    default: "Fates/fates_active.jsonl"
   Do only bonus FATEs?:
     default: false
   No combat teleport timeout (secs):
@@ -100,6 +111,9 @@ configs:
   Teleport to next zone if no FATEs?:
     description: Cycle to the next Dawntrail zone when no eligible FATEs remain.
     default: true
+  Stay on current map only?:
+    description: Never change to another zone. Keeps farming in current map (instance changes can still happen).
+    default: false
   Exchange bicolor gemstones for:
     description: Choose none if you dont want to spend your bicolors.
     default: "Bicolor Gemstone Voucher"
@@ -140,6 +154,7 @@ configs:
         "Swampmonk Thigh",
         "Tumbleclaw Weeds",
         "Turali Bicolor Gemstone Voucher",
+        "バイカラージェム納品証【黄金】",
         "Ty'aitya Wingblade",
         "Ut'ohmu Siderite"]
   Chocobo Companion Stance:
@@ -171,6 +186,9 @@ configs:
     default: false
   Blacklist:
     description: Enter the names of FATEs you want to blacklist, separated by commas (e.g., FATE Name 1, FATE Name 2, FATE Name 3)
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」"
+  Discord Webhook URL:
+    description: URL to send notifications to when the script stops or encounters an error. Leave blank to disable.
     default: ""
 [[End Metadata]]
 --]=====]
@@ -179,6 +197,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.7    追加: 出現中FATEの名前とNPC名をJSONLに保存
+    -> 3.1.6    修正: セルフ修理OFF時でもボーナスバフ中に修理移動するように変更
     -> 3.1.5    Added HW fate definitions
     -> 3.1.4    Modified VBM/BMR combat commands to use IPCs
     -> 3.1.3    Companion script echo logic changed to true only
@@ -264,8 +284,38 @@ This Plugins are Optional and not needed unless you have it enabled in the setti
 local FateFarming = {}
 FateFarming.__index = FateFarming
 
+-- Load .NET assemblies for Discord notifications
+luanet.load_assembly("System")
+local WebClient = luanet.import_type("System.Net.WebClient")
+local Encoding = luanet.import_type("System.Text.Encoding")
+
 function FateFarming:new()
     return setmetatable({}, FateFarming)
+end
+
+local function SendDiscordMessage(message)
+    if DiscordWebhookUrl == nil or DiscordWebhookUrl == "" then
+        return
+    end
+
+    local client = WebClient()
+    client.Encoding = Encoding.UTF8
+    client.Headers:Add("Content-Type", "application/json")
+
+    local payload = string.format('{"content": "%s", "username": "SND Fate Bot"}', message)
+
+    -- Use pcall to prevent script crash if network fails
+    local status, err = pcall(function()
+        client:UploadString(DiscordWebhookUrl, "POST", payload)
+    end)
+
+    client:Dispose()
+
+    if not status then
+        Dalamud.Log("[FATE] Failed to send Discord notification: " .. tostring(err))
+    else
+        Dalamud.Log("[FATE] Sent Discord notification: " .. message)
+    end
 end
 
 local AcceptNPCFateOrRejectOtherYesno
@@ -292,9 +342,11 @@ local FlyBackToAetheryte
 local FoodCheck
 local GetAetheryteName
 local GetAetherytesInZone
+local GetAetheryteInZoneByName
 local GetBuddyTimeRemaining
 local GetClassJobTableFromName
 local GetClosestAetheryte
+local GetClosestAetheryteInZoneToPoint
 local GetClosestAetheryteToPoint
 local GetDistanceToPoint
 local GetDistanceToPointFlat
@@ -312,9 +364,16 @@ local GetTargetName
 local GetZoneInstance
 local GrandCompanyTurnIn
 local HandleDeath
+local HandleExchangeMovementStuck
 local HandleUnexpectedCombat
 local HasPlugin
 local HasStatusId
+local BuildFateSnapshot
+local BuildFateSnapshotSignature
+local EncodeJsonValue
+local IsArray
+local JsonEscape
+local MaybeLogActiveFates
 local InActiveFate
 local includes
 local InteractWithFateNpc
@@ -360,6 +419,20 @@ local TurnOffRaidBuffs
 local TurnOnAoes
 local TurnOnCombatMods
 local WaitForContinuation
+local ResetExchangeMovementStuckState
+
+-- 出現中FATEデータ保存用の設定/状態
+local FateDataLogEnabled
+local FateDataLogIntervalSeconds
+local FateDataLogPath
+local FateDataLogLastTime
+local FateDataLogLastSignature
+local FateDataLogError
+
+-- 納品証交換時の移動スタック検知用
+local ExchangeMoveLastCheckTime
+local ExchangeMoveLastPosition
+local ExchangeMoveStuckCount
 
 --[[
 ********************************************************************************
@@ -1137,7 +1210,17 @@ function GetLangTable(lang)
                     position = Vector3(78, 5, -37),
                     shopItems = {
                         ["Bicolor Gemstone Voucher"] = { itemName = "バイカラージェム納品書", itemIndex = 8, price = 100 },
-                        ["Turali Bicolor Gemstone Voucher"] = { itemName = "バイカラージェム納品書", itemIndex = 9, price = 100 },
+                    }
+                },
+                {
+                    shopKeepName = "広域交易商 ベリル",
+                    zoneName = "ソリューション・ナイン",
+                    zoneId = 1186,
+                    aetheryteName = "ソリューション・ナイン",
+                    miniAethernet = { name = "ネクサスアーケード" },
+                    position = Vector3(-198.655, 0.922, -6.678),
+                    shopItems = {
+                        ["Turali Bicolor Gemstone Voucher"] = { itemName = "バイカラージェム納品証【黄金】", itemIndex = 6, price = 100 },
                     }
                 }
             }
@@ -1162,7 +1245,18 @@ function GetLangTable(lang)
                     position = Vector3(78, 5, -37),
                     shopItems = {
                         ["Bicolor Gemstone Voucher"] = { itemName = "Bicolor Gemstone Voucher", itemIndex = 7, price = 100 },
-                        ["Turali Bicolor Gemstone Voucher"] = { itemName = "Turali Bicolor Gemstone Voucher", itemIndex = 8, price = 100 },
+                    }
+                },
+                {
+                    shopKeepName = "Beryl",
+                    zoneName = "Solution Nine",
+                    zoneId = 1186,
+                    aetheryteName = "Solution Nine",
+                    miniAethernet = { name = "Nexus Arcade" },
+                    position = Vector3(-198.655, 0.922, -6.678),
+                    shopItems = {
+                        ["Turali Bicolor Gemstone Voucher"] = { itemName = "Turali Bicolor Gemstone Voucher", itemIndex = 7, price = 100 },
+                        ["バイカラージェム納品証【黄金】"] = { itemName = "Turali Bicolor Gemstone Voucher", itemIndex = 7, price = 100 },
                     }
                 }
             }
@@ -1411,6 +1505,162 @@ function GetFateNpcName(fateName)
             return fate.npcName
         end
     end
+end
+
+-- 出現中FATEの情報をJSONLで保存する
+function JsonEscape(value)
+    local str = tostring(value)
+    str = str:gsub("\\", "\\\\")
+    str = str:gsub("\"", "\\\"")
+    str = str:gsub("\r", "\\r")
+    str = str:gsub("\n", "\\n")
+    str = str:gsub("\t", "\\t")
+    return str
+end
+
+function IsArray(value)
+    if type(value) ~= "table" then
+        return false
+    end
+    local count = 0
+    local maxIndex = 0
+    for k, _ in pairs(value) do
+        if type(k) ~= "number" or k % 1 ~= 0 then
+            return false
+        end
+        if k > maxIndex then
+            maxIndex = k
+        end
+        count = count + 1
+    end
+    return maxIndex == count
+end
+
+function EncodeJsonValue(value)
+    local valueType = type(value)
+    if value == nil then
+        return "null"
+    end
+    if valueType == "string" then
+        return "\"" .. JsonEscape(value) .. "\""
+    end
+    if valueType == "number" then
+        return tostring(value)
+    end
+    if valueType == "boolean" then
+        return value and "true" or "false"
+    end
+    if valueType == "table" then
+        if IsArray(value) then
+            local parts = {}
+            for i = 1, #value do
+                parts[#parts + 1] = EncodeJsonValue(value[i])
+            end
+            return "[" .. table.concat(parts, ",") .. "]"
+        end
+        local keys = {}
+        for k, _ in pairs(value) do
+            keys[#keys + 1] = k
+        end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        local parts = {}
+        for i = 1, #keys do
+            local key = keys[i]
+            parts[#parts + 1] = "\"" .. JsonEscape(key) .. "\":" .. EncodeJsonValue(value[key])
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    return "\"\""
+end
+
+function BuildFateSnapshot()
+    local activeFates = Fates.GetActiveFates()
+    if activeFates == nil then
+        return nil
+    end
+
+    local fateList = {}
+    for i = 0, activeFates.Count - 1 do
+        local fateObj = activeFates[i]
+        local fateName = fateObj.Name or ""
+        local npcName = nil
+        if SelectedZone ~= nil and SelectedZone.fatesList ~= nil then
+            npcName = GetFateNpcName(fateName)
+        end
+        fateList[#fateList + 1] = {
+            id = fateObj.Id,
+            name = fateName,
+            npcName = npcName
+        }
+    end
+
+    table.sort(fateList, function(a, b)
+        return (a.id or 0) < (b.id or 0)
+    end)
+
+    return {
+        timestamp = os.time(),
+        clientLanguage = GameLanguage or "",
+        zoneId = Svc.ClientState.TerritoryType,
+        zoneName = SelectedZone and SelectedZone.zoneName or "",
+        fates = fateList
+    }
+end
+
+function BuildFateSnapshotSignature(snapshot)
+    if snapshot == nil or snapshot.fates == nil then
+        return ""
+    end
+    local parts = { tostring(snapshot.zoneId or "") }
+    for i = 1, #snapshot.fates do
+        local fate = snapshot.fates[i]
+        parts[#parts + 1] = tostring(fate.id or "") .. "|" ..
+            tostring(fate.name or "") .. "|" ..
+            tostring(fate.npcName or "")
+    end
+    return table.concat(parts, "||")
+end
+
+function MaybeLogActiveFates()
+    if not FateDataLogEnabled then
+        return
+    end
+    local now = os.time()
+    if now - FateDataLogLastTime < FateDataLogIntervalSeconds then
+        return
+    end
+
+    local snapshot = BuildFateSnapshot()
+    if snapshot == nil then
+        return
+    end
+
+    FateDataLogLastTime = now
+    local signature = BuildFateSnapshotSignature(snapshot)
+    if signature == FateDataLogLastSignature then
+        return
+    end
+    FateDataLogLastSignature = signature
+
+    if FateDataLogError then
+        return
+    end
+
+    local ok, line = pcall(EncodeJsonValue, snapshot)
+    if not ok then
+        FateDataLogError = true
+        Dalamud.Log("[FATE] Failed to encode fate data log JSON: " .. tostring(line))
+        return
+    end
+
+    local file, err = io.open(FateDataLogPath, "a")
+    if not file then
+        FateDataLogError = true
+        Dalamud.Log("[FATE] Failed to open fate data log file: " .. tostring(err))
+        return
+    end
+    file:write(line .. "\n")
+    file:close()
 end
 
 function IsFateActive(fate)
@@ -1787,6 +2037,21 @@ function GetAetheryteName(aetheryte)
     end
 end
 
+function GetAetheryteInZoneByName(zoneId, aetheryteName)
+    local aetherytesInZone = GetAetherytesInZone(zoneId)
+    for _, aetheryte in ipairs(aetherytesInZone) do
+        local name = GetAetheryteName(aetheryte)
+        if name == aetheryteName or string.lower(name) == string.lower(aetheryteName) then
+            return {
+                name = name,
+                position = Instances.Telepo:GetAetherytePosition(aetheryte.AetheryteId),
+                aetheryteId = aetheryte.AetheryteId
+            }
+        end
+    end
+    return nil
+end
+
 function DistanceFromClosestAetheryteToPoint(vec3, teleportTimePenalty)
     local closestAetheryte = nil
     local closestTravelDistance = math.maxinteger
@@ -1843,6 +2108,29 @@ function GetClosestAetheryte(position, teleportTimePenalty)
         Dalamud.Log("[FATE] Final selected aetheryte is: " .. closestAetheryte.aetheryteName)
     else
         Dalamud.Log("[FATE] Closest aetheryte is nil")
+    end
+
+    return closestAetheryte
+end
+
+function GetClosestAetheryteInZoneToPoint(zoneId, position)
+    local aetherytes = GetAetherytesInZone(zoneId)
+    local closestAetheryte = nil
+    local closestDistance = math.maxinteger
+
+    for _, aetheryte in ipairs(aetherytes) do
+        local aetherytePos = Instances.Telepo:GetAetherytePosition(aetheryte.AetheryteId)
+        if aetherytePos ~= nil then
+            local distance = DistanceBetween(position, aetherytePos)
+            if distance < closestDistance then
+                closestDistance = distance
+                closestAetheryte = {
+                    name = GetAetheryteName(aetheryte),
+                    position = aetherytePos,
+                    aetheryteId = aetheryte.AetheryteId
+                }
+            end
+        end
     end
 
     return closestAetheryte
@@ -2852,11 +3140,20 @@ function DoFate()
             if NoCombatStartTime == nil then
                 NoCombatStartTime = os.clock()
             elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
-                Dalamud.Log("[FATE] No combat started within timeout. Switching zones.")
+                if StayOnCurrentMapOnly then
+                    Dalamud.Log("[FATE] No combat started within timeout. Staying in current map due to setting.")
+                else
+                    Dalamud.Log("[FATE] No combat started within timeout. Switching zones.")
+                end
                 NoCombatStartTime = nil
                 WaitingForFateRewards = nil
                 yield("/vnav stop")
-                SelectNextDawntrailZone()
+                if StayOnCurrentMapOnly then
+                    CurrentFate = nil
+                    NextFate = nil
+                else
+                    SelectNextDawntrailZone()
+                end
                 State = CharacterState.ready
                 return
             end
@@ -3022,7 +3319,9 @@ end
 
 function Ready()
     if SelectedZone == nil or SelectedZone.zoneId == nil then
-        yield("/echo [FATE] ERROR: SelectedZone is not set! Aborting.")
+        local msg = "ERROR: SelectedZone is not set! Aborting."
+        yield("/echo [FATE] " .. msg)
+        SendDiscordMessage(msg)
         StopScript = true
         return
     end
@@ -3051,7 +3350,9 @@ function Ready()
         end
     end
 
-    if RemainingDurabilityToRepair > 0 and needsRepair.Count > 0 and (not shouldWaitForBonusBuff or (SelfRepair and Inventory.GetItemCount(33916) > 0)) then
+    -- 修正: セルフ修理OFFのときはボーナスバフ中でも修理(リムサ移動)を止めない
+    local bonusBuffBlocksRepair = shouldWaitForBonusBuff and SelfRepair and Inventory.GetItemCount(33916) <= 0
+    if RemainingDurabilityToRepair > 0 and needsRepair.Count > 0 and not bonusBuffBlocksRepair then
         State = CharacterState.repair
         Dalamud.Log("[FATE] State Change: Repair")
         return
@@ -3077,13 +3378,17 @@ function Ready()
 
     if Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
         if not SelectedZone or not SelectedZone.aetheryteList or not SelectedZone.aetheryteList[1] then
-            yield("/echo [FATE] ERROR: No aetheryte found for selected zone. Cannot teleport. Stopping script.")
+            local msg = "ERROR: No aetheryte found for selected zone. Cannot teleport. Stopping script."
+            yield("/echo [FATE] " .. msg)
+            SendDiscordMessage(msg)
             StopScript = true
             return
         end
         local teleSuccess = TeleportTo(SelectedZone.aetheryteList[1].aetheryteName)
         if teleSuccess == false then
-            yield("/echo [FATE] ERROR: Teleportation failed. Stopping script.")
+            local msg = "ERROR: Teleportation failed. Stopping script."
+            yield("/echo [FATE] " .. msg)
+            SendDiscordMessage(msg)
             StopScript = true
             return
         end
@@ -3104,7 +3409,7 @@ function Ready()
 
     if NextFate == nil then
         local hasInstances = GetZoneInstance() > 0
-        if AutoTeleportToNextZone and not shouldWaitForBonusBuff and not CompanionScriptMode then
+        if AutoTeleportToNextZone and not StayOnCurrentMapOnly and not shouldWaitForBonusBuff and not CompanionScriptMode then
             if EnableChangeInstance and hasInstances and SuccessiveInstanceChanges < NumberOfInstances then
                 State = CharacterState.changingInstances
                 Dalamud.Log("[FATE] State Change: ChangingInstances")
@@ -3214,6 +3519,61 @@ function HandleDeath()
     end
 end
 
+function ResetExchangeMovementStuckState()
+    ExchangeMoveLastCheckTime = 0
+    ExchangeMoveLastPosition = nil
+    ExchangeMoveStuckCount = 0
+end
+
+function HandleExchangeMovementStuck()
+    if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+        return
+    end
+
+    local now = os.clock()
+    if now - ExchangeMoveLastCheckTime < 3 then
+        return
+    end
+    ExchangeMoveLastCheckTime = now
+
+    local playerPos = GetLocalPlayerPosition()
+    if playerPos == nil then
+        return
+    end
+
+    if ExchangeMoveLastPosition ~= nil and DistanceBetween(playerPos, ExchangeMoveLastPosition) < 1.5 then
+        ExchangeMoveStuckCount = ExchangeMoveStuckCount + 1
+        Dalamud.Log("[FATE] Exchange pathing stuck. Repath attempt #" .. tostring(ExchangeMoveStuckCount))
+        yield("/vnav stop")
+        yield("/wait 0.3")
+
+        local retryTarget = RandomAdjustCoordinates(SelectedBicolorExchangeData.position, 3)
+        local nearestFloor = IPC.vnavmesh.PointOnFloor(retryTarget, true, 30)
+        if nearestFloor ~= nil then
+            retryTarget = nearestFloor
+        else
+            retryTarget = SelectedBicolorExchangeData.position
+        end
+        IPC.vnavmesh.PathfindAndMoveTo(retryTarget, false)
+
+        if ExchangeMoveStuckCount >= 3 then
+            Dalamud.Log("[FATE] Exchange pathing still stuck. Returning to aetheryte and retrying.")
+            yield("/vnav stop")
+            if SelectedBicolorExchangeData.miniAethernet ~= nil then
+                yield("/li " .. SelectedBicolorExchangeData.miniAethernet.name)
+            else
+                TeleportTo(SelectedBicolorExchangeData.aetheryteName)
+            end
+            ResetExchangeMovementStuckState()
+            return
+        end
+    else
+        ExchangeMoveStuckCount = 0
+    end
+
+    ExchangeMoveLastPosition = playerPos
+end
+
 function ExecuteBicolorExchange()
     CurrentFate = nil
 
@@ -3231,25 +3591,42 @@ function ExecuteBicolorExchange()
         end
 
         if Svc.ClientState.TerritoryType ~= SelectedBicolorExchangeData.zoneId then
+            ResetExchangeMovementStuckState()
             TeleportTo(SelectedBicolorExchangeData.aetheryteName)
             return
         end
 
-        if SelectedBicolorExchangeData.miniAethernet ~= nil and
-            GetDistanceToPoint(SelectedBicolorExchangeData.position) > (DistanceBetween(SelectedBicolorExchangeData.miniAethernet.position, SelectedBicolorExchangeData.position) + 10) then
-            Dalamud.Log("Distance to shopkeep is too far. Using mini aetheryte.")
-            yield("/li " .. SelectedBicolorExchangeData.miniAethernet.name)
-            yield("/wait 1") -- give it a moment to register
-            return
-        elseif AddonReady("TelepotTown") then
+        if SelectedBicolorExchangeData.miniAethernet ~= nil then
+            local distanceToShop = GetDistanceToPoint(SelectedBicolorExchangeData.position)
+            local miniToShopDistance = DistanceBetween(
+                SelectedBicolorExchangeData.miniAethernet.position,
+                SelectedBicolorExchangeData.position
+            )
+            if distanceToShop > (miniToShopDistance + 10) then
+                Dalamud.Log("[FATE] Exchange route: using aetheryte first, then pathfinding.")
+                ResetExchangeMovementStuckState()
+                yield("/li " .. SelectedBicolorExchangeData.miniAethernet.name)
+                yield("/wait 1")
+                return
+            end
+        end
+
+        if AddonReady("TelepotTown") then
             Dalamud.Log("TelepotTown open")
             yield("/callback TelepotTown false -1")
         elseif GetDistanceToPoint(SelectedBicolorExchangeData.position) > 5 then
-            Dalamud.Log("Distance to shopkeep is too far. Walking there.")
+            Dalamud.Log("Distance to shopkeep is too far. Calculating route from current position.")
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                IPC.vnavmesh.PathfindAndMoveTo(SelectedBicolorExchangeData.position, false)
+                SetMapFlag(SelectedBicolorExchangeData.zoneId, SelectedBicolorExchangeData.position)
+                if Player.CanFly and SelectedZone.flying then
+                    yield("/vnav flyflag")
+                else
+                    yield("/vnav moveflag")
+                end
             end
+            HandleExchangeMovementStuck()
         else
+            ResetExchangeMovementStuckState()
             Dalamud.Log("[FATE] Arrived at Shopkeep")
             if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
                 yield("/vnav stop")
@@ -3263,6 +3640,7 @@ function ExecuteBicolorExchange()
             end
         end
     else
+        ResetExchangeMovementStuckState()
         if AddonReady("ShopExchangeCurrency") then
             Dalamud.Log("[FATE] Attemping to close shop window")
             yield("/callback ShopExchangeCurrency true -1")
@@ -3634,6 +4012,7 @@ function FateFarming:Run()
     ShouldSummonChocobo       = ChocoboStance == "Follow"
         or ChocoboStance == "Free"
         or ChocoboStance == "Defender"
+        or ChocoboStance == "Healer"
         or ChocoboStance == "ヒーラー"
         or ChocoboStance == "Attacker"
     ShouldAutoBuyGysahlGreens = Config.Get("Buy Gysahl Greens?")
@@ -3677,6 +4056,9 @@ function FateFarming:Run()
     LastFateEndTime                  = os.clock()
     LastStuckCheckTime               = os.clock()
     LastStuckCheckPosition           = Player.Entity.Position
+    ExchangeMoveLastCheckTime        = 0
+    ExchangeMoveLastPosition         = nil
+    ExchangeMoveStuckCount           = 0
     MainClass                        = Player.Job
     BossFatesClass                   = nil
     BicolorGemExchangeThreshold      = 1400
@@ -3711,6 +4093,9 @@ function FateFarming:Run()
     elseif configRotationPlugin == "bossmod" and HasPlugin("BossMod") then
         RotationPlugin = "VBM"
     else
+        local msg = "ERROR: Invalid Rotation Plugin selected or plugin not installed! Aborting."
+        yield("/echo [FATE] " .. msg)
+        SendDiscordMessage(msg)
         StopScript = true
     end
     RSRAoeType                 = "Full" --Options: Cleave/Full/Off
@@ -3770,17 +4155,35 @@ function FateFarming:Run()
     -- Config settings
     EnableChangeInstance           = Config.Get("Change instances if no FATEs?")
     AutoTeleportToNextZone         = Config.Get("Teleport to next zone if no FATEs?")
+    StayOnCurrentMapOnly           = Config.Get("Stay on current map only?")
     ShouldExchangeBicolorGemstones = Config.Get("Exchange bicolor gemstones?")
     ItemToPurchase                 = Config.Get("Exchange bicolor gemstones for")
     if ItemToPurchase == "None" then
         ShouldExchangeBicolorGemstones = false
     end
-    ReturnOnDeath            = Config.Get("Return on death?")
-    SelfRepair               = Config.Get("Self repair?")
-    Retainers                = Config.Get("Pause for retainers?")
-    ShouldGrandCompanyTurnIn = Config.Get("Dump extra gear at GC?")
-    Echo                     = string.lower(Config.Get("Echo logs"))
-    CompanionScriptMode      = Config.Get("Companion Script Mode")
+    ReturnOnDeath              = Config.Get("Return on death?")
+    SelfRepair                 = Config.Get("Self repair?")
+    Retainers                  = Config.Get("Pause for retainers?")
+    ShouldGrandCompanyTurnIn   = Config.Get("Dump extra gear at GC?")
+    Echo                       = string.lower(Config.Get("Echo logs"))
+    CompanionScriptMode        = Config.Get("Companion Script Mode")
+    DiscordWebhookUrl          = Config.Get("Discord Webhook URL")
+    -- 出現中FATEデータ保存
+    FateDataLogEnabled         = Config.Get("Save active FATE data?")
+    FateDataLogIntervalSeconds = Config.Get("FATE data log interval (secs)")
+    FateDataLogPath            = Config.Get("FATE data log path")
+    if FateDataLogEnabled == nil then
+        FateDataLogEnabled = true
+    end
+    if FateDataLogIntervalSeconds == nil or FateDataLogIntervalSeconds < 1 then
+        FateDataLogIntervalSeconds = 30
+    end
+    if FateDataLogPath == nil or FateDataLogPath == "" then
+        FateDataLogPath = "Fates/fates_active.jsonl"
+    end
+    FateDataLogLastTime = 0
+    FateDataLogLastSignature = nil
+    FateDataLogError = false
 
     -- Plugin warnings
     if Retainers and not HasPlugin("AutoRetainer") then
@@ -3830,6 +4233,30 @@ function FateFarming:Run()
             yield("/echo [FATE] Cannot recognize bicolor shop item " ..
                 ItemToPurchase .. "! Please make sure it's in the BicolorExchangeData table!")
             StopScript = true
+        elseif SelectedBicolorExchangeData.miniAethernet ~= nil and SelectedBicolorExchangeData.miniAethernet.name ~= nil and SelectedBicolorExchangeData.miniAethernet.position == nil then
+            local fixedExchangeAetheryte = GetAetheryteInZoneByName(
+                SelectedBicolorExchangeData.zoneId,
+                SelectedBicolorExchangeData.miniAethernet.name
+            )
+            if fixedExchangeAetheryte ~= nil then
+                SelectedBicolorExchangeData.miniAethernet = fixedExchangeAetheryte
+                Dalamud.Log("[FATE] Exchange aetheryte fixed: " .. fixedExchangeAetheryte.name)
+            else
+                Dalamud.Log("[FATE] Exchange aetheryte fixed name not found: " ..
+                    tostring(SelectedBicolorExchangeData.miniAethernet.name))
+                SelectedBicolorExchangeData.miniAethernet = nil
+            end
+        end
+
+        if SelectedBicolorExchangeData ~= nil and SelectedBicolorExchangeData.miniAethernet == nil then
+            local closestExchangeAetheryte = GetClosestAetheryteInZoneToPoint(
+                SelectedBicolorExchangeData.zoneId,
+                SelectedBicolorExchangeData.position
+            )
+            if closestExchangeAetheryte ~= nil then
+                SelectedBicolorExchangeData.miniAethernet = closestExchangeAetheryte
+                Dalamud.Log("[FATE] Exchange aetheryte selected: " .. closestExchangeAetheryte.name)
+            end
         end
     end
 
@@ -3882,11 +4309,20 @@ function FateFarming:Run()
                         and not Svc.Condition[CharacterCondition.betweenAreas]
                         and not IPC.Lifestream.IsBusy()
                     if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
-                        Dalamud.Log("[FATE] No movement detected. Switching zones.")
+                        if StayOnCurrentMapOnly then
+                            Dalamud.Log("[FATE] No movement detected. Staying in current map due to setting.")
+                        else
+                            Dalamud.Log("[FATE] No movement detected. Switching zones.")
+                        end
                         LastMoveTimestamp = os.clock()
                         LastMovePosition = currentPos
                         yield("/vnav stop")
-                        SelectNextDawntrailZone()
+                        if StayOnCurrentMapOnly then
+                            CurrentFate = nil
+                            NextFate = nil
+                        else
+                            SelectNextDawntrailZone()
+                        end
                         State = CharacterState.ready
                     end
                 end
@@ -3912,6 +4348,7 @@ function FateFarming:Run()
         end
 
         BicolorGemCount = Inventory.GetItemCount(26807)
+        MaybeLogActiveFates()
 
         if WaitingForFateRewards ~= nil then
             local state = WaitingForFateRewards.fateObject and WaitingForFateRewards.fateObject.State or nil

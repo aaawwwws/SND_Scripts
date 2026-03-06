@@ -1,0 +1,7 @@
+{
+  "gemini.inlineSuggestions.enable": true,
+  "gemini.chat.autoContext": true,
+  "gemini.chat.includeOpenFiles": true,
+  "gemini.codeGeneration.explain": false,
+  "snyk.advanced.autoSelectOrganization": true
+}
