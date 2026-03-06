@@ -50,30 +50,37 @@ configs:
     description: 薬品を使わない場合は空欄。HQ品は名前の後ろに <hq> を付けてください（例: Superior Spiritbond Potion <hq>）。
     default: ""
   Max melee distance:
+    description: 近接ジョブ時の目標戦闘距離です。
     default: 2.5
     min: 0
     max: 30
   Max ranged distance:
+    description: 遠隔ジョブ時の目標戦闘距離です。
     default: 20
     min: 0
     max: 30
   Ignore FATE if progress is over (%):
+    description: この進捗%以上のFATEは対象外にします。
     default: 80
     min: 0
     max: 100
   Ignore FATE if duration is less than (mins):
+    description: 残り時間がこの分数未満のFATEは対象外にします。
     default: 3
     min: 0
     max: 100
   Ignore boss FATEs until progress is at least (%):
+    description: ボスFATEは進捗がこの値以上になるまで参加しません。
     default: 0
     min: 0
     max: 100
   Ignore Special FATEs until progress is at least (%):
+    description: 特殊FATEは進捗がこの値以上になるまで参加しません。
     default: 20
     min: 0
     max: 100
   Do collection FATEs?:
+    description: 収集系FATEにも参加します。
     default: false
   Do other NPC FATEs?:
     description: OFFにすると、NPCへの会話が必要なFATEを無視します。
@@ -90,6 +97,7 @@ configs:
     description: 保存先(相対パスはSNDスクリプト基準)
     default: "Fates/fates_active.jsonl"
   Do only bonus FATEs?:
+    description: ボーナスFATEのみ参加し、通常FATEは無視します。
     default: false
   No combat teleport timeout (secs):
     description: FATE到着後に戦闘が始まらない場合、この秒数経過で次のゾーンへ移動します。0で無効。
@@ -141,7 +149,7 @@ configs:
     min: 1
     max: 20
   Dynamic AoE check radius:
-    description: Dynamic AoE判定で周囲敵数を数える半径です。
+    description: 動的AoE判定で周囲敵数を数える半径です。
     default: 12
     min: 3
     max: 30
@@ -167,6 +175,7 @@ configs:
     is_choice: true
     choices: ["All", "Small", "None"]
   Change instances if no FATEs?:
+    description: 対象FATEがない場合に同マップ内でインスタンス変更を試みます。
     default: false
   Teleport to next zone if no FATEs?:
     description: 対象FATEが無くなったら、次の黄金エリアへ順番に移動します。
@@ -229,6 +238,7 @@ configs:
     description: ONで自分で修理を試みます。OFFならリムサの修理NPCへ移動します。
     default: true
   Pause for retainers?:
+    description: リテイナー処理のために一時的にFATE周回を中断します。
     default: false
   Dump extra gear at GC?:
     description: リテイナー運用時、持ち帰り品で所持品が圧迫された場合にGC納品で整理します。
