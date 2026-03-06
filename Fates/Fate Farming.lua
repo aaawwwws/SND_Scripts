@@ -19,35 +19,35 @@ plugin_dependencies:
 - TextAdvance
 configs:
   Rotation Plugin:
-    description: What roation plugin to use?
+    description: 使用する回しプラグインを選択します。
     default: "RotationSolver"
     is_choice: true
     choices: ["Any", "Wrath", "RotationSolver","BossMod", "BossModReborn"]
   Dodging Plugin:
-    description: What dodging plugin to use. If your Rotation plugin is BMR or VBM, this will be overriden.
+    description: 使用する回避プラグインを選択します。Rotation Plugin が BMR/VBM の場合はそちらが優先されます。
     default: "BossModReborn"
     is_choice: true
     choices: ["Any", "BossMod", "BossModReborn", "None"]
   BMR/VBM Specific settings:
-    description: "--- BMR/VBM Specific settings if you are using one of them as your rotation plugin ---"
+    description: "--- Rotation Plugin に BMR/VBM を使う場合の専用設定 ---"
     default: false
   Single Target Rotation:
-    description: Preset name with single strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
+    description: 単体用プリセット名（主にフォーローン用）。このプリセットでは自動ターゲットをOFFにしてください。
     default: ""
   AoE Rotation:
-    description: Preset with AoE and Buff Strategies.
+    description: 範囲攻撃とバフ運用を含むプリセット名。
     default: ""
   Hold Buff Rotation:
-    description: Preset to hold 2min burst when progress gets to select percent
+    description: 指定進捗以上で2分バーストを温存するためのプリセット名。
     default: ""
   Percentage to Hold Buff:
-    description: Ideally you want to make full use of your buffs, higher then 70% will still waste a few seconds if progress is too fast.
+    description: バフを温存し始める進捗%。70%以上にすると進行が速いFATEで数秒分のロスが出る場合があります。
     default: 65
   Food:
-    description: Leave blank if you dont want to use any food. If its HQ include <hq> next to the name "Baked Eggplant <hq>"
+    description: 食事を使わない場合は空欄。HQ品は名前の後ろに <hq> を付けてください（例: Baked Eggplant <hq>）。
     default: ""
   Potion:
-    description: Leave blank if you dont want to use any potions. If its HQ include <hq> next to the name "Superior Spiritbond Potion <hq>"
+    description: 薬品を使わない場合は空欄。HQ品は名前の後ろに <hq> を付けてください（例: Superior Spiritbond Potion <hq>）。
     default: ""
   Max melee distance:
     default: 2.5
@@ -76,7 +76,7 @@ configs:
   Do collection FATEs?:
     default: false
   Do other NPC FATEs?:
-    description: Disable to ignore FATEs that require talking to an NPC.
+    description: OFFにすると、NPCへの会話が必要なFATEを無視します。
     default: false
   Save active FATE data?:
     description: 出現中FATEの情報をJSONLに保存する
@@ -92,43 +92,43 @@ configs:
   Do only bonus FATEs?:
     default: false
   No combat teleport timeout (secs):
-    description: If you reach a FATE and combat doesn't start, teleport to next zone after this many seconds. Set 0 to disable.
+    description: FATE到着後に戦闘が始まらない場合、この秒数経過で次のゾーンへ移動します。0で無効。
     default: 30
     min: 0
     max: 600
   No movement teleport timeout (secs):
-    description: If you haven't moved for this many seconds, teleport to the next zone. Set 0 to disable.
+    description: この秒数の間移動していない場合、次のゾーンへ移動します。0で無効。
     default: 30
     min: 0
     max: 600
   Prefer dense mob pulls?:
-    description: Prefer targeting enemies with the most nearby FATE mobs to improve AoE uptime.
+    description: 範囲攻撃効率を上げるため、周囲に敵が多い対象を優先して狙います。
     default: true
   Dense pull cluster radius:
-    description: Radius used to count nearby FATE mobs when picking a dense target.
+    description: 密集対象を選ぶ際に「近くの敵」を数える半径です。
     default: 12
     min: 3
     max: 30
   Dense pull minimum enemies:
-    description: Minimum nearby enemies before switching from nearest target to dense-pull target.
+    description: 近距離優先から密集優先に切り替える最小敵数です。
     default: 3
     min: 1
     max: 20
   Forlorns:
-    description: Forlorns to attack.
+    description: 攻撃対象にするフォーローンの種類を選択します。
     default: "All"
     is_choice: true
     choices: ["All", "Small", "None"]
   Change instances if no FATEs?:
     default: false
   Teleport to next zone if no FATEs?:
-    description: Cycle to the next Dawntrail zone when no eligible FATEs remain.
+    description: 対象FATEが無くなったら、次の黄金エリアへ順番に移動します。
     default: true
   Stay on current map only?:
-    description: Never change to another zone. Keeps farming in current map (instance changes can still happen).
+    description: 他マップへは移動せず、現在マップのみで周回します（インスタンス移動は発生する場合があります）。
     default: false
   Exchange bicolor gemstones for:
-    description: Choose none if you dont want to spend your bicolors.
+    description: バイカラージェムで交換するアイテムを選択します。消費したくない場合は None を選択。
     default: "Bicolor Gemstone Voucher"
     is_choice: true
     choices: ["None",
@@ -171,37 +171,37 @@ configs:
         "Ty'aitya Wingblade",
         "Ut'ohmu Siderite"]
   Chocobo Companion Stance:
-    description: Will not summon chocobo if set to "None"
+    description: "None" の場合はチョコボを呼び出しません。
     default: "Healer"
     is_choice: true
     choices: ["Follow", "Free", "Defender", "Healer", "Attacker", "None"]
   Buy Gysahl Greens?:
-    description: Automatically buys a 99 stack of Gysahl Greens from the Limsa gil vendor if none in inventory.
+    description: 在庫が無い場合、リムサのNPCからギサールの野菜を99個自動購入します。
     default: true
   Self repair?:
-    description: If checked, will attempt to repair your gear. If not checked, will go to Limsa mender.
+    description: ONで自分で修理を試みます。OFFならリムサの修理NPCへ移動します。
     default: true
   Pause for retainers?:
     default: false
   Dump extra gear at GC?:
-    description: Used with retainers, in case they come back with too much stuff and clog your inventory.
+    description: リテイナー運用時、持ち帰り品で所持品が圧迫された場合にGC納品で整理します。
     default: true
   Return on death?:
-    description: Auto accept the box to return to home aetheryte when you die.
+    description: 戦闘不能時、ホームポイントへ戻る確認を自動承諾します。
     default: true
   Echo logs:
-    description: Debug level of logs.
+    description: ログ出力レベルを選択します。
     default: "Gems"
     is_choice: true
     choices: ["All", "Gems", "None"]
   Companion Script Mode:
-    description: Enable to use companison scripts with main Fate Farming script.
+    description: メインの Fate Farming と companion スクリプトを併用するモードです。
     default: false
   Blacklist:
-    description: Enter the names of FATEs you want to blacklist, separated by commas (e.g., FATE Name 1, FATE Name 2, FATE Name 3)
+    description: 除外したいFATE名をカンマ区切りで入力します（例: FATE名1,FATE名2,FATE名3）。
     default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」"
   Discord Webhook URL:
-    description: URL to send notifications to when the script stops or encounters an error. Leave blank to disable.
+    description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
 [[End Metadata]]
 --]=====]
