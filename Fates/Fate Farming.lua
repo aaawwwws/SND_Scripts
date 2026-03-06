@@ -83,7 +83,7 @@ configs:
     description: 収集系FATEにも参加します。
     default: false
   Do other NPC FATEs?:
-    description: OFFにすると、NPCへの会話が必要なFATEを無視します。
+    description: OFFにすると、NPCへの会話が必要なFATEを無視します 。
     default: false
   Save active FATE data?:
     description: 出現中FATEの情報をJSONLに保存する
@@ -2904,7 +2904,8 @@ function MoveToFate()
                 if Svc.Targets.Target == nil and OptimizeClusterMovement == true then
                     local center = GetPreferredFateMovePosition(CurrentFate)
                     if center ~= nil and GetDistanceToPoint(center) > 8 then
-                        IPC.vnavmesh.PathfindAndMoveTo(center, Svc.Condition[CharacterCondition.flying] and SelectedZone.flying)
+                        IPC.vnavmesh.PathfindAndMoveTo(center,
+                            Svc.Condition[CharacterCondition.flying] and SelectedZone.flying)
                     end
                 end
             end
@@ -4577,50 +4578,50 @@ function FateFarming:Run()
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
-    StopScript                       = false
-    DidFate                          = false
-    RsrDynamicSingleApplied          = false
-    GemAnnouncementLock              = false
-    DeathAnnouncementLock            = false
-    MovingAnnouncementLock           = false
-    SuccessiveInstanceChanges        = 0
-    LastInstanceChangeTimestamp      = 0
-    LastTeleportTimeStamp            = 0
-    NoCombatStartTime                = nil
-    LastMoveTimestamp                = os.clock()
-    LastMovePosition                 = nil
-    GotCollectionsFullCredit         = false
-    WaitingForFateRewards            = nil
-    LastFateEndTime                  = os.clock()
-    LastStuckCheckTime               = os.clock()
-    local initialPosition            = GetLocalPlayerPosition()
-    LastStuckCheckPosition           = initialPosition or Vector3(0, 0, 0)
-    ExchangeMoveLastCheckTime        = 0
-    ExchangeMoveLastPosition         = nil
-    ExchangeMoveStuckCount           = 0
-    MoveStuckLastCheckTime           = 0
-    MoveStuckLastPosition            = nil
-    MoveStuckCount                   = 0
-    MainClass                        = Player.Job
-    BossFatesClass                   = nil
-    BicolorGemExchangeThreshold      = 1400
-    ClusterMoveLastRefresh           = 0
-    ClusterMoveCachedFateId          = nil
-    ClusterMoveCachedPosition        = nil
-    SessionStartClock                = os.clock()
-    SessionStartGemCount             = Inventory.GetItemCount(26807)
-    SessionFatesStarted              = 0
-    SessionFatesCompleted            = 0
-    SessionFatesFailed               = 0
-    SessionStuckRepathCount          = 0
-    SessionStuckAetheryteCount       = 0
-    SessionStuckZoneSwitchCount      = 0
-    SessionStopReason                = nil
+    StopScript                  = false
+    DidFate                     = false
+    RsrDynamicSingleApplied     = false
+    GemAnnouncementLock         = false
+    DeathAnnouncementLock       = false
+    MovingAnnouncementLock      = false
+    SuccessiveInstanceChanges   = 0
+    LastInstanceChangeTimestamp = 0
+    LastTeleportTimeStamp       = 0
+    NoCombatStartTime           = nil
+    LastMoveTimestamp           = os.clock()
+    LastMovePosition            = nil
+    GotCollectionsFullCredit    = false
+    WaitingForFateRewards       = nil
+    LastFateEndTime             = os.clock()
+    LastStuckCheckTime          = os.clock()
+    local initialPosition       = GetLocalPlayerPosition()
+    LastStuckCheckPosition      = initialPosition or Vector3(0, 0, 0)
+    ExchangeMoveLastCheckTime   = 0
+    ExchangeMoveLastPosition    = nil
+    ExchangeMoveStuckCount      = 0
+    MoveStuckLastCheckTime      = 0
+    MoveStuckLastPosition       = nil
+    MoveStuckCount              = 0
+    MainClass                   = Player.Job
+    BossFatesClass              = nil
+    BicolorGemExchangeThreshold = 1400
+    ClusterMoveLastRefresh      = 0
+    ClusterMoveCachedFateId     = nil
+    ClusterMoveCachedPosition   = nil
+    SessionStartClock           = os.clock()
+    SessionStartGemCount        = Inventory.GetItemCount(26807)
+    SessionFatesStarted         = 0
+    SessionFatesCompleted       = 0
+    SessionFatesFailed          = 0
+    SessionStuckRepathCount     = 0
+    SessionStuckAetheryteCount  = 0
+    SessionStuckZoneSwitchCount = 0
+    SessionStopReason           = nil
 
     --Forlorns
-    IgnoreForlorns                   = false
-    IgnoreBigForlornOnly             = false
-    Forlorns                         = string.lower(Config.Get("Forlorns"))
+    IgnoreForlorns              = false
+    IgnoreBigForlornOnly        = false
+    Forlorns                    = string.lower(Config.Get("Forlorns"))
     if Forlorns == "none" then
         IgnoreForlorns = true
     elseif Forlorns == "small" then
