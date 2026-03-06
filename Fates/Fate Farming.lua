@@ -2778,7 +2778,7 @@ function MiddleOfFateDismount()
             end
         end
     else
-        AttemptToTargetClosestFateEnemy(true)
+        AttemptToTargetClosestFateEnemy(true, nil, false)
     end
 end
 
@@ -2883,7 +2883,7 @@ function MoveToFate()
             if (CurrentFate.isOtherNpcFate or CurrentFate.isCollectionsFate) and not InActiveFate() then
                 yield("/target " .. CurrentFate.npcName)
             else
-                AttemptToTargetClosestFateEnemy(true)
+                AttemptToTargetClosestFateEnemy(true, nil, false)
                 if Svc.Targets.Target == nil and OptimizeClusterMovement == true then
                     local center = GetPreferredFateMovePosition(CurrentFate)
                     if center ~= nil and GetDistanceToPoint(center) > 8 then
@@ -3277,8 +3277,8 @@ function TurnOnCombatMods(rotationMode)
 
             if DodgingPlugin == "BMR" then
                 yield("/bmrai on")
-                yield("/bmrai followtarget on") -- overrides navmesh path and runs into walls sometimes
-                yield("/bmrai followcombat on")
+                yield("/bmrai followtarget off")
+                yield("/bmrai followcombat off")
                 yield("/bmrai maxdistancetarget " .. MaxDistance)
                 if MoveToMob == true then
                     yield("/bmrai followoutofcombat on")
@@ -3569,18 +3569,20 @@ function DoFate()
     then
         local currentTargetName = GetTargetName()
         if currentTargetName ~= "Forlorn Maiden" and currentTargetName ~= "The Forlorn" then
-            local closePullRadius = math.max((MaxDistance or 0) + 6, 8)
-            local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40))
-            local gotUnengagedTarget = AttemptToTargetClosestFateEnemy(true, closePullRadius, false)
-            if not gotUnengagedTarget then
-                AttemptToTargetClosestFateEnemy(true, farPullRadius, false)
-            end
+            local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
+            local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40), fateRadius + 15)
+            AttemptToTargetClosestFateEnemy(true, farPullRadius, false)
         end
     end
 
     -- targets whatever is trying to kill you
     if Svc.Targets.Target == nil then
-        yield("/battletarget")
+        local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
+        local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40), fateRadius + 15)
+        local gotUnengagedTarget = AttemptToTargetClosestFateEnemy(true, farPullRadius, false)
+        if not gotUnengagedTarget then
+            yield("/battletarget")
+        end
     end
 
     -- clears target
@@ -3626,7 +3628,7 @@ function DoFate()
             end
             return
         else
-            AttemptToTargetClosestFateEnemy(true)
+            AttemptToTargetClosestFateEnemy(true, nil, false)
             yield("/wait 1") -- wait in case target doesnt stick
             if (Svc.Targets.Target == nil) and not Svc.Condition[CharacterCondition.casting] then
                 IPC.vnavmesh.PathfindAndMoveTo(preferredMovePos, false)
