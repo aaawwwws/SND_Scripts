@@ -2,7 +2,7 @@
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
 version: 3.1.7
-description:
+description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
   - Can purchase Bicolor Gemstone Vouchers (both old and new) when your gemstones are almost capped
