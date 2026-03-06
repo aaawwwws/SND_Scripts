@@ -101,6 +101,19 @@ configs:
     default: 30
     min: 0
     max: 600
+  Prefer dense mob pulls?:
+    description: Prefer targeting enemies with the most nearby FATE mobs to improve AoE uptime.
+    default: true
+  Dense pull cluster radius:
+    description: Radius used to count nearby FATE mobs when picking a dense target.
+    default: 12
+    min: 3
+    max: 30
+  Dense pull minimum enemies:
+    description: Minimum nearby enemies before switching from nearest target to dense-pull target.
+    default: 3
+    min: 1
+    max: 20
   Forlorns:
     description: Forlorns to attack.
     default: "All"
@@ -1358,22 +1371,70 @@ function GetTargetName()
 end
 
 function AttemptToTargetClosestFateEnemy()
-    --Svc.Targets.Target = Svc.Objects.OrderBy(DistanceToObject).FirstOrDefault(o => o.IsTargetable && o.IsHostile() && !o.IsDead && (distance == 0 || DistanceToObject(o) <= distance) && o.Struct()->FateId > 0);
+    local playerPos = GetLocalPlayerPosition()
+    if playerPos == nil then
+        return
+    end
+
+    local fateIdFilter = CurrentFate and CurrentFate.fateId or 0
+    local candidates = {}
     local closestTarget = nil
     local closestTargetDistance = math.maxinteger
+
     for i = 0, Svc.Objects.Length - 1 do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and obj:IsHostile() and
-            not obj.IsDead and EntityWrapper(obj).FateId > 0
+        if obj ~= nil and obj.IsTargetable and obj:IsHostile() and not obj.IsDead
         then
-            local dist = GetDistanceToPoint(obj.Position)
-            if dist < closestTargetDistance then
-                closestTargetDistance = dist
-                closestTarget = obj
+            local objFateId = EntityWrapper(obj).FateId
+            if objFateId > 0 and (fateIdFilter == 0 or objFateId == fateIdFilter) then
+                local dist = DistanceBetween(playerPos, obj.Position)
+                table.insert(candidates, {
+                    obj = obj,
+                    dist = dist
+                })
+
+                if dist < closestTargetDistance then
+                    closestTargetDistance = dist
+                    closestTarget = obj
+                end
             end
         end
     end
-    if closestTarget ~= nil then
+
+    if #candidates == 0 then
+        return
+    end
+
+    local useDensePulls = PreferDensePulls ~= false
+    local clusterRadius = DensePullClusterRadius or 12
+    local minClusterEnemies = DensePullMinimumEnemies or 3
+
+    if not useDensePulls or #candidates == 1 then
+        Svc.Targets.Target = closestTarget
+        return
+    end
+
+    local bestTarget = nil
+    local bestClusterSize = -1
+    local bestTargetDistance = math.maxinteger
+    for _, candidate in ipairs(candidates) do
+        local clusterSize = 0
+        for _, other in ipairs(candidates) do
+            if DistanceBetweenFlat(candidate.obj.Position, other.obj.Position) <= clusterRadius then
+                clusterSize = clusterSize + 1
+            end
+        end
+
+        if clusterSize > bestClusterSize or (clusterSize == bestClusterSize and candidate.dist < bestTargetDistance) then
+            bestClusterSize = clusterSize
+            bestTargetDistance = candidate.dist
+            bestTarget = candidate.obj
+        end
+    end
+
+    if bestTarget ~= nil and bestClusterSize >= minClusterEnemies then
+        Svc.Targets.Target = bestTarget
+    elseif closestTarget ~= nil then
         Svc.Targets.Target = closestTarget
     end
 end
@@ -4047,10 +4108,22 @@ function FateFarming:Run()
     BonusFatesOnly                   = Config.Get("Do only bonus FATEs?") --If true, will only do bonus fates and ignore everything else
     NoCombatTeleportTimeout          = Config.Get("No combat teleport timeout (secs)")
     NoMovementTeleportTimeout        = Config.Get("No movement teleport timeout (secs)")
+    PreferDensePulls                 = Config.Get("Prefer dense mob pulls?")
+    DensePullClusterRadius           = Config.Get("Dense pull cluster radius")
+    DensePullMinimumEnemies          = Config.Get("Dense pull minimum enemies")
     FatePriority                     = { "DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
     MeleeDist                        = Config.Get("Max melee distance")
     RangedDist                       = Config.Get("Max ranged distance")
     HitboxBuffer                     = 0.5
+    if PreferDensePulls == nil then
+        PreferDensePulls = true
+    end
+    if DensePullClusterRadius == nil or DensePullClusterRadius < 1 then
+        DensePullClusterRadius = 12
+    end
+    if DensePullMinimumEnemies == nil or DensePullMinimumEnemies < 1 then
+        DensePullMinimumEnemies = 3
+    end
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
