@@ -206,7 +206,7 @@ configs:
     default: false
   Dump extra gear at GC?:
     description: リテイナー運用時、持ち帰り品で所持品が圧迫された場合にGC納品で整理します。
-    default: true
+    default: false
   Return on death?:
     description: 戦闘不能時、ホームポイントへ戻る確認を自動承諾します。
     default: true
