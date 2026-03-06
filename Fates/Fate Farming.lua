@@ -114,12 +114,12 @@ configs:
     default: true
   Dense pull cluster radius:
     description: 密集対象を選ぶ際に「近くの敵」を数える半径です。
-    default: 12
+    default: 30
     min: 3
     max: 30
   Dense pull minimum enemies:
     description: 近距離優先から密集優先に切り替える最小敵数です。
-    default: 3
+    default: 1
     min: 1
     max: 20
   Optimize movement to mob clusters?:
@@ -127,17 +127,17 @@ configs:
     default: true
   Cluster movement radius:
     description: 密集地点を判定する半径です。
-    default: 16
+    default: 40
     min: 5
     max: 40
   Cluster movement minimum enemies:
     description: 密集地点として採用する最小敵数です。
-    default: 4
+    default: 2
     min: 2
     max: 30
   Cluster movement refresh (secs):
     description: 密集地点の再計算間隔です。短いほど追従性が上がり、長いほど安定します。
-    default: 2
+    default: 1
     min: 1
     max: 20
   Dynamic AoE switch?:
@@ -145,12 +145,12 @@ configs:
     default: true
   Dynamic AoE enemy count:
     description: この数以上の敵が近くにいるとAoEモードを優先します。
-    default: 3
+    default: 1
     min: 1
     max: 20
   Dynamic AoE check radius:
     description: 動的AoE判定で周囲敵数を数える半径です。
-    default: 12
+    default: 30
     min: 3
     max: 30
   Staged anti-stuck recovery?:
@@ -1456,7 +1456,7 @@ function GetTargetName()
     end
 end
 
-function CollectFateEnemyCandidates(fateIdFilter)
+function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance)
     local playerPos = GetLocalPlayerPosition()
     if playerPos == nil then
         return {}, nil
@@ -1466,12 +1466,19 @@ function CollectFateEnemyCandidates(fateIdFilter)
     for i = 0, Svc.Objects.Length - 1 do
         local obj = Svc.Objects[i]
         if obj ~= nil and obj.IsTargetable and obj:IsHostile() and not obj.IsDead then
-            local objFateId = EntityWrapper(obj).FateId
+            local wrappedObj = EntityWrapper(obj)
+            local objFateId = wrappedObj.FateId
             if objFateId > 0 and (fateIdFilter == 0 or objFateId == fateIdFilter) then
-                table.insert(candidates, {
-                    obj = obj,
-                    dist = DistanceBetween(playerPos, obj.Position)
-                })
+                local dist = DistanceBetween(playerPos, obj.Position)
+                local isUnengaged = not wrappedObj.IsInCombat
+                local passesCombatFilter = (onlyUnengaged ~= true) or isUnengaged
+                local passesDistanceFilter = (maxDistance == nil) or (dist <= maxDistance)
+                if passesCombatFilter and passesDistanceFilter then
+                    table.insert(candidates, {
+                        obj = obj,
+                        dist = dist
+                    })
+                end
             end
         end
     end
@@ -1516,11 +1523,19 @@ function GetBestDenseCluster(candidates, clusterRadius)
     return bestTarget, bestClusterSize, bestCenter
 end
 
-function AttemptToTargetClosestFateEnemy()
+function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallbackToAny)
     local fateIdFilter = CurrentFate and CurrentFate.fateId or 0
-    local candidates = CollectFateEnemyCandidates(fateIdFilter)
+    local unengagedOnly = onlyUnengaged == true
+    if allowFallbackToAny == nil then
+        allowFallbackToAny = true
+    end
+
+    local candidates = CollectFateEnemyCandidates(fateIdFilter, unengagedOnly, maxDistance)
+    if #candidates == 0 and unengagedOnly and allowFallbackToAny then
+        candidates = CollectFateEnemyCandidates(fateIdFilter, false, maxDistance)
+    end
     if #candidates == 0 then
-        return
+        return false
     end
 
     local closestTarget = nil
@@ -1533,21 +1548,25 @@ function AttemptToTargetClosestFateEnemy()
     end
 
     local useDensePulls = PreferDensePulls ~= false
-    local clusterRadius = DensePullClusterRadius or 12
-    local minClusterEnemies = DensePullMinimumEnemies or 3
+    local clusterRadius = DensePullClusterRadius or 30
+    local minClusterEnemies = DensePullMinimumEnemies or 1
 
     if not useDensePulls or #candidates == 1 then
         Svc.Targets.Target = closestTarget
-        return
+        return true
     end
 
     local bestTarget, bestClusterSize = GetBestDenseCluster(candidates, clusterRadius)
 
     if bestTarget ~= nil and bestClusterSize >= minClusterEnemies then
         Svc.Targets.Target = bestTarget
+        return true
     elseif closestTarget ~= nil then
         Svc.Targets.Target = closestTarget
+        return true
     end
+
+    return false
 end
 
 function GetDenseFateClusterCenter(fateIdFilter, clusterRadius, minClusterEnemies)
@@ -2795,7 +2814,7 @@ function MiddleOfFateDismount()
             end
         end
     else
-        AttemptToTargetClosestFateEnemy()
+        AttemptToTargetClosestFateEnemy(true)
     end
 end
 
@@ -2900,7 +2919,7 @@ function MoveToFate()
             if (CurrentFate.isOtherNpcFate or CurrentFate.isCollectionsFate) and not InActiveFate() then
                 yield("/target " .. CurrentFate.npcName)
             else
-                AttemptToTargetClosestFateEnemy()
+                AttemptToTargetClosestFateEnemy(true)
                 if Svc.Targets.Target == nil and OptimizeClusterMovement == true then
                     local center = GetPreferredFateMovePosition(CurrentFate)
                     if center ~= nil and GetDistanceToPoint(center) > 8 then
@@ -3579,6 +3598,18 @@ function DoFate()
         UpdateCombatModeByNearbyEnemies()
     end
 
+    if Svc.Condition[CharacterCondition.inCombat]
+        and not CurrentFate.isCollectionsFate
+        and not CurrentFate.isOtherNpcFate
+        and not Svc.Condition[CharacterCondition.casting]
+    then
+        local currentTargetName = GetTargetName()
+        if currentTargetName ~= "Forlorn Maiden" and currentTargetName ~= "The Forlorn" then
+            local pullRadius = DynamicAoeCheckRadius or 30
+            AttemptToTargetClosestFateEnemy(true, pullRadius, false)
+        end
+    end
+
     -- targets whatever is trying to kill you
     if Entity.Target == nil then
         yield("/battletarget")
@@ -3624,7 +3655,7 @@ function DoFate()
             end
             return
         else
-            AttemptToTargetClosestFateEnemy()
+            AttemptToTargetClosestFateEnemy(true)
             yield("/wait 1") -- wait in case target doesnt stick
             if (Svc.Targets.Target == nil) and not Svc.Condition[CharacterCondition.casting] then
                 IPC.vnavmesh.PathfindAndMoveTo(preferredMovePos, false)
@@ -4546,31 +4577,31 @@ function FateFarming:Run()
         PreferDensePulls = true
     end
     if DensePullClusterRadius == nil or DensePullClusterRadius < 1 then
-        DensePullClusterRadius = 12
+        DensePullClusterRadius = 30
     end
     if DensePullMinimumEnemies == nil or DensePullMinimumEnemies < 1 then
-        DensePullMinimumEnemies = 3
+        DensePullMinimumEnemies = 1
     end
     if OptimizeClusterMovement == nil then
         OptimizeClusterMovement = true
     end
     if ClusterMoveRadius == nil or ClusterMoveRadius < 1 then
-        ClusterMoveRadius = 16
+        ClusterMoveRadius = 40
     end
     if ClusterMoveMinimumEnemies == nil or ClusterMoveMinimumEnemies < 1 then
-        ClusterMoveMinimumEnemies = 4
+        ClusterMoveMinimumEnemies = 2
     end
     if ClusterMoveRefreshSeconds == nil or ClusterMoveRefreshSeconds < 0.2 then
-        ClusterMoveRefreshSeconds = 2
+        ClusterMoveRefreshSeconds = 1
     end
     if DynamicAoeSwitch == nil then
         DynamicAoeSwitch = true
     end
     if DynamicAoeEnemyCount == nil or DynamicAoeEnemyCount < 1 then
-        DynamicAoeEnemyCount = 3
+        DynamicAoeEnemyCount = 1
     end
     if DynamicAoeCheckRadius == nil or DynamicAoeCheckRadius < 1 then
-        DynamicAoeCheckRadius = 12
+        DynamicAoeCheckRadius = 30
     end
     if EnableStagedAntiStuck == nil then
         EnableStagedAntiStuck = true
