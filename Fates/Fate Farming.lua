@@ -148,6 +148,11 @@ configs:
     default: 1
     min: 1
     max: 20
+  Dynamic AoE same-name enemy count:
+    description: 現在ターゲットと同名の敵がこの数以上いる時のみAoEを許可します。1で同名チェック無効。
+    default: 2
+    min: 1
+    max: 20
   Dynamic AoE check radius:
     description: 動的AoE判定で周囲敵数を数える半径です。
     default: 30
@@ -1566,6 +1571,28 @@ function CountNearbyFateEnemies(radius, fateIdFilter)
     return count
 end
 
+function CountNearbyFateEnemiesWithName(radius, fateIdFilter, nameToMatch)
+    if nameToMatch == nil or nameToMatch == "" then
+        return 0
+    end
+
+    local candidates, playerPos = CollectFateEnemyCandidates(fateIdFilter)
+    if playerPos == nil then
+        return 0
+    end
+
+    local count = 0
+    for _, candidate in ipairs(candidates) do
+        if DistanceBetweenFlat(playerPos, candidate.obj.Position) <= radius then
+            local objName = candidate.obj.Name:GetText()
+            if objName == nameToMatch then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
 function GetPreferredFateMovePosition(fate)
     if fate == nil or fate.position == nil then
         return nil
@@ -1613,7 +1640,22 @@ function UpdateCombatModeByNearbyEnemies()
     end
 
     local enemyCount = CountNearbyFateEnemies(DynamicAoeCheckRadius, CurrentFate.fateId)
-    if enemyCount >= DynamicAoeEnemyCount then
+    local shouldUseAoe = enemyCount >= DynamicAoeEnemyCount
+
+    local sameNameRequired = DynamicAoeSameNameEnemyCount or 2
+    if shouldUseAoe and sameNameRequired > 1 and Svc.Targets.Target ~= nil then
+        local currentTargetName = GetTargetName()
+        local sameNameEnemyCount = CountNearbyFateEnemiesWithName(
+            DynamicAoeCheckRadius,
+            CurrentFate.fateId,
+            currentTargetName
+        )
+        if sameNameEnemyCount < sameNameRequired then
+            shouldUseAoe = false
+        end
+    end
+
+    if shouldUseAoe then
         RsrDynamicSingleApplied = false
         TurnOnAoes()
         return
@@ -4584,6 +4626,7 @@ function FateFarming:Run()
     ClusterMoveRefreshSeconds        = Config.Get("Cluster movement refresh (secs)")
     DynamicAoeSwitch                 = Config.Get("Dynamic AoE switch?")
     DynamicAoeEnemyCount             = Config.Get("Dynamic AoE enemy count")
+    DynamicAoeSameNameEnemyCount     = Config.Get("Dynamic AoE same-name enemy count")
     DynamicAoeCheckRadius            = Config.Get("Dynamic AoE check radius")
     EnableStagedAntiStuck            = Config.Get("Staged anti-stuck recovery?")
     StuckCheckIntervalSeconds        = Config.Get("Stuck check interval (secs)")
@@ -4619,6 +4662,9 @@ function FateFarming:Run()
     end
     if DynamicAoeEnemyCount == nil or DynamicAoeEnemyCount < 1 then
         DynamicAoeEnemyCount = 1
+    end
+    if DynamicAoeSameNameEnemyCount == nil or DynamicAoeSameNameEnemyCount < 1 then
+        DynamicAoeSameNameEnemyCount = 2
     end
     if DynamicAoeCheckRadius == nil or DynamicAoeCheckRadius < 1 then
         DynamicAoeCheckRadius = 30
