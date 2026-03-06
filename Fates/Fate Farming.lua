@@ -114,6 +114,53 @@ configs:
     default: 3
     min: 1
     max: 20
+  Optimize movement to mob clusters?:
+    description: FATE移動中に敵の密集地点を優先して経由し、範囲狩りしやすい位置取りを行います。
+    default: true
+  Cluster movement radius:
+    description: 密集地点を判定する半径です。
+    default: 16
+    min: 5
+    max: 40
+  Cluster movement minimum enemies:
+    description: 密集地点として採用する最小敵数です。
+    default: 4
+    min: 2
+    max: 30
+  Cluster movement refresh (secs):
+    description: 密集地点の再計算間隔です。短いほど追従性が上がり、長いほど安定します。
+    default: 2
+    min: 1
+    max: 20
+  Dynamic AoE switch?:
+    description: 周囲の敵数に応じてAoE/単体モードを自動切替します（フォーローン優先時を除く）。
+    default: true
+  Dynamic AoE enemy count:
+    description: この数以上の敵が近くにいるとAoEモードを優先します。
+    default: 3
+    min: 1
+    max: 20
+  Dynamic AoE check radius:
+    description: Dynamic AoE判定で周囲敵数を数える半径です。
+    default: 12
+    min: 3
+    max: 30
+  Staged anti-stuck recovery?:
+    description: 移動詰まり時に段階的復帰（再経路探索→最寄りエーテ退避→ゾーン切替）を行います。
+    default: true
+  Stuck check interval (secs):
+    description: スタック判定を行う間隔です。
+    default: 10
+    min: 3
+    max: 60
+  Stuck movement threshold:
+    description: この距離未満しか動いていないとスタックとみなします。
+    default: 3
+    min: 0.5
+    max: 20
+  Print session summary?:
+    description: 停止時に周回統計（時間・完了数・失敗数・時給など）を出力します。
+    default: true
   Forlorns:
     description: 攻撃対象にするフォーローンの種類を選択します。
     default: "All"
@@ -333,6 +380,7 @@ end
 
 local AcceptNPCFateOrRejectOtherYesno
 local AcceptTeleportOfferLocation
+local ApplyChocoboStance
 local ARRetainersWaitingToBeProcessed
 local AttemptToTargetClosestFateEnemy
 local AutoBuyGysahlGreens
@@ -374,9 +422,12 @@ local GetPlayerHitboxRadius
 local GetPlayerPosition
 local GetTargetHitboxRadius
 local GetTargetName
+local GetDenseFateClusterCenter
+local GetPreferredFateMovePosition
 local GetZoneInstance
 local GrandCompanyTurnIn
 local HandleDeath
+local HandleMovementStuck
 local HandleExchangeMovementStuck
 local HandleUnexpectedCombat
 local HasPlugin
@@ -411,6 +462,7 @@ local Normalize
 local NpcDismount
 local PotionCheck
 local ProcessRetainers
+local PrintSessionSummary
 local RandomAdjustCoordinates
 local Ready
 local Repair
@@ -431,8 +483,11 @@ local TurnOffCombatMods
 local TurnOffRaidBuffs
 local TurnOnAoes
 local TurnOnCombatMods
+local UpdateCombatModeByNearbyEnemies
 local WaitForContinuation
+local ResetMovementStuckState
 local ResetExchangeMovementStuckState
+local SetStopReason
 
 -- 出現中FATEデータ保存用の設定/状態
 local FateDataLogEnabled
@@ -446,6 +501,27 @@ local FateDataLogError
 local ExchangeMoveLastCheckTime
 local ExchangeMoveLastPosition
 local ExchangeMoveStuckCount
+
+-- 通常移動時のスタック検知用
+local MoveStuckLastCheckTime
+local MoveStuckLastPosition
+local MoveStuckCount
+
+-- セッション統計
+local SessionStartClock
+local SessionStartGemCount
+local SessionFatesStarted
+local SessionFatesCompleted
+local SessionFatesFailed
+local SessionStuckRepathCount
+local SessionStuckAetheryteCount
+local SessionStuckZoneSwitchCount
+local SessionStopReason
+
+-- 密集移動のキャッシュ
+local ClusterMoveLastRefresh
+local ClusterMoveCachedFateId
+local ClusterMoveCachedPosition
 
 --[[
 ********************************************************************************
@@ -1370,39 +1446,80 @@ function GetTargetName()
     end
 end
 
-function AttemptToTargetClosestFateEnemy()
+function CollectFateEnemyCandidates(fateIdFilter)
     local playerPos = GetLocalPlayerPosition()
     if playerPos == nil then
-        return
+        return {}, nil
     end
 
-    local fateIdFilter = CurrentFate and CurrentFate.fateId or 0
     local candidates = {}
-    local closestTarget = nil
-    local closestTargetDistance = math.maxinteger
-
     for i = 0, Svc.Objects.Length - 1 do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and obj:IsHostile() and not obj.IsDead
-        then
+        if obj ~= nil and obj.IsTargetable and obj:IsHostile() and not obj.IsDead then
             local objFateId = EntityWrapper(obj).FateId
             if objFateId > 0 and (fateIdFilter == 0 or objFateId == fateIdFilter) then
-                local dist = DistanceBetween(playerPos, obj.Position)
                 table.insert(candidates, {
                     obj = obj,
-                    dist = dist
+                    dist = DistanceBetween(playerPos, obj.Position)
                 })
-
-                if dist < closestTargetDistance then
-                    closestTargetDistance = dist
-                    closestTarget = obj
-                end
             end
         end
     end
 
+    return candidates, playerPos
+end
+
+function GetBestDenseCluster(candidates, clusterRadius)
+    local bestTarget = nil
+    local bestClusterSize = -1
+    local bestTargetDistance = math.maxinteger
+    local bestCenter = nil
+
+    for _, candidate in ipairs(candidates) do
+        local clusterSize = 0
+        local sumX = 0
+        local sumY = 0
+        local sumZ = 0
+
+        for _, other in ipairs(candidates) do
+            if DistanceBetweenFlat(candidate.obj.Position, other.obj.Position) <= clusterRadius then
+                clusterSize = clusterSize + 1
+                sumX = sumX + other.obj.Position.X
+                sumY = sumY + other.obj.Position.Y
+                sumZ = sumZ + other.obj.Position.Z
+            end
+        end
+
+        local center = candidate.obj.Position
+        if clusterSize > 0 then
+            center = Vector3(sumX / clusterSize, sumY / clusterSize, sumZ / clusterSize)
+        end
+
+        if clusterSize > bestClusterSize or (clusterSize == bestClusterSize and candidate.dist < bestTargetDistance) then
+            bestClusterSize = clusterSize
+            bestTargetDistance = candidate.dist
+            bestTarget = candidate.obj
+            bestCenter = center
+        end
+    end
+
+    return bestTarget, bestClusterSize, bestCenter
+end
+
+function AttemptToTargetClosestFateEnemy()
+    local fateIdFilter = CurrentFate and CurrentFate.fateId or 0
+    local candidates = CollectFateEnemyCandidates(fateIdFilter)
     if #candidates == 0 then
         return
+    end
+
+    local closestTarget = nil
+    local closestTargetDistance = math.maxinteger
+    for _, candidate in ipairs(candidates) do
+        if candidate.dist < closestTargetDistance then
+            closestTargetDistance = candidate.dist
+            closestTarget = candidate.obj
+        end
     end
 
     local useDensePulls = PreferDensePulls ~= false
@@ -1414,28 +1531,111 @@ function AttemptToTargetClosestFateEnemy()
         return
     end
 
-    local bestTarget = nil
-    local bestClusterSize = -1
-    local bestTargetDistance = math.maxinteger
-    for _, candidate in ipairs(candidates) do
-        local clusterSize = 0
-        for _, other in ipairs(candidates) do
-            if DistanceBetweenFlat(candidate.obj.Position, other.obj.Position) <= clusterRadius then
-                clusterSize = clusterSize + 1
-            end
-        end
-
-        if clusterSize > bestClusterSize or (clusterSize == bestClusterSize and candidate.dist < bestTargetDistance) then
-            bestClusterSize = clusterSize
-            bestTargetDistance = candidate.dist
-            bestTarget = candidate.obj
-        end
-    end
+    local bestTarget, bestClusterSize = GetBestDenseCluster(candidates, clusterRadius)
 
     if bestTarget ~= nil and bestClusterSize >= minClusterEnemies then
         Svc.Targets.Target = bestTarget
     elseif closestTarget ~= nil then
         Svc.Targets.Target = closestTarget
+    end
+end
+
+function GetDenseFateClusterCenter(fateIdFilter, clusterRadius, minClusterEnemies)
+    local candidates = CollectFateEnemyCandidates(fateIdFilter)
+    if #candidates == 0 then
+        return nil, 0
+    end
+
+    local _, bestClusterSize, bestCenter = GetBestDenseCluster(candidates, clusterRadius)
+    if bestCenter ~= nil and bestClusterSize >= minClusterEnemies then
+        local onFloor = IPC.vnavmesh.PointOnFloor(bestCenter, true, 30)
+        return onFloor or bestCenter, bestClusterSize
+    end
+
+    return nil, bestClusterSize
+end
+
+function CountNearbyFateEnemies(radius, fateIdFilter)
+    local candidates, playerPos = CollectFateEnemyCandidates(fateIdFilter)
+    if playerPos == nil then
+        return 0
+    end
+
+    local count = 0
+    for _, candidate in ipairs(candidates) do
+        if DistanceBetweenFlat(playerPos, candidate.obj.Position) <= radius then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function GetPreferredFateMovePosition(fate)
+    if fate == nil or fate.position == nil then
+        return nil
+    end
+
+    if fate.isCollectionsFate or fate.isOtherNpcFate then
+        return fate.position
+    end
+
+    if OptimizeClusterMovement ~= true then
+        return fate.position
+    end
+
+    local now = os.clock()
+    if ClusterMoveCachedPosition ~= nil
+        and ClusterMoveCachedFateId == fate.fateId
+        and ClusterMoveLastRefresh ~= nil
+        and now - ClusterMoveLastRefresh < ClusterMoveRefreshSeconds
+    then
+        return ClusterMoveCachedPosition
+    end
+
+    local center = GetDenseFateClusterCenter(
+        fate.fateId,
+        ClusterMoveRadius,
+        ClusterMoveMinimumEnemies
+    )
+
+    ClusterMoveLastRefresh = now
+    ClusterMoveCachedFateId = fate.fateId
+    if center ~= nil then
+        ClusterMoveCachedPosition = center
+        return center
+    end
+
+    ClusterMoveCachedPosition = fate.position
+    return fate.position
+end
+
+function UpdateCombatModeByNearbyEnemies()
+    if DynamicAoeSwitch ~= true or CurrentFate == nil then
+        RsrDynamicSingleApplied = false
+        TurnOnAoes()
+        return
+    end
+
+    local enemyCount = CountNearbyFateEnemies(DynamicAoeCheckRadius, CurrentFate.fateId)
+    if enemyCount >= DynamicAoeEnemyCount then
+        RsrDynamicSingleApplied = false
+        TurnOnAoes()
+        return
+    end
+
+    if RotationPlugin == "RSR" then
+        if not RsrDynamicSingleApplied then
+            yield("/rotation auto on")
+            yield("/rotation settings aoetype 1")
+            RsrDynamicSingleApplied = true
+        end
+        AoesOn = false
+    elseif RotationPlugin == "BMR" or RotationPlugin == "VBM" then
+        RsrDynamicSingleApplied = false
+        TurnOffAoes()
+    else
+        RsrDynamicSingleApplied = false
+        TurnOnAoes()
     end
 end
 
@@ -2299,6 +2499,7 @@ function ChangeInstance()
         if CompanionScriptMode then
             local shouldWaitForBonusBuff = WaitIfBonusBuff and (HasStatusId(1288) or HasStatusId(1289))
             if WaitingForFateRewards == nil and not shouldWaitForBonusBuff then
+                SetStopReason("Companion mode: no rewards/buff while instance cycling")
                 StopScript = true
             else
                 Dalamud.Log("[Fate Farming] Waiting for buff or fate rewards")
@@ -2647,7 +2848,8 @@ function MoveToFate()
     elseif CurrentFate == nil or NextFate.fateId ~= CurrentFate.fateId then
         yield("/vnav stop")
         CurrentFate = NextFate
-        SetMapFlag(SelectedZone.zoneId, CurrentFate.position)
+        local mappedPosition = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+        SetMapFlag(SelectedZone.zoneId, mappedPosition)
         return
     end
 
@@ -2663,8 +2865,10 @@ function MoveToFate()
         end
     end
 
+    local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+
     -- upon approaching fate, pick a target and switch to pathing towards target
-    if GetDistanceToPoint(CurrentFate.position) < 60 then
+    if GetDistanceToPoint(preferredMovePos) < 60 then
         if Svc.Targets.Target ~= nil then
             Dalamud.Log("[FATE] Found FATE target, immediate rerouting")
             yield("/wait 0.1")
@@ -2687,36 +2891,26 @@ function MoveToFate()
                 yield("/target " .. CurrentFate.npcName)
             else
                 AttemptToTargetClosestFateEnemy()
+                if Svc.Targets.Target == nil and OptimizeClusterMovement == true then
+                    local center = GetPreferredFateMovePosition(CurrentFate)
+                    if center ~= nil and GetDistanceToPoint(center) > 8 then
+                        IPC.vnavmesh.PathfindAndMoveTo(center, Svc.Condition[CharacterCondition.flying] and SelectedZone.flying)
+                    end
+                end
             end
             yield("/wait 0.5") -- give it a moment to make sure the target sticks
             return
         end
     end
 
-    -- check for stuck
+    -- check for stuck (staged recovery)
     if (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress()) and Svc.Condition[CharacterCondition.mounted] then
-        local now = os.clock()
-        if now - LastStuckCheckTime > 10 then
-            if GetDistanceToPoint(LastStuckCheckPosition) < 3 then
-                yield("/vnav stop")
-                yield("/wait 1")
-                Dalamud.Log("[FATE] Antistuck")
-                local playerPos = GetLocalPlayerPosition()
-                if playerPos ~= nil then
-                    local up10 = playerPos + Vector3(0, 10, 0)
-                    IPC.vnavmesh.PathfindAndMoveTo(up10, Svc.Condition[CharacterCondition.flying] and SelectedZone
-                        .flying) -- fly up 10 then try again
-                end
-            end
-
-            LastStuckCheckTime = now
-            local playerPos = GetLocalPlayerPosition()
-            if playerPos ~= nil then
-                LastStuckCheckPosition = playerPos
-            end
+        if HandleMovementStuck(preferredMovePos) then
+            return
         end
         return
     end
+    ResetMovementStuckState()
 
     if not MovingAnnouncementLock then
         Dalamud.Log("[FATE] Moving to fate #" .. CurrentFate.fateId .. " " .. CurrentFate.fateName)
@@ -2731,9 +2925,11 @@ function MoveToFate()
         return
     end
 
-    local nearestFloor = CurrentFate.position
-    if not (CurrentFate.isCollectionsFate or CurrentFate.isOtherNpcFate) then
-        nearestFloor = RandomAdjustCoordinates(CurrentFate.position, 10)
+    local nearestFloor = preferredMovePos
+    if nearestFloor == nil then
+        nearestFloor = CurrentFate.position
+    elseif not (CurrentFate.isCollectionsFate or CurrentFate.isOtherNpcFate) and OptimizeClusterMovement ~= true then
+        nearestFloor = RandomAdjustCoordinates(nearestFloor, 10)
     end
 
     if GetDistanceToPoint(nearestFloor) > 5 then
@@ -2875,6 +3071,43 @@ function GetClassJobTableFromName(classString)
     return nil
 end
 
+function GetChocoboStanceActionName(stanceName)
+    if stanceName == nil then
+        return nil
+    end
+
+    local raw = tostring(stanceName)
+    local normalized = string.lower(raw)
+
+    if normalized == "none" or raw == "なし" then
+        return nil
+    end
+    if normalized == "follow" or raw == "フォロー" then
+        return nil
+    end
+
+    local isJapaneseClient = GameLanguage == "Japanese"
+    if normalized == "free" or raw == "フリー" or raw == "フリーファイト" then
+        return isJapaneseClient and "フリーファイト" or "Free Stance"
+    elseif normalized == "defender" or raw == "ディフェンダー" then
+        return isJapaneseClient and "ディフェンダー" or "Defender Stance"
+    elseif normalized == "healer" or raw == "ヒーラー" then
+        return isJapaneseClient and "ヒーラー" or "Healer Stance"
+    elseif normalized == "attacker" or raw == "アタッカー" then
+        return isJapaneseClient and "アタッカー" or "Attacker Stance"
+    end
+
+    return raw
+end
+
+function ApplyChocoboStance()
+    local stanceActionName = GetChocoboStanceActionName(ChocoboStance)
+    if stanceActionName == nil or stanceActionName == "" then
+        return
+    end
+    yield('/cac "' .. stanceActionName .. '"')
+end
+
 function SummonChocobo()
     if Svc.Condition[CharacterCondition.mounted] then
         Dismount()
@@ -2885,7 +3118,7 @@ function SummonChocobo()
         if Inventory.GetItemCount(4868) > 0 then
             yield(string.format('/item "%s"', LANG.actions["Gysahl Greens"]))
             yield("/wait 3")
-            yield('/cac "' .. ChocoboStance .. ' stance"')
+            ApplyChocoboStance()
         elseif ShouldAutoBuyGysahlGreens then
             State = CharacterState.autoBuyGysahlGreens
             Dalamud.Log("[FATE] State Change: AutoBuyGysahlGreens")
@@ -2981,6 +3214,7 @@ function TurnOnAoes()
             IPC.BossMod.SetActive(RotationAoePreset)
         end
         AoesOn = true
+        RsrDynamicSingleApplied = false
     end
 end
 
@@ -2996,6 +3230,7 @@ function TurnOffAoes()
             IPC.BossMod.SetActive(RotationSingleTargetPreset)
         end
         AoesOn = false
+        RsrDynamicSingleApplied = false
     end
 end
 
@@ -3180,6 +3415,7 @@ function DoFate()
     Dalamud.Log("[FATE] DoFate")
     if WaitingForFateRewards == nil or WaitingForFateRewards.fateId ~= CurrentFate.fateId then
         WaitingForFateRewards = CurrentFate
+        SessionFatesStarted = SessionFatesStarted + 1
         Dalamud.Log("[FATE] WaitingForFateRewards DoFate: " .. tostring(WaitingForFateRewards.fateId))
     end
     local currentClass = Player.Job
@@ -3244,7 +3480,8 @@ function DoFate()
         yield("/vnav stop")
         yield("/wait 1")
         Dalamud.Log("[FATE] pushed out of fate going back!")
-        IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position,
+        local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+        IPC.vnavmesh.PathfindAndMoveTo(fallbackPos,
             Svc.Condition[CharacterCondition.flying] and SelectedZone.flying)
         return
     elseif not IsFateActive(CurrentFate.fateObject) or progress == 100 then
@@ -3319,7 +3556,7 @@ function DoFate()
             TurnOnAoes()
         end
     else
-        TurnOnAoes()
+        UpdateCombatModeByNearbyEnemies()
     end
 
     -- targets whatever is trying to kill you
@@ -3345,6 +3582,11 @@ function DoFate()
 
     -- pathfind closer if enemies are too far
     if not Svc.Condition[CharacterCondition.inCombat] then
+        local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+        if HandleMovementStuck(preferredMovePos) then
+            return
+        end
+
         if Svc.Targets.Target ~= nil then
             if GetDistanceToTargetFlat() <= (MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius()) then
                 if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
@@ -3365,7 +3607,7 @@ function DoFate()
             AttemptToTargetClosestFateEnemy()
             yield("/wait 1") -- wait in case target doesnt stick
             if (Svc.Targets.Target == nil) and not Svc.Condition[CharacterCondition.casting] then
-                IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, false)
+                IPC.vnavmesh.PathfindAndMoveTo(preferredMovePos, false)
             end
         end
     else
@@ -3374,6 +3616,9 @@ function DoFate()
                 yield("/vnav stop")
             end
         elseif not CurrentFate.isBossFate then
+            if HandleMovementStuck(Svc.Targets.Target and Svc.Targets.Target.Position or nil) then
+                return
+            end
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
                 yield("/wait 5.004")
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
@@ -3397,6 +3642,7 @@ function Ready()
         local msg = "ERROR: SelectedZone is not set! Aborting."
         yield("/echo [FATE] " .. msg)
         SendDiscordMessage(msg)
+        SetStopReason(msg)
         StopScript = true
         return
     end
@@ -3456,6 +3702,7 @@ function Ready()
             local msg = "ERROR: No aetheryte found for selected zone. Cannot teleport. Stopping script."
             yield("/echo [FATE] " .. msg)
             SendDiscordMessage(msg)
+            SetStopReason(msg)
             StopScript = true
             return
         end
@@ -3464,6 +3711,7 @@ function Ready()
             local msg = "ERROR: Teleportation failed. Stopping script."
             yield("/echo [FATE] " .. msg)
             SendDiscordMessage(msg)
+            SetStopReason(msg)
             StopScript = true
             return
         end
@@ -3502,6 +3750,7 @@ function Ready()
         end
         if CompanionScriptMode and not shouldWaitForBonusBuff then
             if WaitingForFateRewards == nil then
+                SetStopReason("Companion mode: no eligible fate and no pending rewards")
                 StopScript = true
                 Dalamud.Log("[FATE] StopScript: Ready")
             else
@@ -3534,6 +3783,7 @@ function Ready()
 
     if CompanionScriptMode and DidFate and not shouldWaitForBonusBuff then
         if WaitingForFateRewards == nil then
+            SetStopReason("Companion mode: finished one fate")
             StopScript = true
             Dalamud.Log("[FATE] StopScript: DidFate")
         else
@@ -3548,7 +3798,8 @@ function Ready()
 
     CurrentFate = NextFate
     HasFlownUpYet = false
-    SetMapFlag(SelectedZone.zoneId, CurrentFate.position)
+    local mappedPosition = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+    SetMapFlag(SelectedZone.zoneId, mappedPosition)
     State = CharacterState.moveToFate
     Dalamud.Log("[FATE] State Change: MovingtoFate " .. CurrentFate.fateName)
 end
@@ -3592,6 +3843,91 @@ function HandleDeath()
         DeathAnnouncementLock = false
         HasFlownUpYet = false
     end
+end
+
+function ResetMovementStuckState()
+    MoveStuckLastCheckTime = 0
+    MoveStuckLastPosition = nil
+    MoveStuckCount = 0
+end
+
+function HandleMovementStuck(targetPosition)
+    if EnableStagedAntiStuck ~= true then
+        return false
+    end
+
+    if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+        ResetMovementStuckState()
+        return false
+    end
+
+    local now = os.clock()
+    if now - MoveStuckLastCheckTime < StuckCheckIntervalSeconds then
+        return false
+    end
+    MoveStuckLastCheckTime = now
+
+    local playerPos = GetLocalPlayerPosition()
+    if playerPos == nil then
+        return false
+    end
+
+    local movedEnough = true
+    if MoveStuckLastPosition ~= nil then
+        movedEnough = DistanceBetween(playerPos, MoveStuckLastPosition) >= StuckMovementThreshold
+    end
+
+    if movedEnough then
+        MoveStuckCount = 0
+        MoveStuckLastPosition = playerPos
+        return false
+    end
+
+    MoveStuckCount = MoveStuckCount + 1
+    Dalamud.Log("[FATE] Movement stuck detected. Stage #" .. tostring(MoveStuckCount))
+
+    yield("/vnav stop")
+    yield("/wait 0.2")
+
+    if MoveStuckCount == 1 then
+        local retryTarget = targetPosition
+        if retryTarget == nil and CurrentFate ~= nil then
+            retryTarget = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+        end
+        if retryTarget == nil then
+            retryTarget = playerPos
+        end
+        local nearestFloor = IPC.vnavmesh.PointOnFloor(retryTarget, true, 30)
+        if nearestFloor ~= nil then
+            retryTarget = nearestFloor
+        end
+        IPC.vnavmesh.PathfindAndMoveTo(retryTarget, Svc.Condition[CharacterCondition.flying] and SelectedZone.flying)
+        SessionStuckRepathCount = SessionStuckRepathCount + 1
+    elseif MoveStuckCount == 2 then
+        local closestAetheryte = GetClosestAetheryteInZoneToPoint(Svc.ClientState.TerritoryType, playerPos)
+        if closestAetheryte ~= nil then
+            local teleported = TeleportTo(closestAetheryte.name)
+            if teleported ~= false then
+                SessionStuckAetheryteCount = SessionStuckAetheryteCount + 1
+            end
+        end
+        CurrentFate = nil
+        NextFate = nil
+        State = CharacterState.ready
+    else
+        if not StayOnCurrentMapOnly then
+            SelectNextDawntrailZone()
+            SessionStuckZoneSwitchCount = SessionStuckZoneSwitchCount + 1
+        else
+            CurrentFate = nil
+            NextFate = nil
+        end
+        State = CharacterState.ready
+        ResetMovementStuckState()
+    end
+
+    MoveStuckLastPosition = playerPos
+    return true
 end
 
 function ResetExchangeMovementStuckState()
@@ -4030,6 +4366,69 @@ function ARRetainersWaitingToBeProcessed()
     return false
 end
 
+function FormatSessionDuration(totalSeconds)
+    local seconds = math.max(0, math.floor(totalSeconds))
+    local hours = math.floor(seconds / 3600)
+    local minutes = math.floor((seconds % 3600) / 60)
+    local secs = seconds % 60
+    return string.format("%02d:%02d:%02d", hours, minutes, secs)
+end
+
+function SetStopReason(reason)
+    if SessionStopReason == nil or SessionStopReason == "" then
+        SessionStopReason = reason
+    end
+end
+
+function PrintSessionSummary()
+    if PrintSessionSummaryEnabled ~= true then
+        return
+    end
+
+    local elapsed = os.clock() - (SessionStartClock or os.clock())
+    local startGems = SessionStartGemCount or 0
+    local endGems = Inventory.GetItemCount(26807)
+    local gemDelta = endGems - startGems
+
+    local completed = SessionFatesCompleted or 0
+    local failed = SessionFatesFailed or 0
+    local resolved = completed + failed
+    local completionRate = resolved > 0 and (completed / resolved * 100) or 0
+    local fatesPerHour = elapsed > 0 and (completed * 3600 / elapsed) or 0
+    local gemsPerHour = elapsed > 0 and (gemDelta * 3600 / elapsed) or 0
+
+    local summaryLine1 = string.format(
+        "[FATE] Session %s | Gems %d -> %d (%+d) | Started %d / Completed %d / Failed %d",
+        FormatSessionDuration(elapsed),
+        startGems,
+        endGems,
+        gemDelta,
+        SessionFatesStarted or 0,
+        completed,
+        failed
+    )
+    local summaryLine2 = string.format(
+        "[FATE] Rate: %.2f FATE/h | %.1f Gems/h | Completion %.1f%%",
+        fatesPerHour,
+        gemsPerHour,
+        completionRate
+    )
+    local summaryLine3 = string.format(
+        "[FATE] Stuck Recoveries repath/tp/zone = %d/%d/%d | StopReason: %s",
+        SessionStuckRepathCount or 0,
+        SessionStuckAetheryteCount or 0,
+        SessionStuckZoneSwitchCount or 0,
+        SessionStopReason or "Unknown"
+    )
+
+    Dalamud.Log(summaryLine1)
+    Dalamud.Log(summaryLine2)
+    Dalamud.Log(summaryLine3)
+    yield("/echo " .. summaryLine1)
+    yield("/echo " .. summaryLine2)
+    yield("/echo " .. summaryLine3)
+end
+
 --#endregion Misc Functions
 
 --#region Main
@@ -4084,12 +4483,9 @@ function FateFarming:Run()
     ResummonChocoboTimeLeft   = 3 *
         60                                                             --Resummons chocobo if there's less than this many seconds left on the timer, so it doesn't disappear on you in the middle of a fate.
     ChocoboStance             = Config.Get("Chocobo Companion Stance") -- Options: Follow, Free, Defender, Healer, Attacker, None. Do not summon if None.
-    ShouldSummonChocobo       = ChocoboStance == "Follow"
-        or ChocoboStance == "Free"
-        or ChocoboStance == "Defender"
-        or ChocoboStance == "Healer"
-        or ChocoboStance == "ヒーラー"
-        or ChocoboStance == "Attacker"
+    local stanceRaw           = tostring(ChocoboStance or "")
+    local stanceLower         = string.lower(stanceRaw)
+    ShouldSummonChocobo       = not (stanceLower == "none" or stanceRaw == "なし")
     ShouldAutoBuyGysahlGreens = Config.Get("Buy Gysahl Greens?")
     MountToUse                = "mount roulette" --The mount youd like to use when flying between fates
 
@@ -4111,6 +4507,17 @@ function FateFarming:Run()
     PreferDensePulls                 = Config.Get("Prefer dense mob pulls?")
     DensePullClusterRadius           = Config.Get("Dense pull cluster radius")
     DensePullMinimumEnemies          = Config.Get("Dense pull minimum enemies")
+    OptimizeClusterMovement          = Config.Get("Optimize movement to mob clusters?")
+    ClusterMoveRadius                = Config.Get("Cluster movement radius")
+    ClusterMoveMinimumEnemies        = Config.Get("Cluster movement minimum enemies")
+    ClusterMoveRefreshSeconds        = Config.Get("Cluster movement refresh (secs)")
+    DynamicAoeSwitch                 = Config.Get("Dynamic AoE switch?")
+    DynamicAoeEnemyCount             = Config.Get("Dynamic AoE enemy count")
+    DynamicAoeCheckRadius            = Config.Get("Dynamic AoE check radius")
+    EnableStagedAntiStuck            = Config.Get("Staged anti-stuck recovery?")
+    StuckCheckIntervalSeconds        = Config.Get("Stuck check interval (secs)")
+    StuckMovementThreshold           = Config.Get("Stuck movement threshold")
+    PrintSessionSummaryEnabled       = Config.Get("Print session summary?")
     FatePriority                     = { "DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
     MeleeDist                        = Config.Get("Max melee distance")
     RangedDist                       = Config.Get("Max ranged distance")
@@ -4124,11 +4531,45 @@ function FateFarming:Run()
     if DensePullMinimumEnemies == nil or DensePullMinimumEnemies < 1 then
         DensePullMinimumEnemies = 3
     end
+    if OptimizeClusterMovement == nil then
+        OptimizeClusterMovement = true
+    end
+    if ClusterMoveRadius == nil or ClusterMoveRadius < 1 then
+        ClusterMoveRadius = 16
+    end
+    if ClusterMoveMinimumEnemies == nil or ClusterMoveMinimumEnemies < 1 then
+        ClusterMoveMinimumEnemies = 4
+    end
+    if ClusterMoveRefreshSeconds == nil or ClusterMoveRefreshSeconds < 0.2 then
+        ClusterMoveRefreshSeconds = 2
+    end
+    if DynamicAoeSwitch == nil then
+        DynamicAoeSwitch = true
+    end
+    if DynamicAoeEnemyCount == nil or DynamicAoeEnemyCount < 1 then
+        DynamicAoeEnemyCount = 3
+    end
+    if DynamicAoeCheckRadius == nil or DynamicAoeCheckRadius < 1 then
+        DynamicAoeCheckRadius = 12
+    end
+    if EnableStagedAntiStuck == nil then
+        EnableStagedAntiStuck = true
+    end
+    if StuckCheckIntervalSeconds == nil or StuckCheckIntervalSeconds < 1 then
+        StuckCheckIntervalSeconds = 10
+    end
+    if StuckMovementThreshold == nil or StuckMovementThreshold < 0.1 then
+        StuckMovementThreshold = 3
+    end
+    if PrintSessionSummaryEnabled == nil then
+        PrintSessionSummaryEnabled = true
+    end
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
     StopScript                       = false
     DidFate                          = false
+    RsrDynamicSingleApplied          = false
     GemAnnouncementLock              = false
     DeathAnnouncementLock            = false
     MovingAnnouncementLock           = false
@@ -4147,9 +4588,24 @@ function FateFarming:Run()
     ExchangeMoveLastCheckTime        = 0
     ExchangeMoveLastPosition         = nil
     ExchangeMoveStuckCount           = 0
+    MoveStuckLastCheckTime           = 0
+    MoveStuckLastPosition            = nil
+    MoveStuckCount                   = 0
     MainClass                        = Player.Job
     BossFatesClass                   = nil
     BicolorGemExchangeThreshold      = 1400
+    ClusterMoveLastRefresh           = 0
+    ClusterMoveCachedFateId          = nil
+    ClusterMoveCachedPosition        = nil
+    SessionStartClock                = os.clock()
+    SessionStartGemCount             = Inventory.GetItemCount(26807)
+    SessionFatesStarted              = 0
+    SessionFatesCompleted            = 0
+    SessionFatesFailed               = 0
+    SessionStuckRepathCount          = 0
+    SessionStuckAetheryteCount       = 0
+    SessionStuckZoneSwitchCount      = 0
+    SessionStopReason                = nil
 
     --Forlorns
     IgnoreForlorns                   = false
@@ -4184,6 +4640,7 @@ function FateFarming:Run()
         local msg = "ERROR: Invalid Rotation Plugin selected or plugin not installed! Aborting."
         yield("/echo [FATE] " .. msg)
         SendDiscordMessage(msg)
+        SetStopReason(msg)
         StopScript = true
     end
     RSRAoeType                 = "Full" --Options: Cleave/Full/Off
@@ -4320,6 +4777,7 @@ function FateFarming:Run()
         if SelectedBicolorExchangeData == nil then
             yield("/echo [FATE] Cannot recognize bicolor shop item " ..
                 ItemToPurchase .. "! Please make sure it's in the BicolorExchangeData table!")
+            SetStopReason("Unrecognized bicolor exchange item: " .. tostring(ItemToPurchase))
             StopScript = true
         elseif SelectedBicolorExchangeData.miniAethernet ~= nil and SelectedBicolorExchangeData.miniAethernet.name ~= nil and SelectedBicolorExchangeData.miniAethernet.position == nil then
             local fixedExchangeAetheryte = GetAetheryteInZoneByName(
@@ -4353,7 +4811,7 @@ function FateFarming:Run()
     end
 
     if ShouldSummonChocobo and GetBuddyTimeRemaining() > 0 then
-        yield('/cac "' .. ChocoboStance .. ' stance"')
+        ApplyChocoboStance()
     end
 
     Dalamud.Log("[FATE] Starting fate farming script.")
@@ -4447,6 +4905,11 @@ function FateFarming:Run()
                 or state == FateState.Ended
                 or state == FateState.Failed
             then
+                if state == FateState.Ended then
+                    SessionFatesCompleted = SessionFatesCompleted + 1
+                elseif state == FateState.Failed then
+                    SessionFatesFailed = SessionFatesFailed + 1
+                end
                 local msg = "[FATE] WaitingForFateRewards.fateObject is nil or fate state (" ..
                     tostring(state) ..
                     ") indicates fate is finished for fateId: " ..
@@ -4475,7 +4938,11 @@ function FateFarming:Run()
         end
         yield("/wait 0.25")
     end
+    if SessionStopReason == nil then
+        SetStopReason("StopScript flag set")
+    end
     yield("/vnav stop")
+    PrintSessionSummary()
 
     if Player.Job.Id ~= MainClass.Id then
         yield("/gs change " .. MainClass.Name)
