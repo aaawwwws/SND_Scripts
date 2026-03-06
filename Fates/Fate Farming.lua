@@ -44,10 +44,10 @@ configs:
     description: バフを温存し始める進捗%。70%以上にすると進行が速いFATEで数秒分のロスが出る場合があります。
     default: 65
   Food:
-    description: 食事を使わない場合は空欄。HQ品は名前の後ろに <hq> を付けてください（例: Baked Eggplant <hq>）。
+    description: 食事を使わない場合は空欄。HQ品は名前の後ろに <hq> を付けてください（例：Baked Eggplant <hq>）。
     default: ""
   Potion:
-    description: 薬品を使わない場合は空欄。HQ品は名前の後ろに <hq> を付けてください（例: Superior Spiritbond Potion <hq>）。
+    description: 薬品を使わない場合は空欄。HQ品は名前の後ろに <hq> を付けてください（例：Superior Spiritbond Potion <hq>）。
     default: ""
   Max melee distance:
     description: 近接ジョブ時の目標戦闘距離です。
@@ -227,7 +227,7 @@ configs:
         "Ty'aitya Wingblade",
         "Ut'ohmu Siderite"]
   Chocobo Companion Stance:
-    description: "None" の場合はチョコボを呼び出しません。
+    description: None の場合はチョコボを呼び出しません。
     default: "Healer"
     is_choice: true
     choices: ["Follow", "Free", "Defender", "Healer", "Attacker", "None"]
@@ -255,7 +255,7 @@ configs:
     description: メインの Fate Farming と companion スクリプトを併用するモードです。
     default: false
   Blacklist:
-    description: 除外したいFATE名をカンマ区切りで入力します（例: FATE名1,FATE名2,FATE名3）。
+    description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
     default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
