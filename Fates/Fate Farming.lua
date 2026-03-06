@@ -105,7 +105,7 @@ configs:
     min: 0
     max: 600
   No movement teleport timeout (secs):
-    description: この秒数の間移動していない場合、次のゾーンへ移動します。0で無効。
+    description: Ready待機中にこの秒数の間移動していない場合、次のゾーンへ移動します。0で無効。
     default: 30
     min: 0
     max: 600
@@ -3462,6 +3462,15 @@ function DoFate()
             if NoCombatStartTime == nil then
                 NoCombatStartTime = os.clock()
             elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
+                local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
+                local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
+                local timeoutMsg = string.format(
+                    "[FATE] No-combat timeout triggered on FATE #%s: %s",
+                    tostring(timedOutFateId),
+                    tostring(timedOutFateName)
+                )
+                Dalamud.Log(timeoutMsg)
+                SendDiscordMessage(timeoutMsg)
                 if StayOnCurrentMapOnly then
                     Dalamud.Log("[FATE] No combat started within timeout. Staying in current map due to setting.")
                 else
@@ -4859,13 +4868,16 @@ function FateFarming:Run()
                         LastMovePosition = currentPos
                         LastMoveTimestamp = os.clock()
                     else
+                        local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
                         local shouldCheckIdle = not Svc.Condition[CharacterCondition.inCombat]
                             and not InActiveFate()
+                            and State == CharacterState.ready
                             and State ~= CharacterState.doFate
                             and State ~= CharacterState.waitForContinuation
                             and State ~= CharacterState.collectionsFateTurnIn
                             and not Svc.Condition[CharacterCondition.betweenAreas]
                             and not IPC.Lifestream.IsBusy()
+                            and not navBusy
                         if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
                             if StayOnCurrentMapOnly then
                                 Dalamud.Log("[FATE] No movement detected. Staying in current map due to setting.")
