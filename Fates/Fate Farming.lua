@@ -188,44 +188,8 @@ configs:
     default: "Bicolor Gemstone Voucher"
     is_choice: true
     choices: ["None",
-        "Alexandrian Axe Beak Wing",
-        "Alpaca Fillet",
-        "Almasty Fur",
-        "Amra",
-        "Berkanan Sap",
         "Bicolor Gemstone Voucher",
-        "Bird of Elpis Breast",
-        "Branchbearer Fruit",
-        "Br'aax Hide",
-        "Dynamis Crystal",
-        "Dynamite Ash",
-        "Egg of Elpis",
-        "Gaja Hide",
-        "Gargantua Hide",
-        "Gomphotherium Skin",
-        "Hammerhead Crocodile Skin",
-        "Hamsa Tenderloin",
-        "Kumbhira Skin",
-        "Lesser Apollyon Shell",
-        "Lunatender Blossom",
-        "Luncheon Toad Skin",
-        "Megamaguey Pineapple",
-        "Mousse Flesh",
-        "Nopalitender Tuna",
-        "Ovibos Milk",
-        "Ophiotauros Hide",
-        "Petalouda Scales",
-        "Poison Frog Secretions",
-        "Rroneek Chuck",
-        "Rroneek Fleece",
-        "Saiga Hide",
-        "Silver Lobo Hide",
-        "Swampmonk Thigh",
-        "Tumbleclaw Weeds",
-        "Turali Bicolor Gemstone Voucher",
-        "バイカラージェム納品証【黄金】",
-        "Ty'aitya Wingblade",
-        "Ut'ohmu Siderite"]
+        "Turali Bicolor Gemstone Voucher"]
   Chocobo Companion Stance:
     description: None の場合はチョコボを呼び出しません。
     default: "Healer"
@@ -3605,19 +3569,26 @@ function DoFate()
     then
         local currentTargetName = GetTargetName()
         if currentTargetName ~= "Forlorn Maiden" and currentTargetName ~= "The Forlorn" then
-            local pullRadius = DynamicAoeCheckRadius or 30
-            AttemptToTargetClosestFateEnemy(true, pullRadius, false)
+            local closePullRadius = math.max((MaxDistance or 0) + 6, 8)
+            local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40))
+            local gotUnengagedTarget = AttemptToTargetClosestFateEnemy(true, closePullRadius, false)
+            if not gotUnengagedTarget then
+                AttemptToTargetClosestFateEnemy(true, farPullRadius, false)
+            end
         end
     end
 
     -- targets whatever is trying to kill you
-    if Entity.Target == nil then
+    if Svc.Targets.Target == nil then
         yield("/battletarget")
     end
 
     -- clears target
-    if Entity.Target ~= nil and Entity.Target.FateId ~= CurrentFate.fateId and not Entity.Target.IsInCombat then
-        Entity.Target:ClearTarget()
+    if Svc.Targets.Target ~= nil then
+        local wrappedTarget = EntityWrapper(Svc.Targets.Target)
+        if wrappedTarget ~= nil and wrappedTarget.FateId ~= CurrentFate.fateId and not wrappedTarget.IsInCombat then
+            ClearTarget()
+        end
     end
 
     -- do not interrupt casts to path towards enemies
