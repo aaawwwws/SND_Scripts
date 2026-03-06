@@ -158,6 +158,9 @@ configs:
     default: 30
     min: 3
     max: 30
+  Fast combat pacing?:
+    description: 戦闘中の待機時間を短縮してテンポを上げます。OFFで従来の安全寄り待機に戻します。
+    default: true
   Staged anti-stuck recovery?:
     description: 移動詰まり時に段階的復帰（再経路探索→最寄りエーテ退避→ゾーン切替）を行います。
     default: true
@@ -3649,6 +3652,12 @@ function DoFate()
         TurnOffRaidBuffs()
     end
 
+    local stopBeforeInchWait = FastCombatPacing and 0.25 or 5.002
+    local inchCloserWait = FastCombatPacing and 0.25 or 1
+    local preApproachWaitOutOfCombat = FastCombatPacing and 0.8 or 5.003
+    local preApproachWaitInCombat = FastCombatPacing and 0.8 or 5.004
+    local targetStickWait = FastCombatPacing and 0.2 or 1
+
     -- pathfind closer if enemies are too far
     if not Svc.Condition[CharacterCondition.inCombat] then
         local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
@@ -3660,13 +3669,13 @@ function DoFate()
             if GetDistanceToTargetFlat() <= (MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius()) then
                 if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
                     yield("/vnav stop")
-                    yield("/wait 5.002")                                                                                                                            -- wait 5s before inching any closer
+                    yield("/wait " .. stopBeforeInchWait)                                                                                                            -- short pause before inching closer
                 elseif (GetDistanceToTargetFlat() > (1 + GetTargetHitboxRadius() + GetPlayerHitboxRadius())) and not Svc.Condition[CharacterCondition.casting] then -- never move into hitbox
                     yield("/vnav movetarget")
-                    yield("/wait 1")                                                                                                                                -- inch closer by 1s
+                    yield("/wait " .. inchCloserWait)                                                                                                                 -- inch closer briefly
                 end
             elseif not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                yield("/wait 5.003") -- give 5s for enemy AoE casts to go off before attempting to move closer
+                yield("/wait " .. preApproachWaitOutOfCombat) -- brief wait before approaching again
                 if (Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.inCombat]) and not Svc.Condition[CharacterCondition.casting] then
                     MoveToTargetHitbox()
                 end
@@ -3674,7 +3683,7 @@ function DoFate()
             return
         else
             AttemptToTargetClosestFateEnemy(true, nil, false)
-            yield("/wait 1") -- wait in case target doesnt stick
+            yield("/wait " .. targetStickWait) -- short wait in case target doesnt stick
             if (Svc.Targets.Target == nil) and not Svc.Condition[CharacterCondition.casting] then
                 IPC.vnavmesh.PathfindAndMoveTo(preferredMovePos, false)
             end
@@ -3689,7 +3698,7 @@ function DoFate()
                 return
             end
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                yield("/wait 5.004")
+                yield("/wait " .. preApproachWaitInCombat)
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
                     if Svc.Condition[CharacterCondition.flying] and SelectedZone.flying then
                         yield("/vnav flytarget")
@@ -4628,6 +4637,7 @@ function FateFarming:Run()
     DynamicAoeEnemyCount             = Config.Get("Dynamic AoE enemy count")
     DynamicAoeSameNameEnemyCount     = Config.Get("Dynamic AoE same-name enemy count")
     DynamicAoeCheckRadius            = Config.Get("Dynamic AoE check radius")
+    FastCombatPacing                 = Config.Get("Fast combat pacing?")
     EnableStagedAntiStuck            = Config.Get("Staged anti-stuck recovery?")
     StuckCheckIntervalSeconds        = Config.Get("Stuck check interval (secs)")
     StuckMovementThreshold           = Config.Get("Stuck movement threshold")
@@ -4668,6 +4678,9 @@ function FateFarming:Run()
     end
     if DynamicAoeCheckRadius == nil or DynamicAoeCheckRadius < 1 then
         DynamicAoeCheckRadius = 30
+    end
+    if FastCombatPacing == nil then
+        FastCombatPacing = true
     end
     if EnableStagedAntiStuck == nil then
         EnableStagedAntiStuck = true
