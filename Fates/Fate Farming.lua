@@ -4879,6 +4879,13 @@ function FateFarming:Run()
                             and not IPC.Lifestream.IsBusy()
                             and not navBusy
                         if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
+                            local timeoutZoneName = (SelectedZone and SelectedZone.zoneName) or "Unknown Zone"
+                            local timeoutMsg = string.format(
+                                "[FATE] No-movement timeout triggered in zone: %s",
+                                tostring(timeoutZoneName)
+                            )
+                            Dalamud.Log(timeoutMsg)
+                            SendDiscordMessage(timeoutMsg)
                             if StayOnCurrentMapOnly then
                                 Dalamud.Log("[FATE] No movement detected. Staying in current map due to setting.")
                             else
