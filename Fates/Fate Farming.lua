@@ -186,11 +186,7 @@ configs:
     default: false
   Blacklist:
     description: Enter the names of FATEs you want to blacklist, separated by commas (e.g., FATE Name 1, FATE Name 2, FATE Name 3)
-<<<<<<< HEAD
     default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」"
-=======
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」"
->>>>>>> ebc341363acb1f8f38727a226a28424d3ef9e910
   Discord Webhook URL:
     description: URL to send notifications to when the script stops or encounters an error. Leave blank to disable.
     default: ""
@@ -1668,7 +1664,7 @@ function MaybeLogActiveFates()
 end
 
 function IsFateActive(fate)
-    if fate.State == nil then
+    if fate == nil or fate.State == nil then
         return false
     else
         return fate.State ~= FateState.Ending and fate.State ~= FateState.Ended and fate.State ~= FateState.Failed
@@ -1754,6 +1750,11 @@ end
 
 function BuildFateTable(fateObj)
     Dalamud.Log("[FATE] Enter->BuildFateTable")
+    if fateObj == nil then
+        Dalamud.Log("[FATE] BuildFateTable called with nil fate object.")
+        return nil
+    end
+
     local fateTable = {
         fateObject = fateObj,
         fateId = fateObj.Id,
@@ -2310,13 +2311,22 @@ function ChangeInstance()
 end
 
 function WaitForContinuation()
+    if CurrentFate == nil or CurrentFate.fateObject == nil then
+        Dalamud.Log("[FATE] WaitForContinuation: CurrentFate missing, returning to Ready.")
+        State = CharacterState.ready
+        return
+    end
+
     if InActiveFate() then
         Dalamud.Log("WaitForContinuation IsInFate")
-        local nextFateId = Fates.GetNearestFate()
-        if nextFateId ~= CurrentFate.fateObject then
-            CurrentFate = BuildFateTable(nextFateId)
-            State = CharacterState.doFate
-            Dalamud.Log("[FATE] State Change: DoFate")
+        local nextFate = Fates.GetNearestFate()
+        if nextFate ~= nil and nextFate ~= CurrentFate.fateObject then
+            local builtFate = BuildFateTable(nextFate)
+            if builtFate ~= nil then
+                CurrentFate = builtFate
+                State = CharacterState.doFate
+                Dalamud.Log("[FATE] State Change: DoFate")
+            end
         end
     elseif os.clock() - LastFateEndTime > 30 then
         Dalamud.Log("WaitForContinuation Abort")
@@ -4059,7 +4069,8 @@ function FateFarming:Run()
     WaitingForFateRewards            = nil
     LastFateEndTime                  = os.clock()
     LastStuckCheckTime               = os.clock()
-    LastStuckCheckPosition           = Player.Entity.Position
+    local initialPosition            = GetLocalPlayerPosition()
+    LastStuckCheckPosition           = initialPosition or Vector3(0, 0, 0)
     ExchangeMoveLastCheckTime        = 0
     ExchangeMoveLastPosition         = nil
     ExchangeMoveStuckCount           = 0
@@ -4294,40 +4305,42 @@ function FateFarming:Run()
         if NoMovementTeleportTimeout > 0 then
             local currentPos = GetLocalPlayerPosition()
             if currentPos == nil then
-                return
-            end
-            if LastMovePosition == nil then
-                LastMovePosition = currentPos
+                LastMovePosition = nil
                 LastMoveTimestamp = os.clock()
             else
-                local moveDist = DistanceBetween(currentPos, LastMovePosition)
-                if moveDist > 1 then
+                if LastMovePosition == nil then
                     LastMovePosition = currentPos
                     LastMoveTimestamp = os.clock()
                 else
-                    local shouldCheckIdle = not Svc.Condition[CharacterCondition.inCombat]
-                        and not InActiveFate()
-                        and State ~= CharacterState.doFate
-                        and State ~= CharacterState.waitForContinuation
-                        and State ~= CharacterState.collectionsFateTurnIn
-                        and not Svc.Condition[CharacterCondition.betweenAreas]
-                        and not IPC.Lifestream.IsBusy()
-                    if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
-                        if StayOnCurrentMapOnly then
-                            Dalamud.Log("[FATE] No movement detected. Staying in current map due to setting.")
-                        else
-                            Dalamud.Log("[FATE] No movement detected. Switching zones.")
-                        end
-                        LastMoveTimestamp = os.clock()
+                    local moveDist = DistanceBetween(currentPos, LastMovePosition)
+                    if moveDist > 1 then
                         LastMovePosition = currentPos
-                        yield("/vnav stop")
-                        if StayOnCurrentMapOnly then
-                            CurrentFate = nil
-                            NextFate = nil
-                        else
-                            SelectNextDawntrailZone()
+                        LastMoveTimestamp = os.clock()
+                    else
+                        local shouldCheckIdle = not Svc.Condition[CharacterCondition.inCombat]
+                            and not InActiveFate()
+                            and State ~= CharacterState.doFate
+                            and State ~= CharacterState.waitForContinuation
+                            and State ~= CharacterState.collectionsFateTurnIn
+                            and not Svc.Condition[CharacterCondition.betweenAreas]
+                            and not IPC.Lifestream.IsBusy()
+                        if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
+                            if StayOnCurrentMapOnly then
+                                Dalamud.Log("[FATE] No movement detected. Staying in current map due to setting.")
+                            else
+                                Dalamud.Log("[FATE] No movement detected. Switching zones.")
+                            end
+                            LastMoveTimestamp = os.clock()
+                            LastMovePosition = currentPos
+                            yield("/vnav stop")
+                            if StayOnCurrentMapOnly then
+                                CurrentFate = nil
+                                NextFate = nil
+                            else
+                                SelectNextDawntrailZone()
+                            end
+                            State = CharacterState.ready
                         end
-                        State = CharacterState.ready
                     end
                 end
             end
@@ -4343,7 +4356,7 @@ function FateFarming:Run()
                 and Svc.Condition[CharacterCondition.inCombat]
                 and (
                     not InActiveFate()
-                    or (InActiveFate() and IsCollectionsFate(nearestFate.Name) and nearestFate.Progress == 100)
+                    or (InActiveFate() and nearestFate ~= nil and IsCollectionsFate(nearestFate.Name) and nearestFate.Progress == 100)
                 )
             then
                 State = CharacterState.unexpectedCombat
