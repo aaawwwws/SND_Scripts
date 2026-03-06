@@ -2580,7 +2580,7 @@ function ChangeInstance()
     if GetDistanceToTarget() > 10 then
         Dalamud.Log("[FATE] Targeting aetheryte, but greater than 10 distance")
         if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-            if Svc.Condition[CharacterCondition.flying] and SelectedZone.flying then
+            if Player.CanFly and SelectedZone.flying then
                 yield("/vnav flytarget")
             else
                 yield("/vnav movetarget")
@@ -2710,7 +2710,7 @@ function FlyBackToAetheryte()
         if closestAetheryte ~= nil then
             SetMapFlag(SelectedZone.zoneId, closestAetheryte.position)
             IPC.vnavmesh.PathfindAndMoveTo(closestAetheryte.position,
-                Svc.Condition[CharacterCondition.flying] and SelectedZone.flying)
+                Player.CanFly and SelectedZone.flying)
         end
     end
 
@@ -2782,7 +2782,7 @@ function Dismount()
                 local nearestFloor = IPC.vnavmesh.PointOnFloor(random, true, 100)
                 if nearestFloor ~= nil then
                     IPC.vnavmesh.PathfindAndMoveTo(nearestFloor,
-                        Svc.Condition[CharacterCondition.flying] and SelectedZone.flying)
+                        Player.CanFly and SelectedZone.flying)
                     yield("/wait 1")
                 end
             end
@@ -2936,7 +2936,7 @@ function MoveToFate()
                     local center = GetPreferredFateMovePosition(CurrentFate)
                     if center ~= nil and GetDistanceToPoint(center) > 8 then
                         IPC.vnavmesh.PathfindAndMoveTo(center,
-                            Svc.Condition[CharacterCondition.flying] and SelectedZone.flying)
+                            Player.CanFly and SelectedZone.flying)
                     end
                 end
             end
@@ -3441,7 +3441,7 @@ function HandleUnexpectedCombat()
                 yield("/vnav stop")
             elseif not Svc.Condition[CharacterCondition.inCombat] then
                 --inch closer 3 seconds
-                if Svc.Condition[CharacterCondition.flying] and SelectedZone.flying then
+                if Player.CanFly and SelectedZone.flying then
                     yield("/vnav flytarget")
                 else
                     MoveToTargetHitbox()
@@ -3533,7 +3533,7 @@ function DoFate()
         Dalamud.Log("[FATE] pushed out of fate going back!")
         local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
         IPC.vnavmesh.PathfindAndMoveTo(fallbackPos,
-            Svc.Condition[CharacterCondition.flying] and SelectedZone.flying)
+            Player.CanFly and SelectedZone.flying)
         return
     elseif not IsFateActive(CurrentFate.fateObject) or progress == 100 then
         yield("/vnav stop")
@@ -3700,7 +3700,7 @@ function DoFate()
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
                 yield("/wait " .. preApproachWaitInCombat)
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
-                    if Svc.Condition[CharacterCondition.flying] and SelectedZone.flying then
+                    if Player.CanFly and SelectedZone.flying then
                         yield("/vnav flytarget")
                     else
                         MoveToTargetHitbox()
@@ -3979,7 +3979,7 @@ function HandleMovementStuck(targetPosition)
         if nearestFloor ~= nil then
             retryTarget = nearestFloor
         end
-        IPC.vnavmesh.PathfindAndMoveTo(retryTarget, Svc.Condition[CharacterCondition.flying] and SelectedZone.flying)
+        IPC.vnavmesh.PathfindAndMoveTo(retryTarget, Player.CanFly and SelectedZone.flying)
         SessionStuckRepathCount = SessionStuckRepathCount + 1
     elseif MoveStuckCount == 2 then
         local closestAetheryte = GetClosestAetheryteInZoneToPoint(Svc.ClientState.TerritoryType, playerPos)
