@@ -2639,16 +2639,8 @@ function TeleportTo(aetheryteName)
     end
 
     if not teleportStarted then
-        for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
-            local escapedName = candidateName:gsub('"', "")
-            if TryTeleportCommand('/telepo "' .. escapedName .. '"') then
-                teleportStarted = true
-                break
-            end
-            if TryTeleportCommand('/テレポ "' .. escapedName .. '"') then
-                teleportStarted = true
-                break
-            end
+        if resolvedId ~= nil then
+            teleportStarted = TryTeleportCommand("/li tp " .. tostring(resolvedId))
         end
     end
 
