@@ -4091,21 +4091,21 @@ function SetExchangeMovementStuckGrace(seconds)
 end
 
 function HandleExchangeMovementStuck()
-    if SelectedBicolorExchangeData ~= nil
-        and SelectedBicolorExchangeData.zoneId == 1186
-        and Svc.ClientState.TerritoryType == 1186
-    then
-        -- Solution Nine exchange route often has short nav pauses; skip exchange stuck recovery there.
-        ResetExchangeMovementStuckState()
-        return
-    end
-
     if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
         return
     end
 
+    local isSolutionNineRoute = SelectedBicolorExchangeData ~= nil
+        and SelectedBicolorExchangeData.zoneId == 1186
+        and Svc.ClientState.TerritoryType == 1186
+    local stuckCheckInterval = isSolutionNineRoute and 6 or 3
+    local stuckMoveThreshold = isSolutionNineRoute and 0.7 or 1.5
+    local shopProgressThreshold = isSolutionNineRoute and 0.4 or 0.8
+    local repathSpread = isSolutionNineRoute and 6 or 3
+    local maxRepathAttempts = isSolutionNineRoute and 7 or 5
+
     local now = os.clock()
-    if now - ExchangeMoveLastCheckTime < 3 then
+    if now - ExchangeMoveLastCheckTime < stuckCheckInterval then
         return
     end
     ExchangeMoveLastCheckTime = now
@@ -4129,16 +4129,16 @@ function HandleExchangeMovementStuck()
 
     local madeShopProgress = false
     if ExchangeMoveLastDistanceToShop ~= nil then
-        madeShopProgress = (ExchangeMoveLastDistanceToShop - distanceToShop) >= 0.8
+        madeShopProgress = (ExchangeMoveLastDistanceToShop - distanceToShop) >= shopProgressThreshold
     end
 
-    if ExchangeMoveLastPosition ~= nil and movedDistance < 1.5 and not madeShopProgress then
+    if ExchangeMoveLastPosition ~= nil and movedDistance < stuckMoveThreshold and not madeShopProgress then
         ExchangeMoveStuckCount = ExchangeMoveStuckCount + 1
         Dalamud.Log("[FATE] Exchange pathing stuck. Repath attempt #" .. tostring(ExchangeMoveStuckCount))
         yield("/vnav stop")
         yield("/wait 0.3")
 
-        local retryTarget = RandomAdjustCoordinates(SelectedBicolorExchangeData.position, 3)
+        local retryTarget = RandomAdjustCoordinates(SelectedBicolorExchangeData.position, repathSpread)
         local nearestFloor = IPC.vnavmesh.PointOnFloor(retryTarget, true, 30)
         if nearestFloor ~= nil then
             retryTarget = nearestFloor
@@ -4147,7 +4147,7 @@ function HandleExchangeMovementStuck()
         end
         IPC.vnavmesh.PathfindAndMoveTo(retryTarget, false)
 
-        if ExchangeMoveStuckCount >= 5 then
+        if ExchangeMoveStuckCount >= maxRepathAttempts then
             Dalamud.Log("[FATE] Exchange pathing still stuck. Returning to aetheryte and retrying.")
             yield("/vnav stop")
             ResetExchangeMovementStuckState()
@@ -4196,7 +4196,12 @@ function ExecuteBicolorExchange()
                 SelectedBicolorExchangeData.miniAethernet.position,
                 SelectedBicolorExchangeData.position
             )
-            if distanceToShop > (miniToShopDistance + 10) then
+            local shouldUseMiniAethernet = distanceToShop > (miniToShopDistance + 10)
+            if SelectedBicolorExchangeData.zoneId == 1186 and distanceToShop > 35 then
+                -- Solution Nine has frequent pathing dead-ends from far spots; force an aethernet reset first.
+                shouldUseMiniAethernet = true
+            end
+            if shouldUseMiniAethernet then
                 Dalamud.Log("[FATE] Exchange route: using aetheryte first, then pathfinding.")
                 ResetExchangeMovementStuckState()
                 SetExchangeMovementStuckGrace(15)
