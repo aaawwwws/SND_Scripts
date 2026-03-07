@@ -228,7 +228,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
