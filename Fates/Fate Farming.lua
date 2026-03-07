@@ -2547,6 +2547,12 @@ local function BuildTeleportNameCandidates(name)
     if string.find(original, "ソリューション・ナイン", 1, true) then
         addCandidate(string.gsub(original, "ソリューション・ナイン", "ソリューションナイン"))
     end
+    if string.find(original, "オールドシャーレアン", 1, true) then
+        addCandidate(string.gsub(original, "オールドシャーレアン", "オールド・シャーレアン"))
+    end
+    if string.find(original, "オールド・シャーレアン", 1, true) then
+        addCandidate(string.gsub(original, "オールド・シャーレアン", "オールドシャーレアン"))
+    end
     return candidates
 end
 
@@ -2614,24 +2620,19 @@ function TeleportTo(aetheryteName)
     local resolvedName, resolvedId = ResolveTeleportDestination(aetheryteName)
     local teleportStarted = false
 
-    if resolvedName ~= nil and resolvedName ~= "" then
-        local escapedResolvedName = tostring(resolvedName):gsub('"', "")
-        teleportStarted = TryTeleportCommand('/tp "' .. escapedResolvedName .. '"')
-    end
-
-    if not teleportStarted then
-        for _, candidateName in ipairs(BuildTeleportNameCandidates(resolvedName)) do
-            local escapedName = candidateName:gsub('"', "")
-            if TryTeleportCommand('/tp "' .. escapedName .. '"') then
-                teleportStarted = true
-                break
-            end
+    if resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Teleport) == "function" then
+        local ok, result = pcall(function()
+            return IPC.Lifestream.Teleport(resolvedId, 0)
+        end)
+        if ok and result == true then
+            teleportStarted = WaitForTeleportStart(2.2)
         end
     end
 
     if not teleportStarted then
-        if resolvedId ~= nil then
-            teleportStarted = TryTeleportCommand("/li tp " .. tostring(resolvedId))
+        if resolvedName ~= nil and resolvedName ~= "" then
+            local escapedResolvedName = tostring(resolvedName):gsub('"', "")
+            teleportStarted = TryTeleportCommand('/li tp "' .. escapedResolvedName .. '"')
         end
     end
 
@@ -3273,12 +3274,12 @@ function GetChocoboStanceActionName(stanceName)
     local isJapaneseClient = GameLanguage == "Japanese"
     if normalized == "free" or raw == "フリー" or raw == "フリーファイト" then
         return isJapaneseClient and "フリーファイト" or "Free Stance"
-    elseif normalized == "defender" or raw == "ディフェンダー" then
-        return isJapaneseClient and "ディフェンダー" or "Defender Stance"
-    elseif normalized == "healer" or raw == "ヒーラー" then
-        return isJapaneseClient and "ヒーラー" or "Healer Stance"
-    elseif normalized == "attacker" or raw == "アタッカー" then
-        return isJapaneseClient and "アタッカー" or "Attacker Stance"
+    elseif normalized == "defender" or raw == "ディフェンダー" or raw == "ディフェンダースタンス" then
+        return isJapaneseClient and "ディフェンダースタンス" or "Defender Stance"
+    elseif normalized == "healer" or raw == "ヒーラー" or raw == "ヒーラースタンス" then
+        return isJapaneseClient and "ヒーラースタンス" or "Healer Stance"
+    elseif normalized == "attacker" or raw == "アタッカー" or raw == "アタッカースタンス" then
+        return isJapaneseClient and "アタッカースタンス" or "Attacker Stance"
     end
 
     return raw
