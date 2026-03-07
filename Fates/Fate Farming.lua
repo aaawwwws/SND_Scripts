@@ -465,12 +465,16 @@ local TurnOffCombatMods
 local TurnOffRaidBuffs
 local TurnOnAoes
 local TurnOnCombatMods
+local TryUseGysahlGreens
 local UpdateCombatModeByNearbyEnemies
 local WaitForContinuation
 local ResetMovementStuckState
 local ResetExchangeMovementStuckState
 local SetExchangeMovementStuckGrace
 local SetStopReason
+local IsLifestreamBusySafe
+local ValidateRequiredIpc
+local IsVnavmeshReadySafe
 
 -- 出現中FATEデータ保存用の設定/状態
 local FateDataLogEnabled
@@ -502,6 +506,11 @@ local SessionStuckRepathCount
 local SessionStuckAetheryteCount
 local SessionStuckZoneSwitchCount
 local SessionStopReason
+local FoodAutoUseDisabled
+local PotionAutoUseDisabled
+local GysahlUseDisabled
+local GysahlShopPurchaseAttempts
+local LifestreamBusyWarned
 
 -- 密集移動のキャッシュ
 local ClusterMoveLastRefresh
@@ -3158,9 +3167,10 @@ function SummonChocobo()
 
     if ShouldSummonChocobo and GetBuddyTimeRemaining() <= ResummonChocoboTimeLeft then
         if Inventory.GetItemCount(4868) > 0 then
-            yield(string.format('/item "%s"', LANG.actions["Gysahl Greens"]))
-            yield("/wait 3")
-            ApplyChocoboStance()
+            if TryUseGysahlGreens() then
+                yield("/wait 3")
+                ApplyChocoboStance()
+            end
         elseif ShouldAutoBuyGysahlGreens then
             State = CharacterState.autoBuyGysahlGreens
             Dalamud.Log("[FATE] State Change: AutoBuyGysahlGreens")
@@ -3173,10 +3183,11 @@ end
 
 function AutoBuyGysahlGreens()
     if Inventory.GetItemCount(4868) > 0 then -- dont need to buy
+        GysahlShopPurchaseAttempts = 0
         if AddonReady("Shop") then
             yield("/callback Shop true -1")
         elseif Svc.ClientState.TerritoryType == SelectedZone.zoneId then
-            yield(string.format('/item "%s"', LANG.actions["Gysahl Greens"]))
+            TryUseGysahlGreens()
         else
             State = CharacterState.ready
             Dalamud.Log("State Change: ready")
@@ -3201,14 +3212,29 @@ function AutoBuyGysahlGreens()
                     yield("/callback SelectIconString true 0")
                     return
                 elseif AddonReady("Shop") then
+                    GysahlShopPurchaseAttempts = (GysahlShopPurchaseAttempts or 0) + 1
+                    if GysahlShopPurchaseAttempts > 10 then
+                        local msg =
+                            "[FATE] Gysahl purchase callback did not succeed after multiple tries. Disabling auto-buy for this session."
+                        Dalamud.Log(msg)
+                        yield("/echo " .. msg)
+                        ShouldAutoBuyGysahlGreens = false
+                        GysahlShopPurchaseAttempts = 0
+                        yield("/callback Shop true -1")
+                        State = CharacterState.ready
+                        Dalamud.Log("[FATE] State Change: Ready")
+                        return
+                    end
                     yield("/callback Shop true 0 5 99")
                     return
                 elseif not Svc.Condition[CharacterCondition.occupied] then
+                    GysahlShopPurchaseAttempts = 0
                     yield("/interact")
                     yield("/wait 1")
                     return
                 end
             else
+                GysahlShopPurchaseAttempts = 0
                 yield("/vnav stop")
                 yield("/target " .. gysahlGreensVendor.npcName)
             end
@@ -4248,8 +4274,8 @@ function GrandCompanyTurnIn()
             return
         end
         yield("/wait 1")
-        while (IPC.Lifestream.IsBusy and IPC.Lifestream.IsBusy())
-            or (Svc.Condition[CharacterCondition.betweenAreas]) do
+        while IsLifestreamBusySafe()
+            or Svc.Condition[CharacterCondition.betweenAreas] do
             yield("/wait 0.5")
         end
         Dalamud.Log("[FATE] Lifestream complete, standing at GC NPC.")
@@ -4455,30 +4481,214 @@ function HasStatusId(statusId)
     return false
 end
 
+local function TrimString(value)
+    if value == nil then
+        return ""
+    end
+    local trimmed = tostring(value)
+    trimmed = trimmed:gsub("^%s+", "")
+    trimmed = trimmed:gsub("%s+$", "")
+    return trimmed
+end
+
+local function BuildConsumableItemCommand(rawItemName)
+    local itemName = TrimString(rawItemName)
+    if itemName == "" then
+        return nil
+    end
+
+    local lowerName = string.lower(itemName)
+    local isHq = #lowerName >= 4 and lowerName:sub(-4) == "<hq>"
+    if isHq then
+        itemName = TrimString(itemName:sub(1, #itemName - 4))
+    end
+
+    if itemName == "" then
+        return nil
+    end
+
+    itemName = itemName:gsub('"', "")
+    if isHq then
+        return string.format('/item "%s" <hq>', itemName)
+    end
+    return string.format('/item "%s"', itemName)
+end
+
+function IsLifestreamBusySafe()
+    if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.IsBusy) == "function" then
+        local ok, busy = pcall(function()
+            return IPC.Lifestream.IsBusy()
+        end)
+        if ok then
+            return busy == true
+        end
+    end
+    if not LifestreamBusyWarned then
+        LifestreamBusyWarned = true
+        Dalamud.Log("[FATE] Lifestream IPC.IsBusy unavailable. Continuing with busy=false.")
+    end
+    return false
+end
+
+function ValidateRequiredIpc()
+    local vnav = IPC and IPC.vnavmesh or nil
+    if vnav == nil then
+        return false, "vnavmesh IPC is missing"
+    end
+
+    local requiredMethods = {
+        "IsReady",
+        "IsRunning",
+        "PathfindInProgress",
+        "PathfindAndMoveTo",
+        "PointOnFloor"
+    }
+    for _, methodName in ipairs(requiredMethods) do
+        if type(vnav[methodName]) ~= "function" then
+            return false, "vnavmesh IPC method missing: " .. methodName
+        end
+    end
+    return true, nil
+end
+
+function IsVnavmeshReadySafe()
+    if IPC == nil or IPC.vnavmesh == nil or type(IPC.vnavmesh.IsReady) ~= "function" then
+        return false
+    end
+    local ok, ready = pcall(function()
+        return IPC.vnavmesh.IsReady()
+    end)
+    return ok and ready == true
+end
+
+local function CanUseConsumableNow()
+    if Svc.ClientState.LocalPlayer == nil then
+        return false
+    end
+    if Svc.Condition[CharacterCondition.dead]
+        or Svc.Condition[CharacterCondition.inCombat]
+        or Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.mounted]
+        or Svc.Condition[CharacterCondition.mounting57]
+        or Svc.Condition[CharacterCondition.mounting64]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or Svc.Condition[CharacterCondition.occupied]
+        or Svc.Condition[CharacterCondition.occupiedInEvent]
+        or Svc.Condition[CharacterCondition.occupiedInQuestEvent]
+        or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
+        or IsLifestreamBusySafe()
+    then
+        return false
+    end
+    return true
+end
+
+function TryUseGysahlGreens()
+    if GysahlUseDisabled then
+        return false
+    end
+    local itemName = LANG and LANG.actions and LANG.actions["Gysahl Greens"] or "Gysahl Greens"
+    local command = BuildConsumableItemCommand(itemName)
+    if command == nil or not CanUseConsumableNow() then
+        return false
+    end
+
+    local ok, err = pcall(function()
+        yield(command)
+    end)
+    if not ok then
+        GysahlUseDisabled = true
+        local errorText = tostring(err):gsub("[\r\n]", " ")
+        local msg = "[FATE] Failed to use Gysahl Greens. Auto use disabled for this session. Error: " .. errorText
+        Dalamud.Log(msg)
+        yield("/echo " .. msg)
+        return false
+    end
+    return true
+end
+
 function FoodCheck()
-    --food usage
-    if not HasStatusId(48) and Food ~= "" then
-        yield("/item " .. Food)
+    if FoodAutoUseDisabled then
+        return
+    end
+    if HasStatusId(48) then
+        return
+    end
+    local command = BuildConsumableItemCommand(Food)
+    if command == nil or not CanUseConsumableNow() then
+        return
+    end
+
+    local ok, err = pcall(function()
+        yield(command)
+    end)
+    if not ok then
+        FoodAutoUseDisabled = true
+        local errorText = tostring(err):gsub("[\r\n]", " ")
+        local msg = "[FATE] Failed to use configured Food item. Auto food use disabled for this session. Error: " ..
+            errorText
+        Dalamud.Log(msg)
+        yield("/echo " .. msg)
     end
 end
 
 function PotionCheck()
-    --pot usage
-    if not HasStatusId(49) and Potion ~= "" then
-        yield("/item " .. Potion)
+    if PotionAutoUseDisabled then
+        return
+    end
+    if HasStatusId(49) then
+        return
+    end
+    local command = BuildConsumableItemCommand(Potion)
+    if command == nil or not CanUseConsumableNow() then
+        return
+    end
+
+    local ok, err = pcall(function()
+        yield(command)
+    end)
+    if not ok then
+        PotionAutoUseDisabled = true
+        local errorText = tostring(err):gsub("[\r\n]", " ")
+        local msg = "[FATE] Failed to use configured Potion item. Auto potion use disabled for this session. Error: " ..
+            errorText
+        Dalamud.Log(msg)
+        yield("/echo " .. msg)
     end
 end
 
 function GetNodeText(addonName, nodePath, ...)
+    local start = os.clock()
     local addon = Addons.GetAddon(addonName)
-    repeat
+    while addon == nil or not addon.Ready do
+        if os.clock() - start > 3 then
+            Dalamud.Log("[FATE] GetNodeText timeout for addon: " .. tostring(addonName))
+            return nil
+        end
         yield("/wait 0.1")
-    until addon.Ready
-    return addon:GetNode(nodePath, ...).Text
+        addon = Addons.GetAddon(addonName)
+    end
+    local node = addon:GetNode(nodePath, ...)
+    if node == nil then
+        Dalamud.Log("[FATE] GetNodeText node not found: addon=" .. tostring(addonName))
+        return nil
+    end
+    return node.Text
 end
 
 function ARRetainersWaitingToBeProcessed()
-    local offlineCharacterData = IPC.AutoRetainer.GetOfflineCharacterData(Svc.ClientState.LocalContentId)
+    if IPC.AutoRetainer == nil
+        or type(IPC.AutoRetainer.GetOfflineCharacterData) ~= "function"
+        or Svc.ClientState.LocalContentId == nil
+    then
+        return false
+    end
+    local ok, offlineCharacterData = pcall(function()
+        return IPC.AutoRetainer.GetOfflineCharacterData(Svc.ClientState.LocalContentId)
+    end)
+    if not ok or offlineCharacterData == nil or offlineCharacterData.RetainerData == nil then
+        return false
+    end
     for i = 0, offlineCharacterData.RetainerData.Count - 1 do
         local retainer = offlineCharacterData.RetainerData[i]
         if retainer.HasVenture and retainer.VentureEndsAt <= os.time() then
@@ -4598,8 +4808,8 @@ function FateFarming:Run()
 
     -- Settings Area
     -- Buffs
-    Food                      = Config.Get("Food")
-    Potion                    = Config.Get("Potion")
+    Food                      = TrimString(Config.Get("Food"))
+    Potion                    = TrimString(Config.Get("Potion"))
 
     -- Chocobo
     ResummonChocoboTimeLeft   = 3 *
@@ -4738,6 +4948,11 @@ function FateFarming:Run()
     SessionStuckAetheryteCount     = 0
     SessionStuckZoneSwitchCount    = 0
     SessionStopReason              = nil
+    FoodAutoUseDisabled            = false
+    PotionAutoUseDisabled          = false
+    GysahlUseDisabled              = false
+    GysahlShopPurchaseAttempts     = 0
+    LifestreamBusyWarned           = false
 
     --Forlorns
     IgnoreForlorns                 = false
@@ -4875,6 +5090,17 @@ function FateFarming:Run()
             "/echo [FATE] Warning: you have enabled the feature to process GC turn ins, but you do not have AutoRetainer installed.")
     end
 
+    local ipcOk, ipcErr = ValidateRequiredIpc()
+    if not ipcOk then
+        local msg = "ERROR: Required IPC unavailable - " .. tostring(ipcErr) .. ". Stopping script."
+        yield("/echo [FATE] " .. msg)
+        Dalamud.Log("[FATE] " .. msg)
+        SendDiscordMessage(msg)
+        SetStopReason(msg)
+        StopScript = true
+        return
+    end
+
     -- Enable Auto Advance plugin
     yield("/at y")
 
@@ -4958,12 +5184,12 @@ function FateFarming:Run()
 
     while not StopScript do
         local nearestFate = Fates.GetNearestFate()
-        if not IPC.vnavmesh.IsReady() then
+        if not IsVnavmeshReadySafe() then
             yield("/echo [FATE] Waiting for vnavmesh to build...")
             Dalamud.Log("[FATE] Waiting for vnavmesh to build...")
             repeat
                 yield("/wait 1")
-            until IPC.vnavmesh.IsReady()
+            until IsVnavmeshReadySafe()
         end
         if NoMovementTeleportTimeout > 0 then
             local currentPos = GetLocalPlayerPosition()
@@ -4988,7 +5214,7 @@ function FateFarming:Run()
                             and State ~= CharacterState.waitForContinuation
                             and State ~= CharacterState.collectionsFateTurnIn
                             and not Svc.Condition[CharacterCondition.betweenAreas]
-                            and not IPC.Lifestream.IsBusy()
+                            and not IsLifestreamBusySafe()
                             and not navBusy
                         if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
                             local timeoutZoneName = (SelectedZone and SelectedZone.zoneName) or "Unknown Zone"
@@ -5074,7 +5300,7 @@ function FateFarming:Run()
         end
         if not (Svc.Condition[CharacterCondition.betweenAreas]
                 or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
-                or IPC.Lifestream.IsBusy())
+                or IsLifestreamBusySafe())
         then
             State()
         end
