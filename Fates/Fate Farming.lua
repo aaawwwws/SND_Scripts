@@ -2630,9 +2630,16 @@ function TeleportTo(aetheryteName)
     end
 
     if not teleportStarted then
-        if resolvedName ~= nil and resolvedName ~= "" then
-            local escapedResolvedName = tostring(resolvedName):gsub('"', "")
-            teleportStarted = TryTeleportCommand('/li tp "' .. escapedResolvedName .. '"')
+        for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
+            local escapedName = candidateName:gsub('"', "")
+            if TryTeleportCommand('/teleport "' .. escapedName .. '"') then
+                teleportStarted = true
+                break
+            end
+            if TryTeleportCommand('/テレポ "' .. escapedName .. '"') then
+                teleportStarted = true
+                break
+            end
         end
     end
 
@@ -2642,6 +2649,21 @@ function TeleportTo(aetheryteName)
             if TryTeleportCommand('/li tp "' .. escapedName .. '"') then
                 teleportStarted = true
                 break
+            end
+            if TryTeleportCommand('/li tp ' .. escapedName) then
+                teleportStarted = true
+                break
+            end
+        end
+    end
+
+    if not teleportStarted then
+        if resolvedName ~= nil and resolvedName ~= "" then
+            local escapedResolvedName = tostring(resolvedName):gsub('"', "")
+            if TryTeleportCommand('/li tp "' .. escapedResolvedName .. '"') then
+                teleportStarted = true
+            elseif TryTeleportCommand('/li tp ' .. escapedResolvedName) then
+                teleportStarted = true
             end
         end
     end
