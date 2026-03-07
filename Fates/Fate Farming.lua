@@ -2508,6 +2508,96 @@ function AcceptTeleportOfferLocation(destinationAetheryte)
     end
 end
 
+local function NormalizeTeleportName(name)
+    if name == nil then
+        return ""
+    end
+    local normalized = string.lower(tostring(name))
+    normalized = normalized:gsub("%s+", "")
+    normalized = normalized:gsub("・", "")
+    normalized = normalized:gsub("%-", "")
+    normalized = normalized:gsub("'", "")
+    normalized = normalized:gsub("’", "")
+    return normalized
+end
+
+local function BuildTeleportNameCandidates(name)
+    local candidates = {}
+    local function addCandidate(candidate)
+        if candidate == nil then
+            return
+        end
+        local value = tostring(candidate)
+        if value == "" then
+            return
+        end
+        for _, existing in ipairs(candidates) do
+            if existing == value then
+                return
+            end
+        end
+        table.insert(candidates, value)
+    end
+
+    local original = tostring(name or "")
+    addCandidate(original)
+    if string.find(original, "ソリューションナイン", 1, true) then
+        addCandidate(string.gsub(original, "ソリューションナイン", "ソリューション・ナイン"))
+    end
+    if string.find(original, "ソリューション・ナイン", 1, true) then
+        addCandidate(string.gsub(original, "ソリューション・ナイン", "ソリューションナイン"))
+    end
+    return candidates
+end
+
+local function ResolveTeleportDestination(name)
+    local candidates = BuildTeleportNameCandidates(name)
+    local normalizedCandidates = {}
+    for _, candidate in ipairs(candidates) do
+        normalizedCandidates[NormalizeTeleportName(candidate)] = true
+    end
+
+    for _, aetheryte in ipairs(Svc.AetheryteList) do
+        local aetheryteName = GetAetheryteName(aetheryte)
+        if normalizedCandidates[NormalizeTeleportName(aetheryteName)] then
+            return aetheryteName, aetheryte.AetheryteId
+        end
+    end
+
+    for _, aetheryte in ipairs(Svc.AetheryteList) do
+        local aetheryteName = GetAetheryteName(aetheryte)
+        local normalizedAetheryteName = NormalizeTeleportName(aetheryteName)
+        for normalizedCandidate, _ in pairs(normalizedCandidates) do
+            if normalizedAetheryteName ~= "" and normalizedCandidate ~= "" and (
+                    string.find(normalizedAetheryteName, normalizedCandidate, 1, true)
+                    or string.find(normalizedCandidate, normalizedAetheryteName, 1, true)
+                )
+            then
+                return aetheryteName, aetheryte.AetheryteId
+            end
+        end
+    end
+
+    return tostring(name or ""), nil
+end
+
+local function WaitForTeleportStart(timeoutSeconds)
+    local startWait = os.clock()
+    local timeout = tonumber(timeoutSeconds) or 2
+    while os.clock() - startWait < timeout do
+        if Svc.Condition[CharacterCondition.casting] or Svc.Condition[CharacterCondition.betweenAreas] then
+            return true
+        end
+        yield("/wait 0.1")
+    end
+    return false
+end
+
+local function TryTeleportCommand(command)
+    yield(command)
+    return WaitForTeleportStart(2.2)
+end
+
 function TeleportTo(aetheryteName)
     AcceptTeleportOfferLocation(aetheryteName)
     local start = os.clock()
@@ -2521,8 +2611,50 @@ function TeleportTo(aetheryteName)
         end
     end
 
-    yield("/li tp " .. aetheryteName)
-    yield("/wait 1")
+    local resolvedName, resolvedId = ResolveTeleportDestination(aetheryteName)
+    local teleportStarted = false
+
+    if resolvedId ~= nil then
+        if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.ExecuteCommand) == "function" then
+            local ok = pcall(function()
+                IPC.Lifestream.ExecuteCommand("tp " .. tostring(resolvedId))
+            end)
+            if ok then
+                teleportStarted = WaitForTeleportStart(2.2)
+            end
+        end
+
+        if not teleportStarted then
+            teleportStarted = TryTeleportCommand("/li tp " .. tostring(resolvedId))
+        end
+    end
+
+    if not teleportStarted then
+        for _, candidateName in ipairs(BuildTeleportNameCandidates(resolvedName)) do
+            local escapedName = candidateName:gsub('"', "")
+            if TryTeleportCommand('/li tp "' .. escapedName .. '"') then
+                teleportStarted = true
+                break
+            end
+        end
+    end
+
+    if not teleportStarted then
+        local fallbackName = tostring((resolvedName ~= "" and resolvedName) or aetheryteName or ""):gsub('"', "")
+        if fallbackName ~= "" then
+            teleportStarted = TryTeleportCommand('/tp "' .. fallbackName .. '"')
+        end
+    end
+
+    if not teleportStarted then
+        local msg = "[FATE] Teleport failed: destination not found or cast did not start (" ..
+            tostring(aetheryteName) .. ")"
+        Dalamud.Log(msg)
+        yield("/echo " .. msg)
+        yield("/wait 3")
+        return false
+    end
+
     while Svc.Condition[CharacterCondition.casting] do
         Dalamud.Log("[FATE] Casting teleport...")
         yield("/wait 1")
