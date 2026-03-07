@@ -443,6 +443,7 @@ local mysplit
 local Normalize
 local NpcDismount
 local PotionCheck
+local CanUseConsumableNow
 local ProcessRetainers
 local PrintSessionSummary
 local RandomAdjustCoordinates
@@ -475,6 +476,7 @@ local SetStopReason
 local IsLifestreamBusySafe
 local ValidateRequiredIpc
 local IsVnavmeshReadySafe
+local IsVnavmeshMovingSafe
 
 -- 出現中FATEデータ保存用の設定/状態
 local FateDataLogEnabled
@@ -511,8 +513,11 @@ local FoodAutoUseDisabled
 local PotionAutoUseDisabled
 local GysahlUseDisabled
 local GysahlShopPurchaseAttempts
+local ChocoboSummonFailureCount
 local LifestreamBusyWarned
 local VnavReadyCheckWarned
+local TeleportFailureByDestination
+local TeleportFailureWarnedAt
 
 -- 密集移動のキャッシュ
 local ClusterMoveLastRefresh
@@ -2540,7 +2545,11 @@ local function BuildTeleportNameCandidates(name)
     end
 
     local original = tostring(name or "")
+    local normalizedOriginal = NormalizeTeleportName(original)
     addCandidate(original)
+    addCandidate(original:gsub("・", ""))
+    addCandidate(original:gsub(" ", ""))
+    addCandidate(original:gsub("　", ""))
     if string.find(original, "ソリューションナイン", 1, true) then
         addCandidate(string.gsub(original, "ソリューションナイン", "ソリューション・ナイン"))
     end
@@ -2552,6 +2561,22 @@ local function BuildTeleportNameCandidates(name)
     end
     if string.find(original, "オールド・シャーレアン", 1, true) then
         addCandidate(string.gsub(original, "オールド・シャーレアン", "オールドシャーレアン"))
+    end
+    if string.find(normalizedOriginal, "oldsharlayan", 1, true) then
+        addCandidate("Old Sharlayan")
+        addCandidate("オールド・シャーレアン")
+        addCandidate("オールドシャーレアン")
+    end
+    if string.find(normalizedOriginal, "オールドシャーレアン", 1, true) then
+        addCandidate("Old Sharlayan")
+    end
+    if string.find(normalizedOriginal, "solutionnine", 1, true) then
+        addCandidate("Solution Nine")
+        addCandidate("ソリューション・ナイン")
+        addCandidate("ソリューションナイン")
+    end
+    if string.find(normalizedOriginal, "ソリューションナイン", 1, true) then
+        addCandidate("Solution Nine")
     end
     return candidates
 end
@@ -2625,8 +2650,19 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
         return false
     end
 
-    if TryLocalAetheryteShortcut(escapedName) then
-        return true
+    if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.ExecuteCommand) == "function" then
+        local commands = {
+            'tp "' .. escapedName .. '"',
+            "tp " .. escapedName
+        }
+        for _, commandText in ipairs(commands) do
+            local ok = pcall(function()
+                IPC.Lifestream.ExecuteCommand(commandText)
+            end)
+            if ok and WaitForTeleportStart(2.8) then
+                return true
+            end
+        end
     end
 
     yield('/li tp "' .. escapedName .. '"')
@@ -2639,11 +2675,77 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
         return true
     end
 
+    yield('/teleport "' .. escapedName .. '"')
+    if WaitForTeleportStart(2.8) then
+        return true
+    end
+
     return false
+end
+
+local function GetTeleportFailureEntry(destinationName)
+    if TeleportFailureByDestination == nil then
+        TeleportFailureByDestination = {}
+    end
+    local key = NormalizeTeleportName(destinationName)
+    if key == "" then
+        key = "__unknown__"
+    end
+    if TeleportFailureByDestination[key] == nil then
+        TeleportFailureByDestination[key] = {
+            count = 0,
+            lastFailedAt = 0,
+            blockedUntil = 0
+        }
+    end
+    return TeleportFailureByDestination[key]
+end
+
+local function IsTeleportDestinationBlocked(destinationName)
+    local entry = GetTeleportFailureEntry(destinationName)
+    return entry.blockedUntil ~= nil and entry.blockedUntil > os.clock(), entry
+end
+
+local function MarkTeleportSuccess(destinationName)
+    local entry = GetTeleportFailureEntry(destinationName)
+    entry.count = 0
+    entry.lastFailedAt = 0
+    entry.blockedUntil = 0
+end
+
+local function MarkTeleportFailure(destinationName)
+    local now = os.clock()
+    local entry = GetTeleportFailureEntry(destinationName)
+    if now - (entry.lastFailedAt or 0) > 120 then
+        entry.count = 0
+    end
+    entry.count = (entry.count or 0) + 1
+    entry.lastFailedAt = now
+    if entry.count >= 3 then
+        entry.blockedUntil = now + 45
+    end
+    return entry
 end
 
 function TeleportTo(aetheryteName)
     AcceptTeleportOfferLocation(aetheryteName)
+    local blocked, blockEntry = IsTeleportDestinationBlocked(aetheryteName)
+    if blocked then
+        local now = os.clock()
+        if (TeleportFailureWarnedAt or 0) + 6 < now then
+            local waitSeconds = math.max(1, math.floor((blockEntry.blockedUntil or now) - now))
+            local msg = string.format(
+                "[FATE] Teleport temporarily paused for %s (%ds) after repeated failures.",
+                tostring(aetheryteName),
+                waitSeconds
+            )
+            Dalamud.Log(msg)
+            yield("/echo " .. msg)
+            TeleportFailureWarnedAt = now
+        end
+        yield("/wait 2")
+        return false
+    end
     local start = os.clock()
 
     while EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime) - LastTeleportTimeStamp < 5 do
@@ -2677,8 +2779,13 @@ function TeleportTo(aetheryteName)
     end
 
     if not teleportStarted then
+        local failureEntry = MarkTeleportFailure(aetheryteName)
         local msg = "[FATE] Teleport failed: destination not found or cast did not start (" ..
             tostring(aetheryteName) .. ")"
+        if failureEntry ~= nil and failureEntry.count ~= nil and failureEntry.count >= 3 then
+            local blockedFor = math.max(1, math.floor((failureEntry.blockedUntil or os.clock()) - os.clock()))
+            msg = msg .. " | too many failures, blocking for " .. tostring(blockedFor) .. "s"
+        end
         Dalamud.Log(msg)
         yield("/echo " .. msg)
         yield("/wait 3")
@@ -2704,6 +2811,7 @@ function TeleportTo(aetheryteName)
     end
     yield("/wait 1")
     LastTeleportTimeStamp = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
+    MarkTeleportSuccess(aetheryteName)
     HasFlownUpYet = false
     return true
 end
@@ -3337,19 +3445,7 @@ function SummonChocobo()
         return
     end
 
-    local canUseGysahlNow = not (
-        Svc.Condition[CharacterCondition.dead]
-        or Svc.Condition[CharacterCondition.inCombat]
-        or Svc.Condition[CharacterCondition.casting]
-        or Svc.Condition[CharacterCondition.mounting57]
-        or Svc.Condition[CharacterCondition.mounting64]
-        or Svc.Condition[CharacterCondition.betweenAreas]
-        or Svc.Condition[CharacterCondition.occupied]
-        or Svc.Condition[CharacterCondition.occupiedInEvent]
-        or Svc.Condition[CharacterCondition.occupiedInQuestEvent]
-        or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
-        or IsLifestreamBusySafe()
-    )
+    local canUseGysahlNow = CanUseConsumableNow()
 
     if ShouldSummonChocobo and buddyTimeRemaining <= 0 then
         if not canUseGysahlNow then
@@ -4820,7 +4916,28 @@ function IsVnavmeshReadySafe()
     return ok and ready == true
 end
 
-local function CanUseConsumableNow()
+function IsVnavmeshMovingSafe()
+    if IPC == nil or IPC.vnavmesh == nil then
+        return false
+    end
+    local running = false
+    local pathfinding = false
+    local okRunning, runningValue = pcall(function()
+        return IPC.vnavmesh.IsRunning()
+    end)
+    if okRunning then
+        running = runningValue == true
+    end
+    local okPathfinding, pathfindingValue = pcall(function()
+        return IPC.vnavmesh.PathfindInProgress()
+    end)
+    if okPathfinding then
+        pathfinding = pathfindingValue == true
+    end
+    return running or pathfinding
+end
+
+CanUseConsumableNow = function()
     if Svc.ClientState.LocalPlayer == nil then
         return false
     end
@@ -4830,12 +4947,20 @@ local function CanUseConsumableNow()
         or Svc.Condition[CharacterCondition.mounted]
         or Svc.Condition[CharacterCondition.mounting57]
         or Svc.Condition[CharacterCondition.mounting64]
+        or Svc.Condition[CharacterCondition.jumping48]
+        or Svc.Condition[CharacterCondition.jumping61]
+        or Svc.Condition[CharacterCondition.beingMoved]
+        or Svc.Condition[CharacterCondition.flying]
         or Svc.Condition[CharacterCondition.betweenAreas]
+        or Svc.Condition[CharacterCondition.betweenAreasForDuty]
+        or Svc.Condition[CharacterCondition.boundByDuty34]
+        or Svc.Condition[CharacterCondition.boundByDuty56]
         or Svc.Condition[CharacterCondition.occupied]
         or Svc.Condition[CharacterCondition.occupiedInEvent]
         or Svc.Condition[CharacterCondition.occupiedInQuestEvent]
         or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
         or IsLifestreamBusySafe()
+        or IsVnavmeshMovingSafe()
     then
         return false
     end
@@ -4846,24 +4971,60 @@ function TryUseGysahlGreens()
     if GysahlUseDisabled then
         return false
     end
-    local itemName = LANG and LANG.actions and LANG.actions["Gysahl Greens"] or "Gysahl Greens"
-    local command = BuildConsumableItemCommand(itemName)
-    if command == nil or not CanUseConsumableNow() then
+    if not CanUseConsumableNow() then
+        return false
+    end
+    if Inventory.GetItemCount(4868) <= 0 then
+        return false
+    end
+    if (ChocoboSummonFailureCount or 0) >= 3 then
         return false
     end
 
     local ok, err = pcall(function()
-        yield(command)
+        yield("/companion")
     end)
     if not ok then
-        GysahlUseDisabled = true
+        ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
+        if ChocoboSummonFailureCount >= 3 then
+            GysahlUseDisabled = true
+            ShouldSummonChocobo = false
+        end
         local errorText = tostring(err):gsub("[\r\n]", " ")
-        local msg = "[FATE] Failed to use Gysahl Greens. Auto use disabled for this session. Error: " .. errorText
+        local msg = "[FATE] Failed to run /companion command. Chocobo summon retry " ..
+            tostring(ChocoboSummonFailureCount) .. "/3. Error: " .. errorText
         Dalamud.Log(msg)
         yield("/echo " .. msg)
         return false
     end
-    return true
+
+    local start = os.clock()
+    while os.clock() - start < 3.5 do
+        if GetBuddyTimeRemaining() > 0 then
+            ChocoboSummonFailureCount = 0
+            return true
+        end
+        if not CanUseConsumableNow() then
+            return false
+        end
+        yield("/wait 0.1")
+    end
+
+    ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
+    if ChocoboSummonFailureCount >= 3 then
+        GysahlUseDisabled = true
+        ShouldSummonChocobo = false
+        local msg =
+        "[FATE] Chocobo summon did not start after /companion multiple times. Auto summon disabled for this session."
+        Dalamud.Log(msg)
+        yield("/echo " .. msg)
+        return false
+    else
+        local msg = "[FATE] /companion did not summon chocobo yet. Retry " ..
+            tostring(ChocoboSummonFailureCount) .. "/3"
+        Dalamud.Log(msg)
+        return false
+    end
 end
 
 function FoodCheck()
@@ -5212,8 +5373,11 @@ function FateFarming:Run()
     PotionAutoUseDisabled          = false
     GysahlUseDisabled              = false
     GysahlShopPurchaseAttempts     = 0
+    ChocoboSummonFailureCount      = 0
     LifestreamBusyWarned           = false
     VnavReadyCheckWarned           = false
+    TeleportFailureByDestination   = {}
+    TeleportFailureWarnedAt        = 0
 
     --Forlorns
     IgnoreForlorns                 = false
