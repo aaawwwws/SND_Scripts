@@ -2604,6 +2604,15 @@ local function TryTeleportCommand(command)
     return WaitForTeleportStart(2.2)
 end
 
+local function TryLocalAetheryteShortcut(destinationName)
+    if destinationName == nil or destinationName == "" then
+        return false
+    end
+    local escapedName = tostring(destinationName):gsub('"', "")
+    yield('/li "' .. escapedName .. '"')
+    return WaitForTeleportStart(3.5)
+end
+
 function TeleportTo(aetheryteName)
     AcceptTeleportOfferLocation(aetheryteName)
     local start = os.clock()
@@ -2632,7 +2641,7 @@ function TeleportTo(aetheryteName)
     if not teleportStarted then
         for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
             local escapedName = candidateName:gsub('"', "")
-            if TryTeleportCommand('/teleport "' .. escapedName .. '"') then
+            if TryTeleportCommand('/telepo "' .. escapedName .. '"') then
                 teleportStarted = true
                 break
             end
@@ -4307,7 +4316,12 @@ function HandleExchangeMovementStuck()
             ResetExchangeMovementStuckState()
             SetExchangeMovementStuckGrace(15)
             if SelectedBicolorExchangeData.miniAethernet ~= nil then
-                yield("/li " .. SelectedBicolorExchangeData.miniAethernet.name)
+                local movedByMiniAetheryte = TryLocalAetheryteShortcut(SelectedBicolorExchangeData.miniAethernet.name)
+                if not movedByMiniAetheryte then
+                    Dalamud.Log("[FATE] Mini aetheryte shortcut failed. Disabling it for this session.")
+                    SelectedBicolorExchangeData.miniAethernet = nil
+                    TeleportTo(SelectedBicolorExchangeData.aetheryteName)
+                end
             else
                 TeleportTo(SelectedBicolorExchangeData.aetheryteName)
             end
@@ -4359,8 +4373,11 @@ function ExecuteBicolorExchange()
                 Dalamud.Log("[FATE] Exchange route: using aetheryte first, then pathfinding.")
                 ResetExchangeMovementStuckState()
                 SetExchangeMovementStuckGrace(15)
-                yield("/li " .. SelectedBicolorExchangeData.miniAethernet.name)
-                yield("/wait 1")
+                local movedByMiniAetheryte = TryLocalAetheryteShortcut(SelectedBicolorExchangeData.miniAethernet.name)
+                if not movedByMiniAetheryte then
+                    Dalamud.Log("[FATE] Mini aetheryte shortcut failed. Disabling it for this session.")
+                    SelectedBicolorExchangeData.miniAethernet = nil
+                end
                 return
             end
         end
@@ -4558,8 +4575,9 @@ function Repair()
 
             local darkMatterVendor = { npcName = "Unsynrael", position = Vector3(-257.71, 16.19, 50.11), wait = 0.08 }
             if GetDistanceToPoint(darkMatterVendor.position) > (DistanceBetween(hawkersAlleyAethernetShard.position, darkMatterVendor.position) + 10) then
-                yield("/li Hawkers' Alley")
-                yield("/wait 1") -- give it a moment to register
+                if not TryLocalAetheryteShortcut("Hawkers' Alley") then
+                    Dalamud.Log("[FATE] Hawkers' Alley aethernet shortcut failed. Walking to vendor.")
+                end
             elseif AddonReady("TelepotTown") then
                 yield("/callback TelepotTown false -1")
             elseif GetDistanceToPoint(darkMatterVendor.position) > 5 then
@@ -4592,8 +4610,9 @@ function Repair()
 
             local mender = { npcName = "Alistair", position = Vector3(-246.87, 16.19, 49.83) }
             if GetDistanceToPoint(mender.position) > (DistanceBetween(hawkersAlleyAethernetShard.position, mender.position) + 10) then
-                yield("/li Hawkers' Alley")
-                yield("/wait 1") -- give it a moment to register
+                if not TryLocalAetheryteShortcut("Hawkers' Alley") then
+                    Dalamud.Log("[FATE] Hawkers' Alley aethernet shortcut failed. Walking to mender.")
+                end
             elseif AddonReady("TelepotTown") then
                 yield("/callback TelepotTown false -1")
             elseif GetDistanceToPoint(mender.position) > 5 then
