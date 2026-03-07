@@ -200,7 +200,7 @@ configs:
         "Turali Bicolor Gemstone Voucher"]
   Chocobo Companion Stance:
     description: None の場合はチョコボを呼び出しません。
-    default: "Healer"
+    default: "Attacker"
     is_choice: true
     choices: ["Follow", "Free", "Defender", "Healer", "Attacker", "None"]
   Buy Gysahl Greens?:
@@ -515,6 +515,7 @@ local GysahlUseDisabled
 local GysahlShopPurchaseAttempts
 local ChocoboSummonFailureCount
 local ChocoboSummonCooldownUntil
+local ChocoboSummonLastAttemptAt
 local LifestreamBusyWarned
 local VnavReadyCheckWarned
 local NativeItemCommandDisabled
@@ -1381,6 +1382,18 @@ function load_type(type_path)
 end
 
 EntityWrapper = load_type('SomethingNeedDoing.LuaMacro.Wrappers.EntityWrapper')
+local SndGameUtils = nil
+do
+    local ok, gameUtils = pcall(function()
+        return load_type('SomethingNeedDoing.Utils.Game')
+    end)
+    if ok then
+        SndGameUtils = gameUtils
+    else
+        Dalamud.Log(
+        "[FATE] Warning: failed to load SomethingNeedDoing.Utils.Game. Using command fallback for chocobo summon.")
+    end
+end
 
 function AddonReady(addonName)
     local addon = Addons.GetAddon(addonName)
@@ -4992,7 +5005,11 @@ function TryUseGysahlGreens()
     if GysahlUseDisabled then
         return false
     end
+    local now = os.clock()
     if (ChocoboSummonCooldownUntil or 0) > os.clock() then
+        return false
+    end
+    if (now - (ChocoboSummonLastAttemptAt or 0)) < 8 then
         return false
     end
     if not CanUseConsumableNow() then
@@ -5005,52 +5022,73 @@ function TryUseGysahlGreens()
         return false
     end
 
-    local ok, err = pcall(function()
-        yield("/companion")
-    end)
-    if not ok then
-        ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
-        if ChocoboSummonFailureCount >= 3 then
-            ChocoboSummonFailureCount = 0
-            ChocoboSummonCooldownUntil = os.clock() + 45
-            local msg =
-            "[FATE] Failed to run /companion multiple times. Pausing chocobo auto summon for 45s."
-            Dalamud.Log(msg)
-            yield("/echo " .. msg)
-            return false
+    ChocoboSummonLastAttemptAt = now
+
+    local function WaitForBuddySummon(timeoutSeconds)
+        local start = os.clock()
+        local timeout = tonumber(timeoutSeconds) or 3.0
+        while os.clock() - start < timeout do
+            if GetBuddyTimeRemaining() > 0 then
+                return true
+            end
+            if not CanUseConsumableNow() then
+                return false
+            end
+            yield("/wait 0.1")
         end
-        local errorText = tostring(err):gsub("[\r\n]", " ")
-        local msg = "[FATE] Failed to run /companion command. Chocobo summon retry " ..
-            tostring(ChocoboSummonFailureCount) .. "/3. Error: " .. errorText
-        Dalamud.Log(msg)
-        yield("/echo " .. msg)
         return false
     end
 
-    local start = os.clock()
-    while os.clock() - start < 3.5 do
-        if GetBuddyTimeRemaining() > 0 then
+    local triedDirectItem = false
+    if SndGameUtils ~= nil then
+        local okUseItem = pcall(function()
+            SndGameUtils.UseItem(4868, false)
+        end)
+        if okUseItem then
+            triedDirectItem = true
+            if WaitForBuddySummon(2.4) then
+                ChocoboSummonFailureCount = 0
+                ChocoboSummonCooldownUntil = 0
+                return true
+            end
+        end
+    end
+
+    local summonCommands = {
+        "/buddy",
+        "/companion",
+        '/generalaction "Companion"',
+        '/generalaction "バディ"'
+    }
+    for _, summonCommand in ipairs(summonCommands) do
+        local ok = pcall(function()
+            yield(summonCommand)
+        end)
+        if ok and WaitForBuddySummon(1.6) then
             ChocoboSummonFailureCount = 0
             ChocoboSummonCooldownUntil = 0
             return true
         end
-        if not CanUseConsumableNow() then
-            return false
-        end
-        yield("/wait 0.1")
+    end
+
+    if WaitForBuddySummon(1.5) then
+        ChocoboSummonFailureCount = 0
+        ChocoboSummonCooldownUntil = 0
+        return true
     end
 
     ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
     if ChocoboSummonFailureCount >= 3 then
         ChocoboSummonFailureCount = 0
         ChocoboSummonCooldownUntil = os.clock() + 45
-        local msg =
-        "[FATE] Chocobo summon did not start after /companion retries. Pausing auto summon for 45s."
+        local msg = triedDirectItem
+            and "[FATE] Chocobo summon did not start after item/command retries. Pausing auto summon for 45s."
+            or "[FATE] Chocobo summon did not start after command retries. Pausing auto summon for 45s."
         Dalamud.Log(msg)
         yield("/echo " .. msg)
         return false
     else
-        local msg = "[FATE] /companion did not summon chocobo yet. Retry " ..
+        local msg = "[FATE] Chocobo summon did not start yet. Retry " ..
             tostring(ChocoboSummonFailureCount) .. "/3"
         Dalamud.Log(msg)
         return false
@@ -5427,6 +5465,7 @@ function FateFarming:Run()
     GysahlShopPurchaseAttempts     = 0
     ChocoboSummonFailureCount      = 0
     ChocoboSummonCooldownUntil     = 0
+    ChocoboSummonLastAttemptAt     = 0
     LifestreamBusyWarned           = false
     VnavReadyCheckWarned           = false
     NativeItemCommandDisabled      = true
