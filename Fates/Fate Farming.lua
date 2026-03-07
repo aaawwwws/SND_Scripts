@@ -516,6 +516,8 @@ local GysahlShopPurchaseAttempts
 local ChocoboSummonFailureCount
 local LifestreamBusyWarned
 local VnavReadyCheckWarned
+local NativeItemCommandDisabled
+local NativeItemCommandWarned
 local TeleportFailureByDestination
 local TeleportFailureWarnedAt
 
@@ -5031,6 +5033,17 @@ function FoodCheck()
     if FoodAutoUseDisabled then
         return
     end
+    if NativeItemCommandDisabled then
+        if not NativeItemCommandWarned and TrimString(Food) ~= "" then
+            NativeItemCommandWarned = true
+            local msg =
+            "[FATE] Native /item command is disabled in safety mode. Auto food/potion use is skipped to avoid SND item crashes."
+            Dalamud.Log(msg)
+            yield("/echo " .. msg)
+        end
+        FoodAutoUseDisabled = true
+        return
+    end
     if HasStatusId(48) then
         return
     end
@@ -5054,6 +5067,17 @@ end
 
 function PotionCheck()
     if PotionAutoUseDisabled then
+        return
+    end
+    if NativeItemCommandDisabled then
+        if not NativeItemCommandWarned and TrimString(Potion) ~= "" then
+            NativeItemCommandWarned = true
+            local msg =
+            "[FATE] Native /item command is disabled in safety mode. Auto food/potion use is skipped to avoid SND item crashes."
+            Dalamud.Log(msg)
+            yield("/echo " .. msg)
+        end
+        PotionAutoUseDisabled = true
         return
     end
     if HasStatusId(49) then
@@ -5376,6 +5400,8 @@ function FateFarming:Run()
     ChocoboSummonFailureCount      = 0
     LifestreamBusyWarned           = false
     VnavReadyCheckWarned           = false
+    NativeItemCommandDisabled      = true
+    NativeItemCommandWarned        = false
     TeleportFailureByDestination   = {}
     TeleportFailureWarnedAt        = 0
 
