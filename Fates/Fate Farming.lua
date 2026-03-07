@@ -2616,6 +2616,32 @@ local function TryLocalAetheryteShortcut(destinationName)
     return false
 end
 
+local function TryLifestreamTeleportByPlaceName(destinationName)
+    if destinationName == nil or destinationName == "" then
+        return false
+    end
+    local escapedName = tostring(destinationName):gsub('"', "")
+    if escapedName == "" then
+        return false
+    end
+
+    if TryLocalAetheryteShortcut(escapedName) then
+        return true
+    end
+
+    yield('/li tp "' .. escapedName .. '"')
+    if WaitForTeleportStart(2.8) then
+        return true
+    end
+
+    yield('/li tp ' .. escapedName)
+    if WaitForTeleportStart(2.8) then
+        return true
+    end
+
+    return false
+end
+
 function TeleportTo(aetheryteName)
     AcceptTeleportOfferLocation(aetheryteName)
     local start = os.clock()
@@ -2632,20 +2658,21 @@ function TeleportTo(aetheryteName)
     local resolvedName, resolvedId = ResolveTeleportDestination(aetheryteName)
     local teleportStarted = false
 
-    if resolvedId == nil then
-        local msg = "[FATE] Teleport failed: unresolved destination id (" .. tostring(aetheryteName) .. ")"
-        Dalamud.Log(msg)
-        yield("/echo " .. msg)
-        yield("/wait 3")
-        return false
-    end
-
     if resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Teleport) == "function" then
         local ok, result = pcall(function()
             return IPC.Lifestream.Teleport(resolvedId, 0)
         end)
         if ok and result == true then
             teleportStarted = WaitForTeleportStart(2.2)
+        end
+    end
+
+    if not teleportStarted then
+        for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
+            if TryLifestreamTeleportByPlaceName(candidateName) then
+                teleportStarted = true
+                break
+            end
         end
     end
 
