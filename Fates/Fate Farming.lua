@@ -205,7 +205,7 @@ configs:
     choices: ["Follow", "Free", "Defender", "Healer", "Attacker", "None"]
   Buy Gysahl Greens?:
     description: 在庫が無い場合、リムサのNPCからギサールの野菜を99個自動購入します。
-    default: true
+    default: false
   Self repair?:
     description: ONで自分で修理を試みます。OFFならリムサの修理NPCへ移動します。
     default: true
@@ -511,6 +511,7 @@ local PotionAutoUseDisabled
 local GysahlUseDisabled
 local GysahlShopPurchaseAttempts
 local LifestreamBusyWarned
+local VnavReadyCheckWarned
 
 -- 密集移動のキャッシュ
 local ClusterMoveLastRefresh
@@ -3215,7 +3216,7 @@ function AutoBuyGysahlGreens()
                     GysahlShopPurchaseAttempts = (GysahlShopPurchaseAttempts or 0) + 1
                     if GysahlShopPurchaseAttempts > 10 then
                         local msg =
-                            "[FATE] Gysahl purchase callback did not succeed after multiple tries. Disabling auto-buy for this session."
+                        "[FATE] Gysahl purchase callback did not succeed after multiple tries. Disabling auto-buy for this session."
                         Dalamud.Log(msg)
                         yield("/echo " .. msg)
                         ShouldAutoBuyGysahlGreens = false
@@ -3695,10 +3696,10 @@ function DoFate()
             if GetDistanceToTargetFlat() <= (MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius()) then
                 if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
                     yield("/vnav stop")
-                    yield("/wait " .. stopBeforeInchWait)                                                                                                            -- short pause before inching closer
+                    yield("/wait " .. stopBeforeInchWait)                                                                                                           -- short pause before inching closer
                 elseif (GetDistanceToTargetFlat() > (1 + GetTargetHitboxRadius() + GetPlayerHitboxRadius())) and not Svc.Condition[CharacterCondition.casting] then -- never move into hitbox
                     yield("/vnav movetarget")
-                    yield("/wait " .. inchCloserWait)                                                                                                                 -- inch closer briefly
+                    yield("/wait " .. inchCloserWait)                                                                                                               -- inch closer briefly
                 end
             elseif not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
                 yield("/wait " .. preApproachWaitOutOfCombat) -- brief wait before approaching again
@@ -4537,7 +4538,6 @@ function ValidateRequiredIpc()
     end
 
     local requiredMethods = {
-        "IsReady",
         "IsRunning",
         "PathfindInProgress",
         "PathfindAndMoveTo",
@@ -4552,8 +4552,15 @@ function ValidateRequiredIpc()
 end
 
 function IsVnavmeshReadySafe()
-    if IPC == nil or IPC.vnavmesh == nil or type(IPC.vnavmesh.IsReady) ~= "function" then
+    if IPC == nil or IPC.vnavmesh == nil then
         return false
+    end
+    if type(IPC.vnavmesh.IsReady) ~= "function" then
+        if not VnavReadyCheckWarned then
+            VnavReadyCheckWarned = true
+            Dalamud.Log("[FATE] vnavmesh IPC does not expose IsReady(); skipping readiness wait.")
+        end
+        return true
     end
     local ok, ready = pcall(function()
         return IPC.vnavmesh.IsReady()
@@ -4953,6 +4960,7 @@ function FateFarming:Run()
     GysahlUseDisabled              = false
     GysahlShopPurchaseAttempts     = 0
     LifestreamBusyWarned           = false
+    VnavReadyCheckWarned           = false
 
     --Forlorns
     IgnoreForlorns                 = false
