@@ -514,6 +514,7 @@ local PotionAutoUseDisabled
 local GysahlUseDisabled
 local GysahlShopPurchaseAttempts
 local ChocoboSummonFailureCount
+local ChocoboSummonCooldownUntil
 local LifestreamBusyWarned
 local VnavReadyCheckWarned
 local NativeItemCommandDisabled
@@ -3439,6 +3440,18 @@ function SummonChocobo()
         return
     end
 
+    if SelectedZone ~= nil and Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
+        State = CharacterState.ready
+        Dalamud.Log("[FATE] State Change: Ready")
+        return
+    end
+
+    if (ChocoboSummonCooldownUntil or 0) > os.clock() then
+        State = CharacterState.ready
+        Dalamud.Log("[FATE] State Change: Ready")
+        return
+    end
+
     local buddyTimeRemaining = GetBuddyTimeRemaining()
     if buddyTimeRemaining > 0 then
         ApplyChocoboStance()
@@ -4110,7 +4123,13 @@ function Ready()
         return
     end
 
-    if ShouldSummonChocobo and GetBuddyTimeRemaining() <= 0 and (not shouldWaitForBonusBuff or Inventory.GetItemCount(4868) > 0) then
+    local summonCooldownPassed = (ChocoboSummonCooldownUntil or 0) <= os.clock()
+    if ShouldSummonChocobo
+        and Svc.ClientState.TerritoryType == SelectedZone.zoneId
+        and summonCooldownPassed
+        and GetBuddyTimeRemaining() <= 0
+        and (not shouldWaitForBonusBuff or Inventory.GetItemCount(4868) > 0)
+    then
         State = CharacterState.summonChocobo
         Dalamud.Log("[FATE] State Change: summonChocobo")
         return
@@ -4973,6 +4992,9 @@ function TryUseGysahlGreens()
     if GysahlUseDisabled then
         return false
     end
+    if (ChocoboSummonCooldownUntil or 0) > os.clock() then
+        return false
+    end
     if not CanUseConsumableNow() then
         return false
     end
@@ -4989,8 +5011,13 @@ function TryUseGysahlGreens()
     if not ok then
         ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
         if ChocoboSummonFailureCount >= 3 then
-            GysahlUseDisabled = true
-            ShouldSummonChocobo = false
+            ChocoboSummonFailureCount = 0
+            ChocoboSummonCooldownUntil = os.clock() + 45
+            local msg =
+            "[FATE] Failed to run /companion multiple times. Pausing chocobo auto summon for 45s."
+            Dalamud.Log(msg)
+            yield("/echo " .. msg)
+            return false
         end
         local errorText = tostring(err):gsub("[\r\n]", " ")
         local msg = "[FATE] Failed to run /companion command. Chocobo summon retry " ..
@@ -5004,6 +5031,7 @@ function TryUseGysahlGreens()
     while os.clock() - start < 3.5 do
         if GetBuddyTimeRemaining() > 0 then
             ChocoboSummonFailureCount = 0
+            ChocoboSummonCooldownUntil = 0
             return true
         end
         if not CanUseConsumableNow() then
@@ -5014,10 +5042,10 @@ function TryUseGysahlGreens()
 
     ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
     if ChocoboSummonFailureCount >= 3 then
-        GysahlUseDisabled = true
-        ShouldSummonChocobo = false
+        ChocoboSummonFailureCount = 0
+        ChocoboSummonCooldownUntil = os.clock() + 45
         local msg =
-        "[FATE] Chocobo summon did not start after /companion multiple times. Auto summon disabled for this session."
+        "[FATE] Chocobo summon did not start after /companion retries. Pausing auto summon for 45s."
         Dalamud.Log(msg)
         yield("/echo " .. msg)
         return false
@@ -5398,6 +5426,7 @@ function FateFarming:Run()
     GysahlUseDisabled              = false
     GysahlShopPurchaseAttempts     = 0
     ChocoboSummonFailureCount      = 0
+    ChocoboSummonCooldownUntil     = 0
     LifestreamBusyWarned           = false
     VnavReadyCheckWarned           = false
     NativeItemCommandDisabled      = true
