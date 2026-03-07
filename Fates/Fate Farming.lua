@@ -3329,7 +3329,32 @@ function SummonChocobo()
         return
     end
 
-    if ShouldSummonChocobo and GetBuddyTimeRemaining() <= ResummonChocoboTimeLeft then
+    local buddyTimeRemaining = GetBuddyTimeRemaining()
+    if buddyTimeRemaining > 0 then
+        ApplyChocoboStance()
+        State = CharacterState.ready
+        Dalamud.Log("[FATE] State Change: Ready")
+        return
+    end
+
+    local canUseGysahlNow = not (
+        Svc.Condition[CharacterCondition.dead]
+        or Svc.Condition[CharacterCondition.inCombat]
+        or Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.mounting57]
+        or Svc.Condition[CharacterCondition.mounting64]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or Svc.Condition[CharacterCondition.occupied]
+        or Svc.Condition[CharacterCondition.occupiedInEvent]
+        or Svc.Condition[CharacterCondition.occupiedInQuestEvent]
+        or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
+        or IsLifestreamBusySafe()
+    )
+
+    if ShouldSummonChocobo and buddyTimeRemaining <= 0 then
+        if not canUseGysahlNow then
+            return
+        end
         if Inventory.GetItemCount(4868) > 0 then
             if TryUseGysahlGreens() then
                 yield("/wait 3")
@@ -3987,7 +4012,7 @@ function Ready()
         return
     end
 
-    if ShouldSummonChocobo and GetBuddyTimeRemaining() <= ResummonChocoboTimeLeft and (not shouldWaitForBonusBuff or Inventory.GetItemCount(4868) > 0) then
+    if ShouldSummonChocobo and GetBuddyTimeRemaining() <= 0 and (not shouldWaitForBonusBuff or Inventory.GetItemCount(4868) > 0) then
         State = CharacterState.summonChocobo
         Dalamud.Log("[FATE] State Change: summonChocobo")
         return
