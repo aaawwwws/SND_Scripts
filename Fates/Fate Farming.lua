@@ -2599,18 +2599,21 @@ local function WaitForTeleportStart(timeoutSeconds)
     return false
 end
 
-local function TryTeleportCommand(command)
-    yield(command)
-    return WaitForTeleportStart(2.2)
-end
-
 local function TryLocalAetheryteShortcut(destinationName)
     if destinationName == nil or destinationName == "" then
         return false
     end
-    local escapedName = tostring(destinationName):gsub('"', "")
-    yield('/li "' .. escapedName .. '"')
-    return WaitForTeleportStart(3.5)
+    if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.AethernetTeleport) == "function" then
+        for _, candidateName in ipairs(BuildTeleportNameCandidates(destinationName)) do
+            local ok, result = pcall(function()
+                return IPC.Lifestream.AethernetTeleport(candidateName)
+            end)
+            if ok and result == true then
+                return WaitForTeleportStart(3.5)
+            end
+        end
+    end
+    return false
 end
 
 function TeleportTo(aetheryteName)
@@ -2629,38 +2632,20 @@ function TeleportTo(aetheryteName)
     local resolvedName, resolvedId = ResolveTeleportDestination(aetheryteName)
     local teleportStarted = false
 
+    if resolvedId == nil then
+        local msg = "[FATE] Teleport failed: unresolved destination id (" .. tostring(aetheryteName) .. ")"
+        Dalamud.Log(msg)
+        yield("/echo " .. msg)
+        yield("/wait 3")
+        return false
+    end
+
     if resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Teleport) == "function" then
         local ok, result = pcall(function()
             return IPC.Lifestream.Teleport(resolvedId, 0)
         end)
         if ok and result == true then
             teleportStarted = WaitForTeleportStart(2.2)
-        end
-    end
-
-    if not teleportStarted then
-        if resolvedName ~= nil and resolvedName ~= "" then
-            teleportStarted = TryLocalAetheryteShortcut(resolvedName)
-        end
-    end
-
-    if not teleportStarted then
-        for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
-            local escapedName = candidateName:gsub('"', "")
-            if TryLocalAetheryteShortcut(escapedName) then
-                teleportStarted = true
-                break
-            end
-            if TryTeleportCommand('/li ' .. escapedName) then
-                teleportStarted = true
-                break
-            end
-        end
-    end
-
-    if not teleportStarted then
-        if resolvedId ~= nil then
-            teleportStarted = TryTeleportCommand("/li " .. tostring(resolvedId))
         end
     end
 
