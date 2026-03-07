@@ -2614,25 +2614,15 @@ function TeleportTo(aetheryteName)
     local resolvedName, resolvedId = ResolveTeleportDestination(aetheryteName)
     local teleportStarted = false
 
-    if resolvedId ~= nil then
-        if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.ExecuteCommand) == "function" then
-            local ok = pcall(function()
-                IPC.Lifestream.ExecuteCommand("tp " .. tostring(resolvedId))
-            end)
-            if ok then
-                teleportStarted = WaitForTeleportStart(2.2)
-            end
-        end
-
-        if not teleportStarted then
-            teleportStarted = TryTeleportCommand("/li tp " .. tostring(resolvedId))
-        end
+    if resolvedName ~= nil and resolvedName ~= "" then
+        local escapedResolvedName = tostring(resolvedName):gsub('"', "")
+        teleportStarted = TryTeleportCommand('/tp "' .. escapedResolvedName .. '"')
     end
 
     if not teleportStarted then
         for _, candidateName in ipairs(BuildTeleportNameCandidates(resolvedName)) do
             local escapedName = candidateName:gsub('"', "")
-            if TryTeleportCommand('/li tp "' .. escapedName .. '"') then
+            if TryTeleportCommand('/tp "' .. escapedName .. '"') then
                 teleportStarted = true
                 break
             end
@@ -2640,9 +2630,18 @@ function TeleportTo(aetheryteName)
     end
 
     if not teleportStarted then
-        local fallbackName = tostring((resolvedName ~= "" and resolvedName) or aetheryteName or ""):gsub('"', "")
-        if fallbackName ~= "" then
-            teleportStarted = TryTeleportCommand('/tp "' .. fallbackName .. '"')
+        if resolvedId ~= nil then
+            teleportStarted = TryTeleportCommand("/li tp " .. tostring(resolvedId))
+        end
+    end
+
+    if not teleportStarted then
+        for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
+            local escapedName = candidateName:gsub('"', "")
+            if TryTeleportCommand('/li tp "' .. escapedName .. '"') then
+                teleportStarted = true
+                break
+            end
         end
     end
 
