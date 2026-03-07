@@ -3721,7 +3721,7 @@ function DoFate()
             if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
                 yield("/vnav stop")
             end
-        elseif not CurrentFate.isBossFate then
+        else
             if HandleMovementStuck(Svc.Targets.Target and Svc.Targets.Target.Position or nil) then
                 return
             end
