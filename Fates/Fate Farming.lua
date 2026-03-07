@@ -4544,10 +4544,25 @@ function ValidateRequiredIpc()
         "PointOnFloor"
     }
     for _, methodName in ipairs(requiredMethods) do
-        if type(vnav[methodName]) ~= "function" then
+        if vnav[methodName] == nil then
             return false, "vnavmesh IPC method missing: " .. methodName
         end
     end
+
+    local okIsRunning = pcall(function()
+        return vnav.IsRunning()
+    end)
+    if not okIsRunning then
+        return false, "vnavmesh IPC method not callable: IsRunning"
+    end
+
+    local okPathfindInProgress = pcall(function()
+        return vnav.PathfindInProgress()
+    end)
+    if not okPathfindInProgress then
+        return false, "vnavmesh IPC method not callable: PathfindInProgress"
+    end
+
     return true, nil
 end
 
@@ -4555,7 +4570,7 @@ function IsVnavmeshReadySafe()
     if IPC == nil or IPC.vnavmesh == nil then
         return false
     end
-    if type(IPC.vnavmesh.IsReady) ~= "function" then
+    if IPC.vnavmesh.IsReady == nil then
         if not VnavReadyCheckWarned then
             VnavReadyCheckWarned = true
             Dalamud.Log("[FATE] vnavmesh IPC does not expose IsReady(); skipping readiness wait.")
