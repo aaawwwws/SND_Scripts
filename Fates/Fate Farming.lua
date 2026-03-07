@@ -495,6 +495,7 @@ local ExchangeMoveGraceUntil
 local MoveStuckLastCheckTime
 local MoveStuckLastPosition
 local MoveStuckCount
+local MoveStuckLastDistanceToTarget
 
 -- セッション統計
 local SessionStartClock
@@ -3954,6 +3955,7 @@ function ResetMovementStuckState()
     MoveStuckLastCheckTime = 0
     MoveStuckLastPosition = nil
     MoveStuckCount = 0
+    MoveStuckLastDistanceToTarget = nil
 end
 
 function HandleMovementStuck(targetPosition)
@@ -3977,14 +3979,37 @@ function HandleMovementStuck(targetPosition)
         return false
     end
 
-    local movedEnough = true
-    if MoveStuckLastPosition ~= nil then
-        movedEnough = DistanceBetween(playerPos, MoveStuckLastPosition) >= StuckMovementThreshold
+    local effectiveTarget = targetPosition
+    if effectiveTarget == nil and CurrentFate ~= nil then
+        effectiveTarget = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
     end
 
-    if movedEnough then
+    local distanceToTarget = nil
+    if effectiveTarget ~= nil then
+        distanceToTarget = DistanceBetweenFlat(playerPos, effectiveTarget)
+        if distanceToTarget <= math.max(5, StuckMovementThreshold * 1.5) then
+            MoveStuckCount = 0
+            MoveStuckLastPosition = playerPos
+            MoveStuckLastDistanceToTarget = distanceToTarget
+            return false
+        end
+    end
+
+    local movedEnough = true
+    if MoveStuckLastPosition ~= nil then
+        movedEnough = DistanceBetweenFlat(playerPos, MoveStuckLastPosition) >= StuckMovementThreshold
+    end
+
+    local madeTargetProgress = false
+    if distanceToTarget ~= nil and MoveStuckLastDistanceToTarget ~= nil then
+        madeTargetProgress = (MoveStuckLastDistanceToTarget - distanceToTarget) >=
+            math.max(0.8, StuckMovementThreshold * 0.25)
+    end
+
+    if movedEnough or madeTargetProgress then
         MoveStuckCount = 0
         MoveStuckLastPosition = playerPos
+        MoveStuckLastDistanceToTarget = distanceToTarget
         return false
     end
 
@@ -3995,6 +4020,15 @@ function HandleMovementStuck(targetPosition)
     yield("/wait 0.2")
 
     if MoveStuckCount == 1 then
+        local sidestepTarget = RandomAdjustCoordinates(playerPos, 8)
+        local sidestepFloor = IPC.vnavmesh.PointOnFloor(sidestepTarget, true, 20)
+        if sidestepFloor ~= nil then
+            IPC.vnavmesh.PathfindAndMoveTo(sidestepFloor, Player.CanFly and SelectedZone.flying)
+            yield("/wait 0.35")
+            yield("/vnav stop")
+            yield("/wait 0.15")
+        end
+
         local retryTarget = targetPosition
         if retryTarget == nil and CurrentFate ~= nil then
             retryTarget = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
@@ -4032,6 +4066,7 @@ function HandleMovementStuck(targetPosition)
     end
 
     MoveStuckLastPosition = playerPos
+    MoveStuckLastDistanceToTarget = distanceToTarget
     return true
 end
 
@@ -4955,6 +4990,7 @@ function FateFarming:Run()
     MoveStuckLastCheckTime         = 0
     MoveStuckLastPosition          = nil
     MoveStuckCount                 = 0
+    MoveStuckLastDistanceToTarget  = nil
     MainClass                      = Player.Job
     BossFatesClass                 = nil
     BicolorGemExchangeThreshold    = 1400
