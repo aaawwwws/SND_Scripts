@@ -522,6 +522,7 @@ local NativeItemCommandDisabled
 local NativeItemCommandWarned
 local TeleportFailureByDestination
 local TeleportFailureWarnedAt
+local LastLevelSyncAttemptAt
 
 -- 密集移動のキャッシュ
 local ClusterMoveLastRefresh
@@ -3813,9 +3814,21 @@ function DoFate()
         return
     end
     local maxLevel = GetFateMaxLevelValue(CurrentFate, nil)
-    if InActiveFate() and maxLevel ~= nil and Player.Job and maxLevel < Player.Job.Level and not Player.IsLevelSynced then
-        yield("/lsync")
-        yield("/wait 0.5") -- give it a second to register
+    local needsLevelSync = maxLevel ~= nil and Player.Job and maxLevel < Player.Job.Level and not Player.IsLevelSynced
+    if needsLevelSync then
+        local radius = GetFateRadiusValue(CurrentFate, nil)
+        local closeEnoughToSync = radius ~= nil
+            and IsFateActive(CurrentFate.fateObject)
+            and (GetDistanceToPoint(CurrentFate.position) <= radius + 12)
+        local inOrNearActiveFate = InActiveFate() or closeEnoughToSync
+        local now = os.clock()
+        if inOrNearActiveFate and (LastLevelSyncAttemptAt == nil or now - LastLevelSyncAttemptAt >= 2) then
+            LastLevelSyncAttemptAt = now
+            yield("/lsync")
+            yield("/wait 0.5") -- give it a second to register
+        end
+    else
+        LastLevelSyncAttemptAt = 0
     end
 
     if NoCombatTeleportTimeout > 0 and not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate then
@@ -5472,6 +5485,7 @@ function FateFarming:Run()
     NativeItemCommandWarned        = false
     TeleportFailureByDestination   = {}
     TeleportFailureWarnedAt        = 0
+    LastLevelSyncAttemptAt         = 0
 
     --Forlorns
     IgnoreForlorns                 = false
