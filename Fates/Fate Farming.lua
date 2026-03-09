@@ -5740,13 +5740,26 @@ function FateFarming:Run()
                         LastMoveTimestamp = os.clock()
                     else
                         local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
+                        local stateBlocksIdleRecovery = State == CharacterState.dead
+                            or State == CharacterState.waitForContinuation
+                            or State == CharacterState.collectionsFateTurnIn
+                            or State == CharacterState.processRetainers
+                            or State == CharacterState.repair
+                            or State == CharacterState.exchangingVouchers
+                            or State == CharacterState.gcTurnIn
+                            or State == CharacterState.extractMateria
+                            or State == CharacterState.changingInstances
+                            or State == CharacterState.changeInstanceDismount
                         local shouldCheckIdle = not Svc.Condition[CharacterCondition.inCombat]
-                            and not InActiveFate()
-                            and State == CharacterState.ready
-                            and State ~= CharacterState.doFate
-                            and State ~= CharacterState.waitForContinuation
-                            and State ~= CharacterState.collectionsFateTurnIn
                             and not Svc.Condition[CharacterCondition.betweenAreas]
+                            and not Svc.Condition[CharacterCondition.betweenAreasForDuty]
+                            and not Svc.Condition[CharacterCondition.casting]
+                            and not Svc.Condition[CharacterCondition.occupied]
+                            and not Svc.Condition[CharacterCondition.occupiedInEvent]
+                            and not Svc.Condition[CharacterCondition.occupiedInQuestEvent]
+                            and not Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
+                            and not Svc.Condition[CharacterCondition.occupiedSummoningBell]
+                            and not stateBlocksIdleRecovery
                             and not IsLifestreamBusySafe()
                             and not navBusy
                         if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
@@ -5777,6 +5790,59 @@ function FateFarming:Run()
                 end
             end
         end
+
+        if NoCombatTeleportTimeout > 0 and CurrentFate ~= nil and not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate then
+            local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
+            local progress = GetFateProgressValue(CurrentFate, nil)
+            local radius = GetFateRadiusValue(CurrentFate, nil)
+            local inRange = IsFateActive(CurrentFate.fateObject)
+                and progress ~= nil
+                and progress < 100
+                and radius ~= nil
+                and (GetDistanceToPoint(CurrentFate.position) <= radius + 12)
+            local shouldTrackNoCombat = inRange
+                and not Svc.Condition[CharacterCondition.inCombat]
+                and not Svc.Condition[CharacterCondition.betweenAreas]
+                and not Svc.Condition[CharacterCondition.betweenAreasForDuty]
+                and not Svc.Condition[CharacterCondition.casting]
+                and not Svc.Condition[CharacterCondition.occupied]
+                and not IsLifestreamBusySafe()
+                and not navBusy
+            if shouldTrackNoCombat then
+                if NoCombatStartTime == nil then
+                    NoCombatStartTime = os.clock()
+                elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
+                    local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
+                    local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
+                    local timeoutMsg = string.format(
+                        "[FATE] Global no-combat timeout triggered on FATE #%s: %s",
+                        tostring(timedOutFateId),
+                        tostring(timedOutFateName)
+                    )
+                    Dalamud.Log(timeoutMsg)
+                    SendDiscordMessage(timeoutMsg)
+                    if StayOnCurrentMapOnly then
+                        Dalamud.Log("[FATE] No combat started within timeout. Staying in current map due to setting.")
+                    else
+                        Dalamud.Log("[FATE] No combat started within timeout. Switching zones.")
+                    end
+                    NoCombatStartTime = nil
+                    LastMoveTimestamp = os.clock()
+                    LastMovePosition = GetLocalPlayerPosition()
+                    yield("/vnav stop")
+                    if StayOnCurrentMapOnly then
+                        CurrentFate = nil
+                        NextFate = nil
+                    else
+                        SelectNextDawntrailZone()
+                    end
+                    State = CharacterState.ready
+                end
+            elseif not inRange then
+                NoCombatStartTime = nil
+            end
+        end
+
         if State ~= CharacterState.dead and Svc.Condition[CharacterCondition.dead] then
             State = CharacterState.dead
             Dalamud.Log("[FATE] State Change: Dead")
