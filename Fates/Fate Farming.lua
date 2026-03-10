@@ -228,7 +228,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -523,6 +523,9 @@ local NativeItemCommandWarned
 local TeleportFailureByDestination
 local TeleportFailureWarnedAt
 local LastLevelSyncAttemptAt
+local LevelSyncFailureCount
+local LevelSyncNextAttemptAt
+local LevelSyncHardCooldownUntil
 
 -- 密集移動のキャッシュ
 local ClusterMoveLastRefresh
@@ -3818,34 +3821,75 @@ function DoFate()
     local needsLevelSync = maxLevel ~= nil and Player.Job and maxLevel < Player.Job.Level and not Player.IsLevelSynced
     if needsLevelSync then
         local radius = GetFateRadiusValue(CurrentFate, nil)
-        local closeEnoughToSync = radius ~= nil
+        local inSyncRange = radius ~= nil
             and IsFateActive(CurrentFate.fateObject)
-            and (GetDistanceToPoint(CurrentFate.position) <= radius + 12)
-        local inOrNearActiveFate = inCurrentFate or closeEnoughToSync
+            and (GetDistanceToPoint(CurrentFate.position) <= radius + 8)
         local now = os.clock()
-        if inOrNearActiveFate and (LastLevelSyncAttemptAt == nil or now - LastLevelSyncAttemptAt >= 2) then
-            LastLevelSyncAttemptAt = now
-            yield("/lsync")
-            yield("/wait 0.5") -- give it a second to register
-        end
-    else
-        LastLevelSyncAttemptAt = 0
-    end
+        local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
 
-    if needsLevelSync and not inCurrentFate then
+        -- While waiting for level sync, avoid chasing distant/invalid targets and wall-running.
         if Svc.Targets.Target ~= nil then
             local wrappedSyncTarget = EntityWrapper(Svc.Targets.Target)
             if wrappedSyncTarget ~= nil and wrappedSyncTarget.FateId ~= CurrentFate.fateId then
                 ClearTarget()
             end
         end
+        if inCurrentFate and navBusy then
+            yield("/vnav stop")
+        end
+
+        local canAttemptLevelSync = inCurrentFate
+            and inSyncRange
+            and not Svc.Condition[CharacterCondition.inCombat]
+            and not Svc.Condition[CharacterCondition.mounted]
+            and not Svc.Condition[CharacterCondition.flying]
+            and not Svc.Condition[CharacterCondition.casting]
+            and not Svc.Condition[CharacterCondition.jumping48]
+            and not Svc.Condition[CharacterCondition.jumping61]
+            and not Svc.Condition[CharacterCondition.beingMoved]
+            and not Svc.Condition[CharacterCondition.betweenAreas]
+            and not Svc.Condition[CharacterCondition.betweenAreasForDuty]
+            and not Svc.Condition[CharacterCondition.occupied]
+            and not Svc.Condition[CharacterCondition.occupiedInEvent]
+            and not Svc.Condition[CharacterCondition.occupiedInQuestEvent]
+            and not Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
+            and not IsLifestreamBusySafe()
+            and (LevelSyncHardCooldownUntil == nil or now >= LevelSyncHardCooldownUntil)
+            and (LevelSyncNextAttemptAt == nil or now >= LevelSyncNextAttemptAt)
+            and (LastLevelSyncAttemptAt == nil or now - LastLevelSyncAttemptAt >= 1.5)
+        if canAttemptLevelSync then
+            LastLevelSyncAttemptAt = now
+            yield("/lsync")
+            yield("/wait 0.5") -- give it a second to register
+            if Player.IsLevelSynced then
+                LevelSyncFailureCount = 0
+                LevelSyncNextAttemptAt = 0
+                LevelSyncHardCooldownUntil = 0
+            else
+                LevelSyncFailureCount = (LevelSyncFailureCount or 0) + 1
+                local backoff = math.min(20, 4 + (LevelSyncFailureCount * 3))
+                LevelSyncNextAttemptAt = now + backoff
+                if LevelSyncFailureCount >= 4 then
+                    LevelSyncFailureCount = 0
+                    LevelSyncHardCooldownUntil = now + 30
+                    LevelSyncNextAttemptAt = LevelSyncHardCooldownUntil
+                    Dalamud.Log("[FATE] Level sync unavailable repeatedly. Pausing /lsync attempts for 30s.")
+                end
+            end
+        end
+
         if not Svc.Condition[CharacterCondition.mounted]
-            and not (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress())
+            and not navBusy
         then
             local preferredSyncPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
             IPC.vnavmesh.PathfindAndMoveTo(preferredSyncPos, Player.CanFly and SelectedZone.flying)
         end
         return
+    else
+        LastLevelSyncAttemptAt = 0
+        LevelSyncFailureCount = 0
+        LevelSyncNextAttemptAt = 0
+        LevelSyncHardCooldownUntil = 0
     end
 
     if NoCombatTeleportTimeout > 0 and not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate then
@@ -5503,6 +5547,9 @@ function FateFarming:Run()
     TeleportFailureByDestination   = {}
     TeleportFailureWarnedAt        = 0
     LastLevelSyncAttemptAt         = 0
+    LevelSyncFailureCount          = 0
+    LevelSyncNextAttemptAt         = 0
+    LevelSyncHardCooldownUntil     = 0
 
     --Forlorns
     IgnoreForlorns                 = false
