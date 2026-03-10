@@ -1684,6 +1684,7 @@ end
 
 function UpdateCombatModeByNearbyEnemies()
     if DynamicAoeSwitch ~= true or CurrentFate == nil then
+        ResetDynamicAoeSwitchState()
         RsrDynamicSingleApplied = false
         TurnOnAoes()
         return
@@ -1705,9 +1706,33 @@ function UpdateCombatModeByNearbyEnemies()
         end
     end
 
-    if shouldUseAoe then
-        RsrDynamicSingleApplied = false
-        TurnOnAoes()
+    local desiredMode = shouldUseAoe and "aoe" or "single"
+    if DynamicAoeDecisionMode ~= desiredMode then
+        DynamicAoeDecisionMode = desiredMode
+        DynamicAoeDecisionCount = 1
+    else
+        DynamicAoeDecisionCount = (DynamicAoeDecisionCount or 0) + 1
+    end
+
+    local requiredStable = desiredMode == "aoe"
+        and (DynamicAoeEnableStableSamples or 2)
+        or (DynamicAoeDisableStableSamples or 3)
+    if (DynamicAoeDecisionCount or 0) < requiredStable then
+        return
+    end
+
+    local now = os.clock()
+    local switchCooldown = DynamicAoeSwitchCooldownSeconds or 1.6
+    if (now - (DynamicAoeLastSwitchAt or 0)) < switchCooldown then
+        return
+    end
+
+    if desiredMode == "aoe" then
+        if not AoesOn or RsrDynamicSingleApplied then
+            RsrDynamicSingleApplied = false
+            TurnOnAoes()
+            DynamicAoeLastSwitchAt = now
+        end
         return
     end
 
@@ -1716,14 +1741,21 @@ function UpdateCombatModeByNearbyEnemies()
             yield("/rotation auto on")
             yield("/rotation settings aoetype 1")
             RsrDynamicSingleApplied = true
+            DynamicAoeLastSwitchAt = now
         end
         AoesOn = false
     elseif RotationPlugin == "BMR" or RotationPlugin == "VBM" then
         RsrDynamicSingleApplied = false
-        TurnOffAoes()
+        if AoesOn then
+            TurnOffAoes()
+            DynamicAoeLastSwitchAt = now
+        end
     else
         RsrDynamicSingleApplied = false
-        TurnOnAoes()
+        if not AoesOn then
+            TurnOnAoes()
+            DynamicAoeLastSwitchAt = now
+        end
     end
 end
 
@@ -2804,6 +2836,8 @@ function SelectNextDawntrailZone()
     TeleportDecisionPreferAetheryte = false
     ResetNoCombatRecoveryState()
     ResetMeleeEngageRecoveryState()
+    ResetPreAcquireState()
+    ResetDynamicAoeSwitchState()
     ResetMiddleDismountState()
     Dalamud.Log("[FATE] No eligible fates. Switching to zone: " .. (SelectedZone.zoneName or ""))
 end
@@ -4173,6 +4207,8 @@ function MoveToFate()
         CurrentFate = NextFate
         ResetNoCombatRecoveryState()
         ResetMeleeEngageRecoveryState()
+        ResetPreAcquireState()
+        ResetDynamicAoeSwitchState()
         ResetMiddleDismountState()
         if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
             PrefetchedNextFateId = nil
@@ -4196,9 +4232,35 @@ function MoveToFate()
     end
 
     local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+    local distanceToPreferredMovePos = GetDistanceToPoint(preferredMovePos)
+
+    if not (CurrentFate.isOtherNpcFate or CurrentFate.isCollectionsFate)
+        and distanceToPreferredMovePos <= (PreAcquireDistance or 130)
+        and distanceToPreferredMovePos > 60
+    then
+        if PreAcquireFateId ~= CurrentFate.fateId then
+            PreAcquireFateId = CurrentFate.fateId
+            PreAcquireLastAttemptAt = 0
+        end
+        local now = os.clock()
+        local attemptInterval = PreAcquireAttemptIntervalSeconds or 1.2
+        if now - (PreAcquireLastAttemptAt or 0) >= attemptInterval then
+            PreAcquireLastAttemptAt = now
+            local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
+            local preAcquireRadius = math.max(
+                (DynamicAoeCheckRadius or 30) + 10,
+                (ClusterMoveRadius or 40),
+                fateRadius + 20
+            )
+            local gotPreTarget = AttemptToTargetClosestFateEnemy(true, preAcquireRadius, true)
+            if gotPreTarget then
+                Dalamud.Log("[FATE] Pre-acquired target before arrival.")
+            end
+        end
+    end
 
     -- upon approaching fate, pick a target and switch to pathing towards target
-    if GetDistanceToPoint(preferredMovePos) < 60 then
+    if distanceToPreferredMovePos < 60 then
         if Svc.Targets.Target ~= nil then
             Dalamud.Log("[FATE] Found FATE target, immediate rerouting")
             yield("/wait 0.1")
@@ -5491,6 +5553,8 @@ function Ready()
     CurrentFate = NextFate
     ResetNoCombatRecoveryState()
     ResetMeleeEngageRecoveryState()
+    ResetPreAcquireState()
+    ResetDynamicAoeSwitchState()
     ResetMiddleDismountState()
     if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
         PrefetchedNextFateId = nil
@@ -5557,6 +5621,17 @@ function ResetMeleeEngageRecoveryState()
     MeleeEngageStartAt = 0
     MeleeEngageLastMoveAt = 0
     MeleeEngageNextRetargetAt = 0
+end
+
+function ResetPreAcquireState()
+    PreAcquireFateId = nil
+    PreAcquireLastAttemptAt = 0
+end
+
+function ResetDynamicAoeSwitchState()
+    DynamicAoeDecisionMode = nil
+    DynamicAoeDecisionCount = 0
+    DynamicAoeLastSwitchAt = 0
 end
 
 function ResetMiddleDismountState()
@@ -6710,6 +6785,11 @@ function FateFarming:Run()
     UnresponsiveSkipRatio = 0.65
     FateResultSummaryWriteIntervalSeconds = 30
     MiddleDismountForceAfterSeconds = 1.8
+    PreAcquireDistance = 130
+    PreAcquireAttemptIntervalSeconds = 1.2
+    DynamicAoeSwitchCooldownSeconds = 1.6
+    DynamicAoeEnableStableSamples = 2
+    DynamicAoeDisableStableSamples = 3
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
@@ -6787,6 +6867,11 @@ function FateFarming:Run()
     MeleeEngageStartAt             = 0
     MeleeEngageLastMoveAt          = 0
     MeleeEngageNextRetargetAt      = 0
+    PreAcquireFateId               = nil
+    PreAcquireLastAttemptAt        = 0
+    DynamicAoeDecisionMode         = nil
+    DynamicAoeDecisionCount        = 0
+    DynamicAoeLastSwitchAt         = 0
     MiddleDismountFateId           = nil
     MiddleDismountStartedAt        = 0
     MiddleDismountNoTargetSince    = 0
