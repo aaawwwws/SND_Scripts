@@ -2628,6 +2628,8 @@ function EnsureZonePerformanceEntry(zoneId)
             failed = 0,
             avgCombatSec = 0,
             combatSamples = 0,
+            unresponsiveCount = 0,
+            unresponsiveEma = 0,
             noEligibleCount = 0,
             blockedUntil = 0,
             lastActiveAt = 0
@@ -2647,9 +2649,11 @@ function RecordZoneActivitySample(zoneId, activeFateCount)
         count = 0
     end
     entry.activeEma = (entry.activeEma or 0) * 0.75 + count * 0.25
+    entry.unresponsiveEma = math.max(0, (entry.unresponsiveEma or 0) * 0.98)
     if count > 0 then
         entry.lastActiveAt = os.time()
         entry.noEligibleCount = 0
+        entry.unresponsiveEma = math.max(0, entry.unresponsiveEma * 0.92)
     end
 end
 
@@ -2672,8 +2676,10 @@ function RecordZoneFateOutcome(zoneId, completed, failed, combatDurationSec)
     end
     if completed == true then
         entry.completed = (entry.completed or 0) + 1
+        entry.unresponsiveEma = math.max(0, (entry.unresponsiveEma or 0) * 0.8)
     elseif failed == true then
         entry.failed = (entry.failed or 0) + 1
+        entry.unresponsiveEma = math.max(0, (entry.unresponsiveEma or 0) * 0.95)
     end
 
     local combatSec = tonumber(combatDurationSec) or 0
@@ -2684,6 +2690,18 @@ function RecordZoneFateOutcome(zoneId, completed, failed, combatDurationSec)
             entry.avgCombatSec = entry.avgCombatSec * 0.75 + combatSec * 0.25
         end
         entry.combatSamples = (entry.combatSamples or 0) + 1
+    end
+end
+
+function RecordZoneUnresponsiveSkip(zoneId, reason)
+    local entry = EnsureZonePerformanceEntry(zoneId)
+    if entry == nil then
+        return
+    end
+    entry.unresponsiveCount = (entry.unresponsiveCount or 0) + 1
+    entry.unresponsiveEma = (entry.unresponsiveEma or 0) * 0.7 + 1
+    if reason ~= nil then
+        entry.lastUnresponsiveReason = tostring(reason)
     end
 end
 
@@ -2710,21 +2728,24 @@ function GetBestDawntrailZoneId(currentZoneId)
             if (entry.blockedUntil or 0) > now then
                 score = score - 100
             else
-                local activityScore = (entry.activeEma or 0) * 4
+                local activityScore = (entry.activeEma or 0) * 5.0
                 local runCount = (entry.completed or 0) + (entry.failed or 0)
-                local completionRate = runCount > 0 and ((entry.completed or 0) / runCount) or 0.6
-                local completionScore = completionRate * 3
-                local speedScore = 1.5
+                local completionRate = runCount > 0 and ((entry.completed or 0) / runCount) or 0.65
+                local completionConfidence = math.min(1, runCount / 8)
+                local completionScore = completionRate * (7 + (completionConfidence * 3))
+                local speedScore = 0
                 if (entry.avgCombatSec or 0) > 0 then
-                    speedScore = math.max(0.2, math.min(4, 240 / entry.avgCombatSec))
+                    -- FATE HP scales with nearby players, so keep combat-time influence intentionally tiny.
+                    speedScore = math.max(0.1, math.min(1.2, 180 / entry.avgCombatSec)) * 0.25
                 end
                 local recencyBonus = 0
                 local lastActiveAt = entry.lastActiveAt or 0
                 if lastActiveAt > 0 and (os.time() - lastActiveAt) <= 300 then
                     recencyBonus = 2
                 end
-                local noEligiblePenalty = (entry.noEligibleCount or 0) * 2
-                score = activityScore + completionScore + speedScore + recencyBonus - noEligiblePenalty
+                local noEligiblePenalty = (entry.noEligibleCount or 0) * 1.5
+                local unresponsivePenalty = ((entry.unresponsiveEma or 0) * 6.5) + ((entry.unresponsiveCount or 0) * 0.35)
+                score = activityScore + completionScore + speedScore + recencyBonus - noEligiblePenalty - unresponsivePenalty
             end
         end
 
@@ -2783,6 +2804,7 @@ function SelectNextDawntrailZone()
     TeleportDecisionPreferAetheryte = false
     ResetNoCombatRecoveryState()
     ResetMeleeEngageRecoveryState()
+    ResetMiddleDismountState()
     Dalamud.Log("[FATE] No eligible fates. Switching to zone: " .. (SelectedZone.zoneName or ""))
 end
 
@@ -4016,13 +4038,29 @@ function Dismount(force)
 end
 
 function MiddleOfFateDismount()
-    if not IsFateActive(CurrentFate.fateObject) then
+    if CurrentFate == nil or CurrentFate.fateObject == nil then
+        ResetMiddleDismountState()
         State = CharacterState.ready
         Dalamud.Log("[FATE] State Change: Ready")
         return
     end
 
+    if not IsFateActive(CurrentFate.fateObject) then
+        ResetMiddleDismountState()
+        State = CharacterState.ready
+        Dalamud.Log("[FATE] State Change: Ready")
+        return
+    end
+
+    local now = os.clock()
+    if MiddleDismountFateId ~= CurrentFate.fateId then
+        MiddleDismountFateId = CurrentFate.fateId
+        MiddleDismountStartedAt = now
+        MiddleDismountNoTargetSince = 0
+    end
+
     if Svc.Targets.Target ~= nil then
+        MiddleDismountNoTargetSince = 0
         if GetDistanceToTarget() > (MaxDistance + GetTargetHitboxRadius() + 5) then
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
                 Dalamud.Log("[FATE] MiddleOfFateDismount IPC.vnavmesh.PathfindAndMoveTo")
@@ -4034,22 +4072,49 @@ function MiddleOfFateDismount()
             end
         else
             if Svc.Condition[CharacterCondition.mounted] then
-                Dalamud.Log("[FATE] MiddleOfFateDismount Dismount()")
-                Dismount()
+                Dalamud.Log("[FATE] MiddleOfFateDismount Dismount(force)")
+                Dismount(true)
             else
                 yield("/vnav stop")
+                ResetMiddleDismountState()
                 State = CharacterState.doFate
                 Dalamud.Log("[FATE] State Change: DoFate")
             end
         end
     else
-        AttemptToTargetClosestFateEnemy(true, nil, false)
+        local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
+        local acquireRadius = math.max((DynamicAoeCheckRadius or 30) + 10, (ClusterMoveRadius or 40), fateRadius + 20)
+        local gotTarget = AttemptToTargetClosestFateEnemy(true, acquireRadius, true)
+        if gotTarget then
+            MiddleDismountNoTargetSince = 0
+            return
+        end
+
+        if MiddleDismountNoTargetSince == nil or MiddleDismountNoTargetSince <= 0 then
+            MiddleDismountNoTargetSince = now
+        end
+        local noTargetElapsed = now - MiddleDismountNoTargetSince
+
+        if Svc.Condition[CharacterCondition.mounted] then
+            if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+                yield("/vnav stop")
+            end
+            if noTargetElapsed >= (MiddleDismountForceAfterSeconds or 1.8) then
+                Dalamud.Log("[FATE] MiddleOfFateDismount: no target, force dismount.")
+                Dismount(true)
+            end
+        else
+            yield("/vnav stop")
+            ResetMiddleDismountState()
+            State = CharacterState.doFate
+            Dalamud.Log("[FATE] State Change: DoFate")
+        end
     end
 end
 
 function NpcDismount()
     if Svc.Condition[CharacterCondition.mounted] then
-        Dismount()
+        Dismount(true)
     else
         State = CharacterState.interactWithNpc
         Dalamud.Log("[FATE] State Change: InteractWithFateNpc")
@@ -4058,7 +4123,7 @@ end
 
 function ChangeInstanceDismount()
     if Svc.Condition[CharacterCondition.mounted] then
-        Dismount()
+        Dismount(true)
     else
         State = CharacterState.changingInstances
         Dalamud.Log("[FATE] State Change: ChangingInstance")
@@ -4108,6 +4173,7 @@ function MoveToFate()
         CurrentFate = NextFate
         ResetNoCombatRecoveryState()
         ResetMeleeEngageRecoveryState()
+        ResetMiddleDismountState()
         if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
             PrefetchedNextFateId = nil
             PrefetchedNextFateAt = 0
@@ -4836,6 +4902,7 @@ function DoFate()
             )
             Dalamud.Log(msg)
             SendDiscordMessage(msg)
+            RecordZoneUnresponsiveSkip(Svc.ClientState.TerritoryType, "level_sync")
             yield("/vnav stop")
             WaitingForFateRewards = nil
             ResetNoCombatRecoveryState()
@@ -4947,6 +5014,7 @@ function DoFate()
                 )
                 Dalamud.Log(msg)
                 SendDiscordMessage(msg)
+                RecordZoneUnresponsiveSkip(Svc.ClientState.TerritoryType, "no_target")
                 ResetNoCombatRecoveryState()
                 WaitingForFateRewards = nil
                 yield("/vnav stop")
@@ -4970,6 +5038,7 @@ function DoFate()
                 )
                 Dalamud.Log(timeoutMsg)
                 SendDiscordMessage(timeoutMsg)
+                RecordZoneUnresponsiveSkip(Svc.ClientState.TerritoryType, "no_combat_timeout")
                 if StayOnCurrentMapOnly then
                     Dalamud.Log("[FATE] No combat started within timeout. Staying in current map due to setting.")
                 else
@@ -5422,6 +5491,7 @@ function Ready()
     CurrentFate = NextFate
     ResetNoCombatRecoveryState()
     ResetMeleeEngageRecoveryState()
+    ResetMiddleDismountState()
     if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
         PrefetchedNextFateId = nil
         PrefetchedNextFateAt = 0
@@ -5487,6 +5557,12 @@ function ResetMeleeEngageRecoveryState()
     MeleeEngageStartAt = 0
     MeleeEngageLastMoveAt = 0
     MeleeEngageNextRetargetAt = 0
+end
+
+function ResetMiddleDismountState()
+    MiddleDismountFateId = nil
+    MiddleDismountStartedAt = 0
+    MiddleDismountNoTargetSince = 0
 end
 
 function ResetMovementStuckState()
@@ -6633,6 +6709,7 @@ function FateFarming:Run()
     UnresponsiveNoTargetSkipSeconds = 10
     UnresponsiveSkipRatio = 0.65
     FateResultSummaryWriteIntervalSeconds = 30
+    MiddleDismountForceAfterSeconds = 1.8
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
@@ -6710,6 +6787,9 @@ function FateFarming:Run()
     MeleeEngageStartAt             = 0
     MeleeEngageLastMoveAt          = 0
     MeleeEngageNextRetargetAt      = 0
+    MiddleDismountFateId           = nil
+    MiddleDismountStartedAt        = 0
+    MiddleDismountNoTargetSince    = 0
     LastMountCommandAt             = 0
     LastDismountCommandAt          = 0
     FateTimingById                 = {}
@@ -7092,6 +7172,7 @@ function FateFarming:Run()
                     )
                     Dalamud.Log(timeoutMsg)
                     SendDiscordMessage(timeoutMsg)
+                    RecordZoneUnresponsiveSkip(Svc.ClientState.TerritoryType, "global_no_combat_timeout")
                     if StayOnCurrentMapOnly then
                         Dalamud.Log("[FATE] No combat started within timeout. Staying in current map due to setting.")
                     else
