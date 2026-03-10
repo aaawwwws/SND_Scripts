@@ -439,6 +439,9 @@ local MoveToFate
 local MoveToNPC
 local MoveToRandomNearbySpot
 local MoveToTargetHitbox
+local IsPositionInsideCurrentFateBounds
+local ClampPositionToCurrentFateBounds
+local IsCurrentTargetInsideCurrentFateBounds
 local mysplit
 local Normalize
 local NpcDismount
@@ -457,6 +460,7 @@ local TryPrefetchNextFate
 local SelectNextZone
 local SetMapFlag
 local SetMaxDistance
+local GetLeashSafeRetargetRadius
 local ShouldSkipCollectionsFate
 local ShouldSkipOtherNpcFate
 local split
@@ -1478,6 +1482,54 @@ function GetTargetName()
     end
 end
 
+function IsPositionInsideCurrentFateBounds(position, margin)
+    if position == nil or CurrentFate == nil or CurrentFate.position == nil then
+        return true
+    end
+    local fateRadius = GetFateRadiusValue(CurrentFate, nil)
+    if fateRadius == nil or fateRadius <= 0 then
+        return true
+    end
+    local effectiveMargin = margin
+    if effectiveMargin == nil then
+        effectiveMargin = FateMoveBoundaryBuffer or 4
+    end
+    return DistanceBetweenFlat(CurrentFate.position, position) <= (fateRadius + effectiveMargin)
+end
+
+function ClampPositionToCurrentFateBounds(position, margin)
+    if position == nil or CurrentFate == nil or CurrentFate.position == nil then
+        return position
+    end
+    local fateRadius = GetFateRadiusValue(CurrentFate, nil)
+    if fateRadius == nil or fateRadius <= 0 then
+        return position
+    end
+    local effectiveMargin = margin
+    if effectiveMargin == nil then
+        effectiveMargin = FateMoveBoundaryBuffer or 4
+    end
+    local maxRadius = fateRadius + effectiveMargin
+    local offset = position - CurrentFate.position
+    local flatLength = math.sqrt((offset.X * offset.X) + (offset.Z * offset.Z))
+    if flatLength <= maxRadius or flatLength <= 0 then
+        return position
+    end
+    local scale = maxRadius / flatLength
+    return Vector3(
+        CurrentFate.position.X + (offset.X * scale),
+        position.Y,
+        CurrentFate.position.Z + (offset.Z * scale)
+    )
+end
+
+function IsCurrentTargetInsideCurrentFateBounds(margin)
+    if Svc.Targets.Target == nil then
+        return false
+    end
+    return IsPositionInsideCurrentFateBounds(Svc.Targets.Target.Position, margin)
+end
+
 function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance)
     local playerPos = GetLocalPlayerPosition()
     if playerPos == nil then
@@ -1495,7 +1547,16 @@ function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance)
                 local isUnengaged = not wrappedObj.IsInCombat
                 local passesCombatFilter = (onlyUnengaged ~= true) or isUnengaged
                 local passesDistanceFilter = (maxDistance == nil) or (dist <= maxDistance)
-                if passesCombatFilter and passesDistanceFilter then
+                local passesFateRadiusFilter = true
+                if CurrentFate ~= nil and CurrentFate.fateId == objFateId and CurrentFate.position ~= nil then
+                    local fateRadius = GetFateRadiusValue(CurrentFate, nil)
+                    if fateRadius ~= nil and fateRadius > 0 then
+                        local fatePadding = FateTargetRadiusPadding or 3
+                        passesFateRadiusFilter =
+                            DistanceBetweenFlat(CurrentFate.position, obj.Position) <= (fateRadius + fatePadding)
+                    end
+                end
+                if passesCombatFilter and passesDistanceFilter and passesFateRadiusFilter then
                     table.insert(candidates, {
                         obj = obj,
                         dist = dist
@@ -1783,7 +1844,8 @@ function MoveToTargetHitbox()
     local dir = Normalize(playerPos - targetPos)
     if dir:Length() == 0 then return end
     local ideal = targetPos + (dir * desiredRange)
-    local newPos = IPC.vnavmesh.PointOnFloor(ideal, false, 1.5) or ideal
+    local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, FateMoveBoundaryBuffer or 4)
+    local newPos = IPC.vnavmesh.PointOnFloor(boundedIdeal, false, 1.5) or boundedIdeal
     IPC.vnavmesh.PathfindAndMoveTo(newPos, false)
 end
 
@@ -4097,11 +4159,19 @@ function MiddleOfFateDismount()
         MiddleDismountNoTargetSince = 0
         if GetDistanceToTarget() > (MaxDistance + GetTargetHitboxRadius() + 5) then
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                Dalamud.Log("[FATE] MiddleOfFateDismount IPC.vnavmesh.PathfindAndMoveTo")
-                if Svc.Condition[CharacterCondition.flying] then
-                    yield("/vnav flytarget")
+                if not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
+                    ClearTarget()
+                    local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+                    if fallbackPos ~= nil then
+                        IPC.vnavmesh.PathfindAndMoveTo(fallbackPos, Player.CanFly and SelectedZone.flying)
+                    end
                 else
-                    yield("/vnav movetarget")
+                    Dalamud.Log("[FATE] MiddleOfFateDismount IPC.vnavmesh.PathfindAndMoveTo")
+                    if Svc.Condition[CharacterCondition.flying] then
+                        yield("/vnav flytarget")
+                    else
+                        yield("/vnav movetarget")
+                    end
                 end
             end
         else
@@ -4262,6 +4332,14 @@ function MoveToFate()
     -- upon approaching fate, pick a target and switch to pathing towards target
     if distanceToPreferredMovePos < 60 then
         if Svc.Targets.Target ~= nil then
+            if not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
+                ClearTarget()
+                local center = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+                if center ~= nil and not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                    IPC.vnavmesh.PathfindAndMoveTo(center, Player.CanFly and SelectedZone.flying)
+                end
+                return
+            end
             Dalamud.Log("[FATE] Found FATE target, immediate rerouting")
             yield("/wait 0.1")
             MoveToTargetHitbox()
@@ -4697,6 +4775,16 @@ function SetMaxDistance()
         MaxDistance = RangedDist
         Dalamud.Log("[FATE] Setting max distance to " .. tostring(RangedDist) .. " (ranged/caster)")
     end
+end
+
+function GetLeashSafeRetargetRadius()
+    local currentMax = MaxDistance or 25
+    local roleMin = 42
+    if Player.Job and (Player.Job.IsMeleeDPS or Player.Job.IsTank) then
+        roleMin = 28
+    end
+    local buffer = LeashSafeRetargetBuffer or 18
+    return math.max(roleMin, currentMax + buffer)
 end
 
 function TurnOnCombatMods(rotationMode)
@@ -5222,16 +5310,20 @@ function DoFate()
     then
         local currentTargetName = GetTargetName()
         if currentTargetName ~= "Forlorn Maiden" and currentTargetName ~= "The Forlorn" then
+            local leashSafeRadius = GetLeashSafeRetargetRadius()
             local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40),
                 fateRadiusForAcquire + 15, boostAcquireRadius or 0)
+            farPullRadius = math.min(farPullRadius, leashSafeRadius)
             AttemptToTargetClosestFateEnemy(true, farPullRadius, combatStartBoostActive)
         end
     end
 
     -- targets whatever is trying to kill you
     if Svc.Targets.Target == nil then
+        local leashSafeRadius = GetLeashSafeRetargetRadius()
         local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40),
             fateRadiusForAcquire + 15, boostAcquireRadius or 0)
+        farPullRadius = math.min(farPullRadius, leashSafeRadius)
         local gotUnengagedTarget = AttemptToTargetClosestFateEnemy(true, farPullRadius, combatStartBoostActive)
         if not gotUnengagedTarget then
             yield("/battletarget")
@@ -5330,18 +5422,27 @@ function DoFate()
     -- pathfind closer if enemies are too far
     if not Svc.Condition[CharacterCondition.inCombat] then
         local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+        local leashSafeRadius = GetLeashSafeRetargetRadius()
         if HandleMovementStuck(preferredMovePos) then
             return
         end
 
         if Svc.Targets.Target ~= nil then
+            if GetDistanceToTargetFlat() > (leashSafeRadius + 8) then
+                ClearTarget()
+                return
+            end
             if GetDistanceToTargetFlat() <= (MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius()) then
                 if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
                     yield("/vnav stop")
                     yield("/wait " .. stopBeforeInchWait)                                                                                                           -- short pause before inching closer
                 elseif (GetDistanceToTargetFlat() > (1 + GetTargetHitboxRadius() + GetPlayerHitboxRadius())) and not Svc.Condition[CharacterCondition.casting] then -- never move into hitbox
-                    yield("/vnav movetarget")
-                    yield("/wait " .. inchCloserWait)                                                                                                               -- inch closer briefly
+                    if IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
+                        MoveToTargetHitbox()
+                        yield("/wait " .. inchCloserWait) -- inch closer briefly
+                    else
+                        ClearTarget()
+                    end
                 end
             elseif not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
                 yield("/wait " .. preApproachWaitOutOfCombat) -- brief wait before approaching again
@@ -5359,6 +5460,15 @@ function DoFate()
             end
         end
     else
+        local leashSafeRadius = GetLeashSafeRetargetRadius()
+        if Svc.Targets.Target ~= nil and GetDistanceToTargetFlat() > (leashSafeRadius + 5) then
+            ClearTarget()
+            local gotNearTarget = AttemptToTargetClosestFateEnemy(true, leashSafeRadius, true)
+            if not gotNearTarget then
+                yield("/battletarget")
+            end
+            return
+        end
         if Svc.Targets.Target ~= nil and (GetDistanceToTargetFlat() <= (MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius())) then
             if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
                 yield("/vnav stop")
@@ -5370,7 +5480,9 @@ function DoFate()
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
                 yield("/wait " .. preApproachWaitInCombat)
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
-                    if Player.CanFly and SelectedZone.flying then
+                    if not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
+                        ClearTarget()
+                    elseif Player.CanFly and SelectedZone.flying then
                         yield("/vnav flytarget")
                     else
                         MoveToTargetHitbox()
@@ -6787,6 +6899,9 @@ function FateFarming:Run()
     MiddleDismountForceAfterSeconds = 1.8
     PreAcquireDistance = 130
     PreAcquireAttemptIntervalSeconds = 1.2
+    FateTargetRadiusPadding = 3
+    FateMoveBoundaryBuffer = 4
+    LeashSafeRetargetBuffer = 18
     DynamicAoeSwitchCooldownSeconds = 1.6
     DynamicAoeEnableStableSamples = 2
     DynamicAoeDisableStableSamples = 3
