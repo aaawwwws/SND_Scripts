@@ -228,7 +228,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -1392,7 +1392,7 @@ do
         SndGameUtils = gameUtils
     else
         Dalamud.Log(
-        "[FATE] Warning: failed to load SomethingNeedDoing.Utils.Game. Using command fallback for chocobo summon.")
+            "[FATE] Warning: failed to load SomethingNeedDoing.Utils.Game. Using command fallback for chocobo summon.")
     end
 end
 
@@ -3814,13 +3814,14 @@ function DoFate()
         return
     end
     local maxLevel = GetFateMaxLevelValue(CurrentFate, nil)
+    local inCurrentFate = InActiveFate()
     local needsLevelSync = maxLevel ~= nil and Player.Job and maxLevel < Player.Job.Level and not Player.IsLevelSynced
     if needsLevelSync then
         local radius = GetFateRadiusValue(CurrentFate, nil)
         local closeEnoughToSync = radius ~= nil
             and IsFateActive(CurrentFate.fateObject)
             and (GetDistanceToPoint(CurrentFate.position) <= radius + 12)
-        local inOrNearActiveFate = InActiveFate() or closeEnoughToSync
+        local inOrNearActiveFate = inCurrentFate or closeEnoughToSync
         local now = os.clock()
         if inOrNearActiveFate and (LastLevelSyncAttemptAt == nil or now - LastLevelSyncAttemptAt >= 2) then
             LastLevelSyncAttemptAt = now
@@ -3829,6 +3830,22 @@ function DoFate()
         end
     else
         LastLevelSyncAttemptAt = 0
+    end
+
+    if needsLevelSync and not inCurrentFate then
+        if Svc.Targets.Target ~= nil then
+            local wrappedSyncTarget = EntityWrapper(Svc.Targets.Target)
+            if wrappedSyncTarget ~= nil and wrappedSyncTarget.FateId ~= CurrentFate.fateId then
+                ClearTarget()
+            end
+        end
+        if not Svc.Condition[CharacterCondition.mounted]
+            and not (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress())
+        then
+            local preferredSyncPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+            IPC.vnavmesh.PathfindAndMoveTo(preferredSyncPos, Player.CanFly and SelectedZone.flying)
+        end
+        return
     end
 
     if NoCombatTeleportTimeout > 0 and not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate then
@@ -3988,7 +4005,7 @@ function DoFate()
     -- clears target
     if Svc.Targets.Target ~= nil then
         local wrappedTarget = EntityWrapper(Svc.Targets.Target)
-        if wrappedTarget ~= nil and wrappedTarget.FateId ~= CurrentFate.fateId and not wrappedTarget.IsInCombat then
+        if wrappedTarget ~= nil and wrappedTarget.FateId ~= CurrentFate.fateId then
             ClearTarget()
         end
     end
