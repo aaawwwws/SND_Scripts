@@ -452,6 +452,8 @@ local Repair
 local SelectNextDawntrailZone
 local SelectNextFate
 local SelectNextFateHelper
+local GetBestAvailableNextFate
+local TryPrefetchNextFate
 local SelectNextZone
 local SetMapFlag
 local SetMaxDistance
@@ -528,6 +530,13 @@ local LastLevelSyncAttemptAt
 local LevelSyncFailureCount
 local LevelSyncNextAttemptAt
 local LevelSyncHardCooldownUntil
+local PrefetchedNextFateId
+local PrefetchedNextFateAt
+local FatePrefetchLastAttemptAt
+local FatePrefetchProgressThreshold
+local FatePrefetchIntervalSeconds
+local FatePrefetchTtlSeconds
+local FateExpectedScoreEnabled
 
 -- 密集移動のキャッシュ
 local ClusterMoveLastRefresh
@@ -2170,6 +2179,13 @@ function SelectNextDawntrailZone()
     SuccessiveInstanceChanges = 0
     CurrentFate = nil
     NextFate = nil
+    PrefetchedNextFateId = nil
+    PrefetchedNextFateAt = 0
+    FatePrefetchLastAttemptAt = 0
+    CombatStartBoostUntil = 0
+    CombatStartBoostFateId = nil
+    TeleportDecisionLastFateId = nil
+    TeleportDecisionPreferAetheryte = false
     Dalamud.Log("[FATE] No eligible fates. Switching to zone: " .. (SelectedZone.zoneName or ""))
 end
 
@@ -2218,6 +2234,122 @@ function BuildFateTable(fateObj)
     return fateTable
 end
 
+local function Clamp(value, minValue, maxValue)
+    if value < minValue then
+        return minValue
+    end
+    if value > maxValue then
+        return maxValue
+    end
+    return value
+end
+
+local function EnsureFateSelectionMetrics(fate)
+    if fate == nil then
+        return
+    end
+    if fate.selectionMetricsComputed == true then
+        return
+    end
+
+    local progress = GetFateProgressValue(fate, 0) or 0
+    local timeLeft = tonumber(fate.timeLeft) or 0
+    local travelDistance = GetDistanceToPointWithAetheryteTravel(fate.position)
+    local travelSeconds = travelDistance / 7.0
+    local arrivalSlackSeconds = timeLeft - travelSeconds
+
+    local bonusScore = fate.isBonusFate and 120 or 0
+    local specialScore = fate.isSpecialFate and 35 or 0
+    local startedScore = (fate.startTime and fate.startTime > 0) and 20 or 0
+    local progressScore = progress * 2.1
+    local urgencyBonus = progress >= 70 and ((progress - 70) * 1.6) or 0
+    local remainingTimeScore = (Clamp(timeLeft, 0, 900) / 900) * 60
+    local travelPenalty = travelDistance * 0.08
+    local missPenalty = arrivalSlackSeconds < 0 and (math.abs(arrivalSlackSeconds) * 1.2) or 0
+
+    fate.selectionTravelDistance = travelDistance
+    fate.selectionExpectedScore = bonusScore + specialScore + startedScore + progressScore + urgencyBonus +
+        remainingTimeScore - travelPenalty - missPenalty
+    fate.selectionMetricsComputed = true
+end
+
+local function GetActiveFateObjectById(fateId)
+    if fateId == nil then
+        return nil
+    end
+    local activeFates = Fates.GetActiveFates()
+    if activeFates == nil then
+        return nil
+    end
+    for i = 0, activeFates.Count - 1 do
+        local fateObj = activeFates[i]
+        if fateObj ~= nil and fateObj.Id == fateId and IsFateActive(fateObj) then
+            return fateObj
+        end
+    end
+    return nil
+end
+
+local function GetBestAvailableNextFate(usePrefetch)
+    if usePrefetch == true and PrefetchedNextFateId ~= nil then
+        local now = os.clock()
+        local isExpired = PrefetchedNextFateAt == nil or (now - PrefetchedNextFateAt) > (FatePrefetchTtlSeconds or 20)
+        if isExpired then
+            PrefetchedNextFateId = nil
+            PrefetchedNextFateAt = 0
+        else
+            local prefetchedObj = GetActiveFateObjectById(PrefetchedNextFateId)
+            if prefetchedObj ~= nil then
+                local prefetchedFate = BuildFateTable(prefetchedObj)
+                if prefetchedFate ~= nil then
+                    return prefetchedFate
+                end
+            end
+            PrefetchedNextFateId = nil
+            PrefetchedNextFateAt = 0
+        end
+    end
+    return SelectNextFate()
+end
+
+local function TryPrefetchNextFate()
+    if FatePrefetchProgressThreshold == nil or FatePrefetchProgressThreshold <= 0 then
+        return
+    end
+    if CurrentFate == nil or CurrentFate.fateObject == nil then
+        return
+    end
+    if not IsFateActive(CurrentFate.fateObject) then
+        return
+    end
+    local progress = GetFateProgressValue(CurrentFate, nil)
+    if progress == nil or progress < FatePrefetchProgressThreshold then
+        return
+    end
+    if Svc.Condition[CharacterCondition.inCombat]
+        or Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.mounted]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or Svc.Condition[CharacterCondition.betweenAreasForDuty]
+        or IsLifestreamBusySafe()
+    then
+        return
+    end
+
+    local now = os.clock()
+    if FatePrefetchLastAttemptAt ~= nil and now - FatePrefetchLastAttemptAt < (FatePrefetchIntervalSeconds or 8) then
+        return
+    end
+    FatePrefetchLastAttemptAt = now
+
+    local candidate = SelectNextFate()
+    if candidate ~= nil and candidate.fateId ~= nil and (CurrentFate == nil or candidate.fateId ~= CurrentFate.fateId) then
+        PrefetchedNextFateId = candidate.fateId
+        PrefetchedNextFateAt = now
+        Dalamud.Log("[FATE] Prefetched next fate #" .. tostring(candidate.fateId) .. " " .. tostring(candidate.fateName))
+    end
+end
+
 --[[
     Selects the better fate based on the priority order defined in FatePriority.
     Default Priority order is "DistanceTeleport" -> "Progress" -> "Bonus" -> "TimeLeft" -> "Distance"
@@ -2252,6 +2384,28 @@ function SelectNextFateHelper(tempFate, nextFate)
         return tempFate
     end
 
+    if FateExpectedScoreEnabled ~= false then
+        EnsureFateSelectionMetrics(tempFate)
+        EnsureFateSelectionMetrics(nextFate)
+        local tempScore = tempFate.selectionExpectedScore or 0
+        local nextScore = nextFate.selectionExpectedScore or 0
+        local scoreDelta = tempScore - nextScore
+        if math.abs(scoreDelta) >= 2 then
+            Dalamud.Log(string.format(
+                "[FATE] Expected score compare: #%s %.2f vs #%s %.2f",
+                tostring(tempFate.fateId),
+                tempScore,
+                tostring(nextFate.fateId),
+                nextScore
+            ))
+            if scoreDelta > 0 then
+                return tempFate
+            else
+                return nextFate
+            end
+        end
+    end
+
     -- Evaluate based on priority (Loop through list return first non-equal priority)
     for _, criteria in ipairs(FatePriority) do
         if criteria == "Progress" then
@@ -2269,14 +2423,24 @@ function SelectNextFateHelper(tempFate, nextFate)
             if tempFate.timeLeft > nextFate.timeLeft then return tempFate end
             if tempFate.timeLeft < nextFate.timeLeft then return nextFate end
         elseif criteria == "Distance" then
-            local tempDist = GetDistanceToPoint(tempFate.position)
-            local nextDist = GetDistanceToPoint(nextFate.position)
+            local tempDist = tempFate.selectionDirectDistance
+            if tempDist == nil then
+                tempDist = GetDistanceToPoint(tempFate.position)
+                tempFate.selectionDirectDistance = tempDist
+            end
+            local nextDist = nextFate.selectionDirectDistance
+            if nextDist == nil then
+                nextDist = GetDistanceToPoint(nextFate.position)
+                nextFate.selectionDirectDistance = nextDist
+            end
             Dalamud.Log("[FATE] Comparing distance: " .. tempDist .. " vs " .. nextDist)
             if tempDist < nextDist then return tempFate end
             if tempDist > nextDist then return nextFate end
         elseif criteria == "DistanceTeleport" then
-            local tempDist = GetDistanceToPointWithAetheryteTravel(tempFate.position)
-            local nextDist = GetDistanceToPointWithAetheryteTravel(nextFate.position)
+            EnsureFateSelectionMetrics(tempFate)
+            EnsureFateSelectionMetrics(nextFate)
+            local tempDist = tempFate.selectionTravelDistance or GetDistanceToPointWithAetheryteTravel(tempFate.position)
+            local nextDist = nextFate.selectionTravelDistance or GetDistanceToPointWithAetheryteTravel(nextFate.position)
             Dalamud.Log("[FATE] Comparing distance: " .. tempDist .. " vs " .. nextDist)
             if tempDist < nextDist then return tempFate end
             if tempDist > nextDist then return nextFate end
@@ -2566,25 +2730,49 @@ function GetClosestAetheryteInZoneToPoint(zoneId, position)
     return closestAetheryte
 end
 
-function GetClosestAetheryteToPoint(position, teleportTimePenalty)
+function GetClosestAetheryteToPoint(position, teleportTimePenalty, fateId)
     local directFlightDistance = GetDistanceToPoint(position)
     Dalamud.Log("[FATE] Direct flight distance is: " .. directFlightDistance)
     local closestAetheryte = GetClosestAetheryte(position, teleportTimePenalty)
     if closestAetheryte ~= nil then
         local closestAetheryteDistance = DistanceBetween(position, closestAetheryte.position) + teleportTimePenalty
+        local gain = directFlightDistance - closestAetheryteDistance
+        local enterGain = TeleportHysteresisEnterGain or 70
+        local exitGain = TeleportHysteresisExitGain or 25
+        local previousPrefer = false
+        if fateId ~= nil and TeleportDecisionLastFateId == fateId and TeleportDecisionPreferAetheryte == true then
+            previousPrefer = true
+        end
+        local preferAetheryte = previousPrefer and gain > exitGain or gain > enterGain
 
-        if closestAetheryteDistance < directFlightDistance then
+        if fateId ~= nil then
+            if TeleportDecisionLastFateId ~= fateId or TeleportDecisionPreferAetheryte ~= preferAetheryte then
+                Dalamud.Log(string.format(
+                    "[FATE] Teleport hysteresis decision for fate #%s: gain=%.2f, preferAetheryte=%s",
+                    tostring(fateId),
+                    gain,
+                    tostring(preferAetheryte)
+                ))
+            end
+            TeleportDecisionLastFateId = fateId
+            TeleportDecisionPreferAetheryte = preferAetheryte
+        end
+
+        if preferAetheryte then
             return closestAetheryte
         end
+    end
+    if fateId ~= nil and TeleportDecisionLastFateId == fateId then
+        TeleportDecisionPreferAetheryte = false
     end
     return nil
 end
 
 function TeleportToClosestAetheryteToFate(nextFate)
-    local aetheryteForClosestFate = GetClosestAetheryteToPoint(nextFate.position, 200)
+    local aetheryteForClosestFate = GetClosestAetheryteToPoint(nextFate.position, 200, nextFate and nextFate.fateId or nil)
     if aetheryteForClosestFate ~= nil then
-        TeleportTo(aetheryteForClosestFate.aetheryteName)
-        return true
+        local teleported = TeleportTo(aetheryteForClosestFate.aetheryteName)
+        return teleported == true
     end
     return false
 end
@@ -3267,7 +3455,7 @@ function MoveToFate()
         CurrentFate = nil
     end
 
-    NextFate = SelectNextFate()
+    NextFate = GetBestAvailableNextFate(true)
     if NextFate == nil then -- when moving to next fate, CurrentFate == NextFate
         yield("/vnav stop")
         MovingAnnouncementLock = false
@@ -3277,6 +3465,10 @@ function MoveToFate()
     elseif CurrentFate == nil or NextFate.fateId ~= CurrentFate.fateId then
         yield("/vnav stop")
         CurrentFate = NextFate
+        if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
+            PrefetchedNextFateId = nil
+            PrefetchedNextFateAt = 0
+        end
         local mappedPosition = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
         SetMapFlag(SelectedZone.zoneId, mappedPosition)
         return
@@ -3903,6 +4095,14 @@ function DoFate()
         yield("/wait 1")
         return
     end
+    local doFateNow = os.clock()
+    if CombatStartBoostFateId ~= CurrentFate.fateId then
+        CombatStartBoostFateId = CurrentFate.fateId
+        CombatStartBoostUntil = doFateNow + (CombatStartBoostDurationSeconds or 12)
+    end
+    local combatStartBoostActive = CombatStartBoostFateId == CurrentFate.fateId
+        and doFateNow < (CombatStartBoostUntil or 0)
+
     local maxLevel = GetFateMaxLevelValue(CurrentFate, nil)
     local inCurrentFate = InActiveFate()
     local needsLevelSync = maxLevel ~= nil and Player.Job and maxLevel < Player.Job.Level and not Player.IsLevelSynced
@@ -4081,6 +4281,10 @@ function DoFate()
     TurnOnCombatMods("auto")
 
     GemAnnouncementLock = false
+    local fateRadiusForAcquire = GetFateRadiusValue(CurrentFate, nil) or 0
+    local boostAcquireRadius = combatStartBoostActive
+        and math.max((DynamicAoeCheckRadius or 30) + 20, (ClusterMoveRadius or 40) + 15, fateRadiusForAcquire + 35)
+        or nil
 
     -- switches to targeting forlorns for bonus (if present)
     if not IgnoreForlorns then
@@ -4117,17 +4321,17 @@ function DoFate()
     then
         local currentTargetName = GetTargetName()
         if currentTargetName ~= "Forlorn Maiden" and currentTargetName ~= "The Forlorn" then
-            local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
-            local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40), fateRadius + 15)
-            AttemptToTargetClosestFateEnemy(true, farPullRadius, false)
+            local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40),
+                fateRadiusForAcquire + 15, boostAcquireRadius or 0)
+            AttemptToTargetClosestFateEnemy(true, farPullRadius, combatStartBoostActive)
         end
     end
 
     -- targets whatever is trying to kill you
     if Svc.Targets.Target == nil then
-        local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
-        local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40), fateRadius + 15)
-        local gotUnengagedTarget = AttemptToTargetClosestFateEnemy(true, farPullRadius, false)
+        local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40),
+            fateRadiusForAcquire + 15, boostAcquireRadius or 0)
+        local gotUnengagedTarget = AttemptToTargetClosestFateEnemy(true, farPullRadius, combatStartBoostActive)
         if not gotUnengagedTarget then
             yield("/battletarget")
         end
@@ -4148,6 +4352,7 @@ function DoFate()
 
     --hold buff thingy
     local progress = GetFateProgressValue(CurrentFate, nil)
+    TryPrefetchNextFate()
     if progress ~= nil and progress >= PercentageToHoldBuff then
         TurnOffRaidBuffs()
     end
@@ -4182,7 +4387,8 @@ function DoFate()
             end
             return
         else
-            AttemptToTargetClosestFateEnemy(true, nil, false)
+            local acquisitionRadius = boostAcquireRadius
+            AttemptToTargetClosestFateEnemy(true, acquisitionRadius, combatStartBoostActive)
             yield("/wait " .. targetStickWait) -- short wait in case target doesnt stick
             if (Svc.Targets.Target == nil) and not Svc.Condition[CharacterCondition.casting] then
                 IPC.vnavmesh.PathfindAndMoveTo(preferredMovePos, false)
@@ -4309,7 +4515,7 @@ function Ready()
         return
     end
 
-    NextFate = SelectNextFate()
+    NextFate = GetBestAvailableNextFate(true)
     if CurrentFate ~= nil and not IsFateActive(CurrentFate.fateObject) then
         CurrentFate = nil
     end
@@ -4381,6 +4587,10 @@ function Ready()
     end
 
     CurrentFate = NextFate
+    if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
+        PrefetchedNextFateId = nil
+        PrefetchedNextFateAt = 0
+    end
     HasFlownUpYet = false
     local mappedPosition = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
     SetMapFlag(SelectedZone.zoneId, mappedPosition)
@@ -5552,6 +5762,13 @@ function FateFarming:Run()
     if PrintSessionSummaryEnabled == nil then
         PrintSessionSummaryEnabled = true
     end
+    FateExpectedScoreEnabled = true
+    FatePrefetchProgressThreshold = 80
+    FatePrefetchIntervalSeconds = 8
+    FatePrefetchTtlSeconds = 25
+    CombatStartBoostDurationSeconds = 12
+    TeleportHysteresisEnterGain = 70
+    TeleportHysteresisExitGain = 25
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
@@ -5614,6 +5831,13 @@ function FateFarming:Run()
     LevelSyncFailureCount          = 0
     LevelSyncNextAttemptAt         = 0
     LevelSyncHardCooldownUntil     = 0
+    PrefetchedNextFateId           = nil
+    PrefetchedNextFateAt           = 0
+    FatePrefetchLastAttemptAt      = 0
+    CombatStartBoostUntil          = 0
+    CombatStartBoostFateId         = nil
+    TeleportDecisionLastFateId     = nil
+    TeleportDecisionPreferAetheryte = false
 
     --Forlorns
     IgnoreForlorns                 = false
