@@ -1970,7 +1970,419 @@ function BuildFateSnapshotSignature(snapshot)
     return table.concat(parts, "||")
 end
 
-local function NormalizeFateLogValue(value)
+function GetFateTypeCategory(fateData)
+    if fateData == nil then
+        return "unknown", "不明"
+    end
+
+    local isCollection = fateData.isCollectionsFate == true
+    local isBoss = fateData.isBossFate == true
+    if not isBoss and fateData.fateObject ~= nil and fateData.fateObject.IconId ~= nil then
+        isBoss = fateData.fateObject.IconId == 60722
+    end
+
+    if isCollection then
+        return "collection", "収集"
+    end
+    if isBoss then
+        return "boss", "ボス"
+    end
+    return "combat", "討伐"
+end
+
+function EnsureFateTimingEntry(fateData)
+    if fateData == nil or fateData.fateId == nil then
+        return nil
+    end
+    if FateTimingById == nil then
+        FateTimingById = {}
+    end
+
+    local entry = FateTimingById[fateData.fateId]
+    if entry ~= nil then
+        return entry
+    end
+
+    local fateType, fateTypeLabel = GetFateTypeCategory(fateData)
+    entry = {
+        fateId = fateData.fateId,
+        fateName = fateData.fateName or "",
+        fateType = fateType,
+        fateTypeLabel = fateTypeLabel,
+        zoneId = Svc.ClientState.TerritoryType,
+        zoneName = SelectedZone and SelectedZone.zoneName or "",
+        trackingStartAt = os.time(),
+        combatStartAt = nil,
+        logged = false
+    }
+    FateTimingById[fateData.fateId] = entry
+    return entry
+end
+
+function NoteFateCombatStart(fateData)
+    if fateData == nil or not Svc.Condition[CharacterCondition.inCombat] then
+        return
+    end
+    local entry = EnsureFateTimingEntry(fateData)
+    if entry == nil or entry.combatStartAt ~= nil then
+        return
+    end
+    entry.combatStartAt = os.time()
+    Dalamud.Log(string.format("[FATE] Combat start tracked for fate #%s %s", tostring(entry.fateId), tostring(entry.fateName)))
+end
+
+function AppendFateResultLogLine(line)
+    if line == nil or line == "" then
+        return
+    end
+
+    local logPath = NormalizeFateLogValue(FateResultLogResolvedPath)
+    if logPath == "" then
+        logPath = NormalizeFateLogValue(FateResultLogPath)
+    end
+    if logPath == "" then
+        logPath = "fates_results.jsonl"
+    end
+
+    local file, err = io.open(logPath, "a")
+    if not file then
+        local fallbackPath, _ = ResolveWritableFateLogPath(logPath)
+        if fallbackPath ~= nil and fallbackPath ~= "" and fallbackPath ~= logPath then
+            local fallbackFile, fallbackErr = io.open(fallbackPath, "a")
+            if fallbackFile ~= nil then
+                file = fallbackFile
+                logPath = fallbackPath
+                FateResultLogResolvedPath = fallbackPath
+            else
+                err = fallbackErr
+            end
+        end
+    end
+
+    if not file then
+        local now = os.time()
+        if FateResultLogLastOpenErrorAt == nil or (now - FateResultLogLastOpenErrorAt) >= 30 then
+            FateResultLogLastOpenErrorAt = now
+            FateResultLogError = true
+            Dalamud.Log("[FATE] Failed to open fate results log file: " .. tostring(err))
+        end
+        return
+    end
+
+    file:write(line .. "\n")
+    file:close()
+end
+
+function FinalizeFateTimingLog(fateData, finalState)
+    if fateData == nil or fateData.fateId == nil then
+        return
+    end
+    local entry = EnsureFateTimingEntry(fateData)
+    if entry == nil or entry.logged == true then
+        return
+    end
+
+    local now = os.time()
+    local fateType, fateTypeLabel = GetFateTypeCategory(fateData)
+    local combatStarted = entry.combatStartAt ~= nil and entry.combatStartAt > 0
+    local combatDurationSec = 0
+    if combatStarted then
+        combatDurationSec = math.max(0, now - entry.combatStartAt)
+    end
+    local trackedDurationSec = math.max(0, now - (entry.trackingStartAt or now))
+
+    local result = "unknown"
+    local completed = false
+    local failed = false
+    if finalState == FateState.Ended then
+        result = "completed"
+        completed = true
+    elseif finalState == FateState.Failed then
+        result = "failed"
+        failed = true
+    end
+
+    local record = {
+        timestamp = now,
+        zoneId = entry.zoneId,
+        zoneName = entry.zoneName,
+        fateId = entry.fateId,
+        fateName = entry.fateName,
+        fateType = fateType,
+        fateTypeLabel = fateTypeLabel,
+        result = result,
+        completed = completed,
+        failed = failed,
+        combatStarted = combatStarted,
+        trackingStartAt = entry.trackingStartAt,
+        combatStartAt = entry.combatStartAt,
+        endAt = now,
+        combatDurationSec = combatDurationSec,
+        trackingDurationSec = trackedDurationSec
+    }
+    RecordZoneFateOutcome(entry.zoneId, completed, failed, combatDurationSec)
+
+    local ok, line = pcall(EncodeJsonValue, record)
+    if not ok then
+        FateResultLogError = true
+        Dalamud.Log("[FATE] Failed to encode fate results log JSON: " .. tostring(line))
+        return
+    end
+
+    AppendFateResultLogLine(line)
+    UpdateFateResultSummaryFromRecord(record)
+    WriteFateResultSummaryCsv(false)
+    entry.logged = true
+    if FateTimingById ~= nil then
+        FateTimingById[entry.fateId] = nil
+    end
+end
+
+function EnsureFateResultSummaryEntry(record)
+    if record == nil then
+        return nil
+    end
+    if FateResultSummaryByKey == nil then
+        FateResultSummaryByKey = {}
+    end
+    local key = tostring(record.zoneId or 0) .. ":" .. tostring(record.fateId or 0)
+    local entry = FateResultSummaryByKey[key]
+    if entry == nil then
+        entry = {
+            zoneId = record.zoneId or 0,
+            zoneName = record.zoneName or "",
+            fateId = record.fateId or 0,
+            fateName = record.fateName or "",
+            fateType = record.fateType or "",
+            fateTypeLabel = record.fateTypeLabel or "",
+            totalRuns = 0,
+            completed = 0,
+            failed = 0,
+            combatSamples = 0,
+            totalCombatSec = 0,
+            minCombatSec = nil,
+            maxCombatSec = nil,
+            lastEndAt = 0
+        }
+        FateResultSummaryByKey[key] = entry
+    end
+    return entry
+end
+
+function UpdateFateResultSummaryFromRecord(record)
+    local entry = EnsureFateResultSummaryEntry(record)
+    if entry == nil then
+        return
+    end
+
+    entry.zoneName = record.zoneName or entry.zoneName
+    entry.fateName = record.fateName or entry.fateName
+    entry.fateType = record.fateType or entry.fateType
+    entry.fateTypeLabel = record.fateTypeLabel or entry.fateTypeLabel
+    entry.totalRuns = (entry.totalRuns or 0) + 1
+    if record.completed == true then
+        entry.completed = (entry.completed or 0) + 1
+    elseif record.failed == true then
+        entry.failed = (entry.failed or 0) + 1
+    end
+
+    local combatSec = tonumber(record.combatDurationSec) or 0
+    if combatSec > 0 then
+        entry.combatSamples = (entry.combatSamples or 0) + 1
+        entry.totalCombatSec = (entry.totalCombatSec or 0) + combatSec
+        if entry.minCombatSec == nil or combatSec < entry.minCombatSec then
+            entry.minCombatSec = combatSec
+        end
+        if entry.maxCombatSec == nil or combatSec > entry.maxCombatSec then
+            entry.maxCombatSec = combatSec
+        end
+    end
+    entry.lastEndAt = record.endAt or os.time()
+    FateResultSummaryDirty = true
+end
+
+function ParseResultLogFieldString(line, key)
+    if line == nil or key == nil then
+        return nil
+    end
+    local value = line:match('"' .. key .. '":"(.-)"')
+    if value == nil then
+        return nil
+    end
+    value = value:gsub('\\"', '"')
+    value = value:gsub("\\\\", "\\")
+    return value
+end
+
+function ParseResultLogFieldNumber(line, key)
+    if line == nil or key == nil then
+        return nil
+    end
+    local raw = line:match('"' .. key .. '":(-?%d+%.?%d*)')
+    if raw == nil then
+        return nil
+    end
+    return tonumber(raw)
+end
+
+function ParseResultLogFieldBool(line, key)
+    if line == nil or key == nil then
+        return nil
+    end
+    local truePattern = '"' .. key .. '":true'
+    if line:match(truePattern) ~= nil then
+        return true
+    end
+    local falsePattern = '"' .. key .. '":false'
+    if line:match(falsePattern) ~= nil then
+        return false
+    end
+    return nil
+end
+
+function LoadFateResultSummaryFromLog()
+    FateResultSummaryByKey = {}
+    local logPath = NormalizeFateLogValue(FateResultLogResolvedPath)
+    if logPath == "" then
+        logPath = NormalizeFateLogValue(FateResultLogPath)
+    end
+    if logPath == "" then
+        logPath = "fates_results.jsonl"
+    end
+
+    local file = io.open(logPath, "r")
+    if file == nil then
+        return
+    end
+
+    local lineCount = 0
+    for line in file:lines() do
+        local fateId = ParseResultLogFieldNumber(line, "fateId")
+        local zoneId = ParseResultLogFieldNumber(line, "zoneId")
+        if fateId ~= nil and zoneId ~= nil then
+            local record = {
+                zoneId = zoneId,
+                zoneName = ParseResultLogFieldString(line, "zoneName") or "",
+                fateId = fateId,
+                fateName = ParseResultLogFieldString(line, "fateName") or "",
+                fateType = ParseResultLogFieldString(line, "fateType") or "",
+                fateTypeLabel = ParseResultLogFieldString(line, "fateTypeLabel") or "",
+                completed = ParseResultLogFieldBool(line, "completed") == true,
+                failed = ParseResultLogFieldBool(line, "failed") == true,
+                combatDurationSec = ParseResultLogFieldNumber(line, "combatDurationSec") or 0,
+                endAt = ParseResultLogFieldNumber(line, "endAt") or 0
+            }
+            UpdateFateResultSummaryFromRecord(record)
+            RecordZoneFateOutcome(
+                zoneId,
+                record.completed == true,
+                record.failed == true,
+                record.combatDurationSec or 0
+            )
+            lineCount = lineCount + 1
+        end
+    end
+    file:close()
+    FateResultSummaryDirty = true
+    Dalamud.Log("[FATE] Loaded fate result summary seed entries: " .. tostring(lineCount))
+end
+
+function EscapeCsvCell(value)
+    local text = tostring(value or "")
+    if string.find(text, '"', 1, true) then
+        text = text:gsub('"', '""')
+    end
+    if string.find(text, ",", 1, true) or string.find(text, "\n", 1, true) then
+        text = '"' .. text .. '"'
+    end
+    return text
+end
+
+function WriteFateResultSummaryCsv(forceWrite)
+    local force = forceWrite == true
+    local now = os.time()
+    if FateResultSummaryByKey == nil then
+        return
+    end
+    if not force then
+        if FateResultSummaryDirty ~= true then
+            return
+        end
+        if now - (FateResultSummaryLastWriteAt or 0) < (FateResultSummaryWriteIntervalSeconds or 30) then
+            return
+        end
+    end
+
+    local csvPath = NormalizeFateLogValue(FateResultSummaryCsvResolvedPath)
+    if csvPath == "" then
+        csvPath = NormalizeFateLogValue(FateResultSummaryCsvPath)
+    end
+    if csvPath == "" then
+        csvPath = "fates_results_summary.csv"
+    end
+
+    local file, err = io.open(csvPath, "w")
+    if file == nil then
+        local fallbackPath, _ = ResolveWritableSummaryLogPath(csvPath)
+        if fallbackPath ~= nil and fallbackPath ~= "" and fallbackPath ~= csvPath then
+            local fallbackFile, fallbackErr = io.open(fallbackPath, "w")
+            if fallbackFile ~= nil then
+                file = fallbackFile
+                csvPath = fallbackPath
+                FateResultSummaryCsvResolvedPath = fallbackPath
+            else
+                err = fallbackErr
+            end
+        end
+    end
+
+    if file == nil then
+        if FateResultSummaryLastOpenErrorAt == nil or (now - FateResultSummaryLastOpenErrorAt) >= 30 then
+            FateResultSummaryLastOpenErrorAt = now
+            Dalamud.Log("[FATE] Failed to write fate result summary CSV: " .. tostring(err))
+        end
+        return
+    end
+
+    file:write("zoneId,zoneName,fateId,fateName,fateType,totalRuns,completed,failed,completionRate,avgCombatSec,minCombatSec,maxCombatSec,lastEndAt\n")
+    local rows = {}
+    for _, entry in pairs(FateResultSummaryByKey) do
+        rows[#rows + 1] = entry
+    end
+    table.sort(rows, function(a, b)
+        if (a.zoneId or 0) == (b.zoneId or 0) then
+            return (a.fateId or 0) < (b.fateId or 0)
+        end
+        return (a.zoneId or 0) < (b.zoneId or 0)
+    end)
+
+    for _, entry in ipairs(rows) do
+        local totalRuns = entry.totalRuns or 0
+        local completionRate = totalRuns > 0 and ((entry.completed or 0) / totalRuns) or 0
+        local avgCombatSec = (entry.combatSamples or 0) > 0 and ((entry.totalCombatSec or 0) / entry.combatSamples) or 0
+        local line = table.concat({
+            tostring(entry.zoneId or 0),
+            EscapeCsvCell(entry.zoneName or ""),
+            tostring(entry.fateId or 0),
+            EscapeCsvCell(entry.fateName or ""),
+            EscapeCsvCell(entry.fateTypeLabel or entry.fateType or ""),
+            tostring(totalRuns),
+            tostring(entry.completed or 0),
+            tostring(entry.failed or 0),
+            string.format("%.3f", completionRate),
+            string.format("%.2f", avgCombatSec),
+            tostring(entry.minCombatSec or ""),
+            tostring(entry.maxCombatSec or ""),
+            tostring(entry.lastEndAt or 0)
+        }, ",")
+        file:write(line .. "\n")
+    end
+    file:close()
+    FateResultSummaryLastWriteAt = now
+    FateResultSummaryDirty = false
+end
+
+function NormalizeFateLogValue(value)
     if value == nil then
         return ""
     end
@@ -1999,7 +2411,7 @@ local function ParseBool(value, defaultValue)
     return defaultValue
 end
 
-local function ResolveWritableFateLogPath(configuredPath)
+function ResolveWritableFateLogPath(configuredPath)
     local candidates = {}
     local function addCandidate(path)
         local normalized = NormalizeFateLogValue(path)
@@ -2035,6 +2447,42 @@ local function ResolveWritableFateLogPath(configuredPath)
     return NormalizeFateLogValue(configuredPath), lastError
 end
 
+function ResolveWritableSummaryLogPath(configuredPath)
+    local candidates = {}
+    local function addCandidate(path)
+        local normalized = NormalizeFateLogValue(path)
+        if normalized == "" then
+            return
+        end
+        for _, existing in ipairs(candidates) do
+            if existing == normalized then
+                return
+            end
+        end
+        candidates[#candidates + 1] = normalized
+    end
+
+    addCandidate(configuredPath)
+    addCandidate("Fates/fates_results_summary.csv")
+    addCandidate("fates_results_summary.csv")
+    local appData = os.getenv("APPDATA")
+    if appData ~= nil and appData ~= "" then
+        addCandidate(appData .. "/XIVLauncher/pluginConfigs/SomethingNeedDoing/fates_results_summary.csv")
+    end
+
+    local lastError = nil
+    for _, candidate in ipairs(candidates) do
+        local probe, err = io.open(candidate, "a")
+        if probe ~= nil then
+            probe:close()
+            return candidate, nil
+        end
+        lastError = tostring(err)
+    end
+
+    return NormalizeFateLogValue(configuredPath), lastError
+end
+
 function MaybeLogActiveFates()
     if not FateDataLogEnabled then
         return
@@ -2048,6 +2496,8 @@ function MaybeLogActiveFates()
     if snapshot == nil then
         return
     end
+    local activeCount = snapshot.fates and #snapshot.fates or 0
+    RecordZoneActivitySample(snapshot.zoneId, activeCount)
 
     FateDataLogLastTime = now
     local signature = BuildFateSnapshotSignature(snapshot)
@@ -2163,6 +2613,144 @@ function SelectNextZone()
     return BuildZoneData(Svc.ClientState.TerritoryType)
 end
 
+function EnsureZonePerformanceEntry(zoneId)
+    if zoneId == nil then
+        return nil
+    end
+    if ZonePerformanceById == nil then
+        ZonePerformanceById = {}
+    end
+    local entry = ZonePerformanceById[zoneId]
+    if entry == nil then
+        entry = {
+            activeEma = 0,
+            completed = 0,
+            failed = 0,
+            avgCombatSec = 0,
+            combatSamples = 0,
+            noEligibleCount = 0,
+            blockedUntil = 0,
+            lastActiveAt = 0
+        }
+        ZonePerformanceById[zoneId] = entry
+    end
+    return entry
+end
+
+function RecordZoneActivitySample(zoneId, activeFateCount)
+    local entry = EnsureZonePerformanceEntry(zoneId)
+    if entry == nil then
+        return
+    end
+    local count = tonumber(activeFateCount) or 0
+    if count < 0 then
+        count = 0
+    end
+    entry.activeEma = (entry.activeEma or 0) * 0.75 + count * 0.25
+    if count > 0 then
+        entry.lastActiveAt = os.time()
+        entry.noEligibleCount = 0
+    end
+end
+
+function RecordZoneNoEligibleFates(zoneId)
+    local entry = EnsureZonePerformanceEntry(zoneId)
+    if entry == nil then
+        return
+    end
+    local now = os.clock()
+    entry.noEligibleCount = (entry.noEligibleCount or 0) + 1
+    if entry.noEligibleCount >= 2 then
+        entry.blockedUntil = now + (ZoneNoFateBlockSeconds or 180)
+    end
+end
+
+function RecordZoneFateOutcome(zoneId, completed, failed, combatDurationSec)
+    local entry = EnsureZonePerformanceEntry(zoneId)
+    if entry == nil then
+        return
+    end
+    if completed == true then
+        entry.completed = (entry.completed or 0) + 1
+    elseif failed == true then
+        entry.failed = (entry.failed or 0) + 1
+    end
+
+    local combatSec = tonumber(combatDurationSec) or 0
+    if combatSec > 0 then
+        if entry.avgCombatSec == nil or entry.avgCombatSec <= 0 then
+            entry.avgCombatSec = combatSec
+        else
+            entry.avgCombatSec = entry.avgCombatSec * 0.75 + combatSec * 0.25
+        end
+        entry.combatSamples = (entry.combatSamples or 0) + 1
+    end
+end
+
+function GetBestDawntrailZoneId(currentZoneId)
+    if DynamicZoneSelectionEnabled ~= true then
+        return nil
+    end
+    local order = { 1187, 1188, 1189, 1190, 1191, 1192 }
+    local now = os.clock()
+    local bestZoneId = nil
+    local bestScore = -999999
+    local currentIndex = nil
+    for idx, zoneId in ipairs(order) do
+        if zoneId == currentZoneId then
+            currentIndex = idx
+            break
+        end
+    end
+
+    for idx, zoneId in ipairs(order) do
+        local entry = EnsureZonePerformanceEntry(zoneId)
+        local score = 0
+        if entry ~= nil then
+            if (entry.blockedUntil or 0) > now then
+                score = score - 100
+            else
+                local activityScore = (entry.activeEma or 0) * 4
+                local runCount = (entry.completed or 0) + (entry.failed or 0)
+                local completionRate = runCount > 0 and ((entry.completed or 0) / runCount) or 0.6
+                local completionScore = completionRate * 3
+                local speedScore = 1.5
+                if (entry.avgCombatSec or 0) > 0 then
+                    speedScore = math.max(0.2, math.min(4, 240 / entry.avgCombatSec))
+                end
+                local recencyBonus = 0
+                local lastActiveAt = entry.lastActiveAt or 0
+                if lastActiveAt > 0 and (os.time() - lastActiveAt) <= 300 then
+                    recencyBonus = 2
+                end
+                local noEligiblePenalty = (entry.noEligibleCount or 0) * 2
+                score = activityScore + completionScore + speedScore + recencyBonus - noEligiblePenalty
+            end
+        end
+
+        if zoneId == currentZoneId then
+            score = score - 8
+        elseif currentIndex ~= nil then
+            local step = idx - currentIndex
+            if step <= 0 then
+                step = step + #order
+            end
+            if step == 1 then
+                score = score + 1.2
+            else
+                score = score + math.max(0, 0.8 - (step * 0.15))
+            end
+        end
+
+        if score > bestScore then
+            bestScore = score
+            bestZoneId = zoneId
+        end
+    end
+
+    return bestZoneId
+end
+
 function GetNextDawntrailZoneId(currentZoneId)
     local dawntrailZoneOrder = { 1187, 1188, 1189, 1190, 1191, 1192 }
     for i, zoneId in ipairs(dawntrailZoneOrder) do
@@ -2174,7 +2762,14 @@ function GetNextDawntrailZoneId(currentZoneId)
 end
 
 function SelectNextDawntrailZone()
-    local nextZoneId = GetNextDawntrailZoneId(Svc.ClientState.TerritoryType)
+    local currentZoneId = Svc.ClientState.TerritoryType
+    RecordZoneNoEligibleFates(currentZoneId)
+    local nextZoneId = GetNextDawntrailZoneId(currentZoneId)
+    local bestZoneId = GetBestDawntrailZoneId(currentZoneId)
+    if bestZoneId ~= nil then
+        nextZoneId = bestZoneId
+    end
+    ZoneSelectionLastSwitchAt = os.clock()
     SelectedZone = BuildZoneData(nextZoneId)
     SuccessiveInstanceChanges = 0
     CurrentFate = nil
@@ -2186,6 +2781,8 @@ function SelectNextDawntrailZone()
     CombatStartBoostFateId = nil
     TeleportDecisionLastFateId = nil
     TeleportDecisionPreferAetheryte = false
+    ResetNoCombatRecoveryState()
+    ResetMeleeEngageRecoveryState()
     Dalamud.Log("[FATE] No eligible fates. Switching to zone: " .. (SelectedZone.zoneName or ""))
 end
 
@@ -2845,33 +3442,36 @@ local function BuildTeleportNameCandidates(name)
     addCandidate(original:gsub("・", ""))
     addCandidate(original:gsub(" ", ""))
     addCandidate(original:gsub("　", ""))
-    if string.find(original, "ソリューションナイン", 1, true) then
-        addCandidate(string.gsub(original, "ソリューションナイン", "ソリューション・ナイン"))
-    end
-    if string.find(original, "ソリューション・ナイン", 1, true) then
-        addCandidate(string.gsub(original, "ソリューション・ナイン", "ソリューションナイン"))
-    end
-    if string.find(original, "オールドシャーレアン", 1, true) then
-        addCandidate(string.gsub(original, "オールドシャーレアン", "オールド・シャーレアン"))
-    end
-    if string.find(original, "オールド・シャーレアン", 1, true) then
-        addCandidate(string.gsub(original, "オールド・シャーレアン", "オールドシャーレアン"))
-    end
-    if string.find(normalizedOriginal, "oldsharlayan", 1, true) then
-        addCandidate("Old Sharlayan")
-        addCandidate("オールド・シャーレアン")
-        addCandidate("オールドシャーレアン")
-    end
-    if string.find(normalizedOriginal, "オールドシャーレアン", 1, true) then
-        addCandidate("Old Sharlayan")
-    end
-    if string.find(normalizedOriginal, "solutionnine", 1, true) then
-        addCandidate("Solution Nine")
-        addCandidate("ソリューション・ナイン")
-        addCandidate("ソリューションナイン")
-    end
-    if string.find(normalizedOriginal, "ソリューションナイン", 1, true) then
-        addCandidate("Solution Nine")
+    local aliasGroups = {
+        { "Old Sharlayan", "オールド・シャーレアン", "オールドシャーレアン" },
+        { "Solution Nine", "ソリューション・ナイン", "ソリューションナイン" },
+        { "Tuliyollal", "トライヨラ" },
+        { "Urqopacha", "ウルコパチャ" },
+        { "Kozama'uka", "Kozamauka", "コザマル・カ", "コザマルカ" },
+        { "Yak T'el", "Yak Tel", "ヤクテル", "ヤク・テル" },
+        { "Shaaloani", "シャーローニ荒野", "シャーローニ" },
+        { "Heritage Found", "ヘリテージ・ファウンド", "ヘリテージファウンド" },
+        { "Living Memory", "リビング・メモリー", "リビングメモリー" }
+    }
+    for _, aliasGroup in ipairs(aliasGroups) do
+        local matched = false
+        for _, aliasName in ipairs(aliasGroup) do
+            local normalizedAlias = NormalizeTeleportName(aliasName)
+            if normalizedAlias ~= "" and (
+                    normalizedOriginal == normalizedAlias
+                    or (#normalizedOriginal >= 6 and string.find(normalizedOriginal, normalizedAlias, 1, true) ~= nil)
+                    or (#normalizedAlias >= 6 and string.find(normalizedAlias, normalizedOriginal, 1, true) ~= nil)
+                )
+            then
+                matched = true
+                break
+            end
+        end
+        if matched then
+            for _, aliasName in ipairs(aliasGroup) do
+                addCandidate(aliasName)
+            end
+        end
     end
     return candidates
 end
@@ -2960,19 +3560,15 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
         end
     end
 
-    yield('/li tp "' .. escapedName .. '"')
-    if WaitForTeleportStart(2.8) then
-        return true
-    end
-
-    yield('/li tp ' .. escapedName)
-    if WaitForTeleportStart(2.8) then
-        return true
-    end
-
-    yield('/teleport "' .. escapedName .. '"')
-    if WaitForTeleportStart(2.8) then
-        return true
+    local liCommands = {
+        '/li tp "' .. escapedName .. '"',
+        "/li tp " .. escapedName
+    }
+    for _, liCommand in ipairs(liCommands) do
+        yield(liCommand)
+        if WaitForTeleportStart(2.8) then
+            return true
+        end
     end
 
     return false
@@ -3324,12 +3920,40 @@ function MoveToRandomNearbySpot(minDist, maxDist)
 end
 
 function Mount()
+    local now = os.clock()
+    local mountRetryCooldown = MountRetryCooldownSeconds or 1.2
+    local mountToggleCooldown = MountToggleCooldownSeconds or 2.2
+
+    if Svc.Condition[CharacterCondition.mounted]
+        or Svc.Condition[CharacterCondition.mounting57]
+        or Svc.Condition[CharacterCondition.mounting64]
+    then
+        return
+    end
+    if Svc.Condition[CharacterCondition.inCombat]
+        or Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.occupied]
+        or Svc.Condition[CharacterCondition.occupiedInEvent]
+        or Svc.Condition[CharacterCondition.occupiedInQuestEvent]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or Svc.Condition[CharacterCondition.betweenAreasForDuty]
+    then
+        return
+    end
+    if LastMountCommandAt ~= nil and now - LastMountCommandAt < mountRetryCooldown then
+        return
+    end
+    if LastDismountCommandAt ~= nil and now - LastDismountCommandAt < mountToggleCooldown then
+        return
+    end
+
+    LastMountCommandAt = now
     if MountToUse == "mount roulette" then
         yield('/action ' .. LANG.actions["mount roulette"])
     else
         yield('/mount "' .. MountToUse)
     end
-    yield("/wait 1")
+    yield("/wait 0.5")
 end
 
 function MountState()
@@ -3342,12 +3966,28 @@ function MountState()
     end
 end
 
-function Dismount()
+function Dismount(force)
+    local now = os.clock()
+    local dismountRetryCooldown = DismountRetryCooldownSeconds or 0.8
+    local mountToggleCooldown = MountToggleCooldownSeconds or 2.2
+    local bypassToggleCooldown = force == true
+
+    if Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] then
+        return
+    end
+    if LastDismountCommandAt ~= nil and now - LastDismountCommandAt < dismountRetryCooldown then
+        return
+    end
+    if not bypassToggleCooldown and LastMountCommandAt ~= nil and now - LastMountCommandAt < mountToggleCooldown then
+        return
+    end
+
     if Svc.Condition[CharacterCondition.flying] then
+        LastDismountCommandAt = now
         yield("/ac " .. LANG.actions["dismount"])
 
-        local now = os.clock()
-        if now - LastStuckCheckTime > 1 then
+        local checkNow = os.clock()
+        if checkNow - LastStuckCheckTime > 1 then
             if Svc.Condition[CharacterCondition.flying] and GetDistanceToPoint(LastStuckCheckPosition) < 2 then
                 Dalamud.Log("[FATE] Unable to dismount here. Moving to another spot.")
                 local playerPos = GetLocalPlayerPosition()
@@ -3363,13 +4003,14 @@ function Dismount()
                 end
             end
 
-            LastStuckCheckTime = now
+            LastStuckCheckTime = checkNow
             local playerPos = GetLocalPlayerPosition()
             if playerPos ~= nil then
                 LastStuckCheckPosition = playerPos
             end
         end
     elseif Svc.Condition[CharacterCondition.mounted] then
+        LastDismountCommandAt = now
         yield("/ac " .. LANG.actions["dismount"])
     end
 end
@@ -3465,6 +4106,8 @@ function MoveToFate()
     elseif CurrentFate == nil or NextFate.fateId ~= CurrentFate.fateId then
         yield("/vnav stop")
         CurrentFate = NextFate
+        ResetNoCombatRecoveryState()
+        ResetMeleeEngageRecoveryState()
         if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
             PrefetchedNextFateId = nil
             PrefetchedNextFateAt = 0
@@ -3554,11 +4197,18 @@ function MoveToFate()
         nearestFloor = RandomAdjustCoordinates(nearestFloor, 10)
     end
 
-    if GetDistanceToPoint(nearestFloor) > 5 then
+    local distanceToMoveTarget = GetDistanceToPoint(nearestFloor)
+    if distanceToMoveTarget > 5 then
+        local mountDistanceThreshold = MountTravelMinDistance or 24
+        local shouldMountForTravel = distanceToMoveTarget >= mountDistanceThreshold
         if not Svc.Condition[CharacterCondition.mounted] then
-            State = CharacterState.mounting
-            Dalamud.Log("[FATE] State Change: Mounting")
-            return
+            if shouldMountForTravel then
+                State = CharacterState.mounting
+                Dalamud.Log("[FATE] State Change: Mounting")
+                return
+            elseif not IPC.vnavmesh.PathfindInProgress() and not IPC.vnavmesh.IsRunning() then
+                yield("/vnav moveflag")
+            end
         elseif not IPC.vnavmesh.PathfindInProgress() and not IPC.vnavmesh.IsRunning() then
             if Player.CanFly and SelectedZone.flying then
                 yield("/vnav flyflag")
@@ -4012,7 +4662,7 @@ end
 function HandleUnexpectedCombat()
     if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then
         Dalamud.Log("[FATE] UnexpectedCombat: Dismounting due to combat")
-        Dismount()
+        Dismount(true)
         return
     end
     TurnOnCombatMods("manual")
@@ -4077,11 +4727,16 @@ end
 
 function DoFate()
     Dalamud.Log("[FATE] DoFate")
+    if WaitingForFateRewards ~= nil and WaitingForFateRewards.fateId ~= CurrentFate.fateId then
+        FinalizeFateTimingLog(WaitingForFateRewards, nil)
+    end
     if WaitingForFateRewards == nil or WaitingForFateRewards.fateId ~= CurrentFate.fateId then
         WaitingForFateRewards = CurrentFate
         SessionFatesStarted = SessionFatesStarted + 1
         Dalamud.Log("[FATE] WaitingForFateRewards DoFate: " .. tostring(WaitingForFateRewards.fateId))
     end
+    EnsureFateTimingEntry(CurrentFate)
+    NoteFateCombatStart(CurrentFate)
     local currentClass = Player.Job
     -- switch classes (mostly for continutation fates that pop you directly into the next one)
     if CurrentFate.isBossFate and BossFatesClass ~= nil and currentClass ~= BossFatesClass.classId and not Player.IsBusy then
@@ -4113,6 +4768,10 @@ function DoFate()
             and (GetDistanceToPoint(CurrentFate.position) <= radius + 8)
         local now = os.clock()
         local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
+        if LevelSyncWaitFateId ~= CurrentFate.fateId then
+            LevelSyncWaitFateId = CurrentFate.fateId
+            LevelSyncWaitStartedAt = now
+        end
 
         -- While waiting for level sync, avoid chasing distant/invalid targets and wall-running.
         if Svc.Targets.Target ~= nil then
@@ -4165,6 +4824,31 @@ function DoFate()
             end
         end
 
+        local levelSyncWaitElapsed = now - (LevelSyncWaitStartedAt or now)
+        local syncLooksBlocked = (LevelSyncHardCooldownUntil or 0) > now or (LevelSyncFailureCount or 0) >= 3
+        local earlySkipWait = UnresponsiveLevelSyncEarlySkipSeconds or 16
+        if inCurrentFate and inSyncRange and syncLooksBlocked and levelSyncWaitElapsed >= earlySkipWait then
+            local msg = string.format(
+                "[FATE] Early skip: level sync remained unavailable on fate #%s (%s) for %.1fs.",
+                tostring(CurrentFate.fateId or 0),
+                tostring(CurrentFate.fateName or ""),
+                levelSyncWaitElapsed
+            )
+            Dalamud.Log(msg)
+            SendDiscordMessage(msg)
+            yield("/vnav stop")
+            WaitingForFateRewards = nil
+            ResetNoCombatRecoveryState()
+            if StayOnCurrentMapOnly then
+                CurrentFate = nil
+                NextFate = nil
+            else
+                SelectNextDawntrailZone()
+            end
+            State = CharacterState.ready
+            return
+        end
+
         if not Svc.Condition[CharacterCondition.mounted]
             and not navBusy
         then
@@ -4177,9 +4861,12 @@ function DoFate()
         LevelSyncFailureCount = 0
         LevelSyncNextAttemptAt = 0
         LevelSyncHardCooldownUntil = 0
+        LevelSyncWaitFateId = nil
+        LevelSyncWaitStartedAt = 0
     end
 
     if NoCombatTeleportTimeout > 0 and not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate then
+        local now = os.clock()
         local progress = GetFateProgressValue(CurrentFate, nil)
         local radius = GetFateRadiusValue(CurrentFate, nil)
         local inRange = IsFateActive(CurrentFate.fateObject)
@@ -4188,11 +4875,92 @@ function DoFate()
             and radius ~= nil
             and (GetDistanceToPoint(CurrentFate.position) <= radius + 10)
         if Svc.Condition[CharacterCondition.inCombat] or not inRange then
-            NoCombatStartTime = nil
+            ResetNoCombatRecoveryState()
         else
-            if NoCombatStartTime == nil then
-                NoCombatStartTime = os.clock()
-            elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
+            if NoCombatRecoveryFateId ~= CurrentFate.fateId then
+                NoCombatRecoveryFateId = CurrentFate.fateId
+                NoCombatRecoveryStage = 0
+                NoCombatRecoveryLastActionAt = 0
+                NoCombatStartTime = now
+            elseif NoCombatStartTime == nil then
+                NoCombatStartTime = now
+            end
+
+            local elapsed = now - (NoCombatStartTime or now)
+            local stage1At = math.max(6, NoCombatTeleportTimeout * (NoCombatRecoveryRetargetRatio or 0.35))
+            local stage2At = math.max(stage1At + 3, NoCombatTeleportTimeout * (NoCombatRecoveryRepositionRatio or 0.7))
+            local hasValidFateTarget = false
+            if Svc.Targets.Target ~= nil then
+                local wrappedTarget = EntityWrapper(Svc.Targets.Target)
+                hasValidFateTarget = wrappedTarget ~= nil
+                    and wrappedTarget.FateId == CurrentFate.fateId
+                    and not Svc.Targets.Target.IsDead
+            end
+            if hasValidFateTarget then
+                NoCombatNoTargetSince = 0
+            elseif (NoCombatNoTargetSince or 0) <= 0 then
+                NoCombatNoTargetSince = now
+            end
+            local noTargetElapsed = (NoCombatNoTargetSince or 0) > 0 and (now - NoCombatNoTargetSince) or 0
+
+            if NoCombatRecoveryStage < 1
+                and elapsed >= stage1At
+                and now - (NoCombatRecoveryLastActionAt or 0) >= 2
+            then
+                local reacquireRadius = math.max(
+                    (DynamicAoeCheckRadius or 30) + 10,
+                    (ClusterMoveRadius or 40),
+                    (radius or 0) + 20
+                )
+                Dalamud.Log("[FATE] No-combat staged recovery #1: retarget/reacquire.")
+                ClearTarget()
+                local acquired = AttemptToTargetClosestFateEnemy(true, reacquireRadius, true)
+                if not acquired then
+                    yield("/battletarget")
+                end
+                NoCombatRecoveryStage = 1
+                NoCombatRecoveryLastActionAt = now
+                return
+            end
+
+            if NoCombatRecoveryStage < 2
+                and elapsed >= stage2At
+                and now - (NoCombatRecoveryLastActionAt or 0) >= 3
+            then
+                Dalamud.Log("[FATE] No-combat staged recovery #2: reposition to fate center.")
+                yield("/vnav stop")
+                local preferredSyncPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+                IPC.vnavmesh.PathfindAndMoveTo(preferredSyncPos, false)
+                NoCombatRecoveryStage = 2
+                NoCombatRecoveryLastActionAt = now
+                return
+            end
+
+            local earlySkipAt = math.max(10, NoCombatTeleportTimeout * (UnresponsiveSkipRatio or 0.65))
+            local noTargetTooLong = noTargetElapsed >= (UnresponsiveNoTargetSkipSeconds or 10)
+            if NoCombatRecoveryStage >= 2 and elapsed >= earlySkipAt and noTargetTooLong then
+                local msg = string.format(
+                    "[FATE] Early skip: no valid target for %.1fs after staged recovery on fate #%s (%s).",
+                    noTargetElapsed,
+                    tostring(CurrentFate.fateId or 0),
+                    tostring(CurrentFate.fateName or "")
+                )
+                Dalamud.Log(msg)
+                SendDiscordMessage(msg)
+                ResetNoCombatRecoveryState()
+                WaitingForFateRewards = nil
+                yield("/vnav stop")
+                if StayOnCurrentMapOnly then
+                    CurrentFate = nil
+                    NextFate = nil
+                else
+                    SelectNextDawntrailZone()
+                end
+                State = CharacterState.ready
+                return
+            end
+
+            if elapsed >= NoCombatTeleportTimeout then
                 local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
                 local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
                 local timeoutMsg = string.format(
@@ -4207,7 +4975,7 @@ function DoFate()
                 else
                     Dalamud.Log("[FATE] No combat started within timeout. Switching zones.")
                 end
-                NoCombatStartTime = nil
+                ResetNoCombatRecoveryState()
                 WaitingForFateRewards = nil
                 yield("/vnav stop")
                 if StayOnCurrentMapOnly then
@@ -4220,6 +4988,8 @@ function DoFate()
                 return
             end
         end
+    else
+        ResetNoCombatRecoveryState()
     end
     local progress = GetFateProgressValue(CurrentFate, nil)
     local radius = GetFateRadiusValue(CurrentFate, nil)
@@ -4342,6 +5112,69 @@ function DoFate()
         local wrappedTarget = EntityWrapper(Svc.Targets.Target)
         if wrappedTarget ~= nil and wrappedTarget.FateId ~= CurrentFate.fateId then
             ClearTarget()
+        end
+    end
+
+    local meleeOrTank = Player.Job and (Player.Job.IsMeleeDPS or Player.Job.IsTank)
+    if not meleeOrTank or Svc.Targets.Target == nil then
+        ResetMeleeEngageRecoveryState()
+    else
+        local targetName = GetTargetName()
+        if targetName == nil
+            or targetName == ""
+            or targetName == CurrentFate.npcName
+            or targetName == "Forlorn Maiden"
+            or targetName == "The Forlorn"
+        then
+            ResetMeleeEngageRecoveryState()
+        else
+            local now = os.clock()
+            local targetPos = Svc.Targets.Target.Position
+            local targetSignature = tostring(targetName) .. ":" ..
+                tostring(math.floor(targetPos.X)) .. ":" ..
+                tostring(math.floor(targetPos.Z))
+            if MeleeEngageTargetSignature ~= targetSignature then
+                MeleeEngageTargetSignature = targetSignature
+                MeleeEngageStartAt = now
+            end
+
+            local engageRange = math.max(2.5, MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius() + 0.5)
+            local targetDistanceFlat = GetDistanceToTargetFlat()
+            if targetDistanceFlat <= engageRange then
+                ResetMeleeEngageRecoveryState()
+            else
+                local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
+                local movePulseSeconds = MeleeApproachMovePulseSeconds or 1.0
+                if not navBusy
+                    and not Svc.Condition[CharacterCondition.casting]
+                    and not Svc.Condition[CharacterCondition.mounted]
+                    and now - (MeleeEngageLastMoveAt or 0) >= movePulseSeconds
+                then
+                    MoveToTargetHitbox()
+                    MeleeEngageLastMoveAt = now
+                end
+
+                local retargetSeconds = MeleeApproachRetargetSeconds or 5
+                if now - (MeleeEngageStartAt or now) >= retargetSeconds
+                    and now >= (MeleeEngageNextRetargetAt or 0)
+                then
+                    local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
+                    local retargetRadius = math.max(
+                        (DynamicAoeCheckRadius or 30) + 10,
+                        (ClusterMoveRadius or 40),
+                        fateRadius + 18
+                    )
+                    Dalamud.Log("[FATE] Melee engage timeout. Switching to a closer target.")
+                    ClearTarget()
+                    local reacquired = AttemptToTargetClosestFateEnemy(true, retargetRadius, true)
+                    if not reacquired then
+                        yield("/battletarget")
+                    end
+                    MeleeEngageStartAt = now
+                    MeleeEngageNextRetargetAt = now + 3
+                    return
+                end
+            end
         end
     end
 
@@ -4587,6 +5420,8 @@ function Ready()
     end
 
     CurrentFate = NextFate
+    ResetNoCombatRecoveryState()
+    ResetMeleeEngageRecoveryState()
     if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
         PrefetchedNextFateId = nil
         PrefetchedNextFateAt = 0
@@ -4637,6 +5472,21 @@ function HandleDeath()
         DeathAnnouncementLock = false
         HasFlownUpYet = false
     end
+end
+
+function ResetNoCombatRecoveryState()
+    NoCombatStartTime = nil
+    NoCombatRecoveryStage = 0
+    NoCombatRecoveryFateId = nil
+    NoCombatRecoveryLastActionAt = 0
+    NoCombatNoTargetSince = 0
+end
+
+function ResetMeleeEngageRecoveryState()
+    MeleeEngageTargetSignature = nil
+    MeleeEngageStartAt = 0
+    MeleeEngageLastMoveAt = 0
+    MeleeEngageNextRetargetAt = 0
 end
 
 function ResetMovementStuckState()
@@ -5769,6 +6619,20 @@ function FateFarming:Run()
     CombatStartBoostDurationSeconds = 12
     TeleportHysteresisEnterGain = 70
     TeleportHysteresisExitGain = 25
+    NoCombatRecoveryRetargetRatio = 0.35
+    NoCombatRecoveryRepositionRatio = 0.7
+    MeleeApproachRetargetSeconds = 5
+    MeleeApproachMovePulseSeconds = 1.0
+    MountTravelMinDistance = 24
+    MountToggleCooldownSeconds = 2.2
+    MountRetryCooldownSeconds = 1.2
+    DismountRetryCooldownSeconds = 0.8
+    DynamicZoneSelectionEnabled = true
+    ZoneNoFateBlockSeconds = 180
+    UnresponsiveLevelSyncEarlySkipSeconds = 16
+    UnresponsiveNoTargetSkipSeconds = 10
+    UnresponsiveSkipRatio = 0.65
+    FateResultSummaryWriteIntervalSeconds = 30
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
@@ -5831,11 +6695,36 @@ function FateFarming:Run()
     LevelSyncFailureCount          = 0
     LevelSyncNextAttemptAt         = 0
     LevelSyncHardCooldownUntil     = 0
+    LevelSyncWaitFateId            = nil
+    LevelSyncWaitStartedAt         = 0
     PrefetchedNextFateId           = nil
     PrefetchedNextFateAt           = 0
     FatePrefetchLastAttemptAt      = 0
     CombatStartBoostUntil          = 0
     CombatStartBoostFateId         = nil
+    NoCombatRecoveryStage          = 0
+    NoCombatRecoveryFateId         = nil
+    NoCombatRecoveryLastActionAt   = 0
+    NoCombatNoTargetSince          = 0
+    MeleeEngageTargetSignature     = nil
+    MeleeEngageStartAt             = 0
+    MeleeEngageLastMoveAt          = 0
+    MeleeEngageNextRetargetAt      = 0
+    LastMountCommandAt             = 0
+    LastDismountCommandAt          = 0
+    FateTimingById                 = {}
+    FateResultLogPath              = "Fates/fates_results.jsonl"
+    FateResultLogResolvedPath      = FateResultLogPath
+    FateResultLogError             = false
+    FateResultLogLastOpenErrorAt   = 0
+    FateResultSummaryByKey         = {}
+    FateResultSummaryDirty         = false
+    FateResultSummaryLastWriteAt   = 0
+    FateResultSummaryCsvPath       = "Fates/fates_results_summary.csv"
+    FateResultSummaryCsvResolvedPath = FateResultSummaryCsvPath
+    FateResultSummaryLastOpenErrorAt = 0
+    ZonePerformanceById            = {}
+    ZoneSelectionLastSwitchAt      = 0
     TeleportDecisionLastFateId     = nil
     TeleportDecisionPreferAetheryte = false
 
@@ -5967,6 +6856,25 @@ function FateFarming:Run()
     FateDataLogLastSignature = nil
     FateDataLogError = false
     FateDataLogLastOpenErrorAt = 0
+    FateResultLogPath = "Fates/fates_results.jsonl"
+    FateResultLogResolvedPath, _ = ResolveWritableFateLogPath(FateResultLogPath)
+    if FateResultLogResolvedPath == nil or FateResultLogResolvedPath == "" then
+        FateResultLogResolvedPath = "fates_results.jsonl"
+    elseif FateResultLogResolvedPath ~= FateResultLogPath then
+        Dalamud.Log("[FATE] FATE result log path fallback in use: " .. tostring(FateResultLogResolvedPath))
+    end
+    FateResultLogError = false
+    FateResultLogLastOpenErrorAt = 0
+    FateResultSummaryCsvPath = "Fates/fates_results_summary.csv"
+    FateResultSummaryCsvResolvedPath, _ = ResolveWritableSummaryLogPath(FateResultSummaryCsvPath)
+    if FateResultSummaryCsvResolvedPath == nil or FateResultSummaryCsvResolvedPath == "" then
+        FateResultSummaryCsvResolvedPath = "fates_results_summary.csv"
+    elseif FateResultSummaryCsvResolvedPath ~= FateResultSummaryCsvPath then
+        Dalamud.Log("[FATE] FATE result summary path fallback in use: " .. tostring(FateResultSummaryCsvResolvedPath))
+    end
+    FateResultSummaryLastOpenErrorAt = 0
+    LoadFateResultSummaryFromLog()
+    WriteFateResultSummaryCsv(true)
 
     -- Plugin warnings
     if Retainers and not HasPlugin("AutoRetainer") then
@@ -6149,7 +7057,12 @@ function FateFarming:Run()
             end
         end
 
-        if NoCombatTeleportTimeout > 0 and CurrentFate ~= nil and not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate then
+        if NoCombatTeleportTimeout > 0
+            and State ~= CharacterState.doFate
+            and CurrentFate ~= nil
+            and not CurrentFate.isCollectionsFate
+            and not CurrentFate.isOtherNpcFate
+        then
             local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
             local progress = GetFateProgressValue(CurrentFate, nil)
             local radius = GetFateRadiusValue(CurrentFate, nil)
@@ -6184,7 +7097,7 @@ function FateFarming:Run()
                     else
                         Dalamud.Log("[FATE] No combat started within timeout. Switching zones.")
                     end
-                    NoCombatStartTime = nil
+                    ResetNoCombatRecoveryState()
                     LastMoveTimestamp = os.clock()
                     LastMovePosition = GetLocalPlayerPosition()
                     yield("/vnav stop")
@@ -6197,7 +7110,7 @@ function FateFarming:Run()
                     State = CharacterState.ready
                 end
             elseif not inRange then
-                NoCombatStartTime = nil
+                ResetNoCombatRecoveryState()
             end
         end
 
@@ -6222,8 +7135,10 @@ function FateFarming:Run()
 
         BicolorGemCount = Inventory.GetItemCount(26807)
         MaybeLogActiveFates()
+        WriteFateResultSummaryCsv(false)
 
         if WaitingForFateRewards ~= nil then
+            NoteFateCombatStart(WaitingForFateRewards)
             local state = WaitingForFateRewards.fateObject and WaitingForFateRewards.fateObject.State or nil
             if WaitingForFateRewards.fateObject == nil
                 or state == nil
@@ -6235,6 +7150,7 @@ function FateFarming:Run()
                 elseif state == FateState.Failed then
                     SessionFatesFailed = SessionFatesFailed + 1
                 end
+                FinalizeFateTimingLog(WaitingForFateRewards, state)
                 local msg = "[FATE] WaitingForFateRewards.fateObject is nil or fate state (" ..
                     tostring(state) ..
                     ") indicates fate is finished for fateId: " ..
@@ -6267,6 +7183,7 @@ function FateFarming:Run()
         SetStopReason("StopScript flag set")
     end
     yield("/vnav stop")
+    WriteFateResultSummaryCsv(true)
     PrintSessionSummary()
 
     if Player.Job.Id ~= MainClass.Id then
