@@ -482,9 +482,11 @@ local IsVnavmeshMovingSafe
 local FateDataLogEnabled
 local FateDataLogIntervalSeconds
 local FateDataLogPath
+local FateDataLogResolvedPath
 local FateDataLogLastTime
 local FateDataLogLastSignature
 local FateDataLogError
+local FateDataLogLastOpenErrorAt
 
 -- 納品証交換時の移動スタック検知用
 local ExchangeMoveLastCheckTime
@@ -1959,6 +1961,71 @@ function BuildFateSnapshotSignature(snapshot)
     return table.concat(parts, "||")
 end
 
+local function NormalizeFateLogValue(value)
+    if value == nil then
+        return ""
+    end
+    local text = tostring(value)
+    text = text:gsub("^%s+", "")
+    text = text:gsub("%s+$", "")
+    return text
+end
+
+local function ParseBool(value, defaultValue)
+    if type(value) == "boolean" then
+        return value
+    end
+    if type(value) == "number" then
+        return value ~= 0
+    end
+    if type(value) == "string" then
+        local lower = string.lower(NormalizeFateLogValue(value))
+        if lower == "true" or lower == "1" or lower == "yes" then
+            return true
+        end
+        if lower == "false" or lower == "0" or lower == "no" then
+            return false
+        end
+    end
+    return defaultValue
+end
+
+local function ResolveWritableFateLogPath(configuredPath)
+    local candidates = {}
+    local function addCandidate(path)
+        local normalized = NormalizeFateLogValue(path)
+        if normalized == "" then
+            return
+        end
+        for _, existing in ipairs(candidates) do
+            if existing == normalized then
+                return
+            end
+        end
+        candidates[#candidates + 1] = normalized
+    end
+
+    addCandidate(configuredPath)
+    addCandidate("Fates/fates_active.jsonl")
+    addCandidate("fates_active.jsonl")
+    local appData = os.getenv("APPDATA")
+    if appData ~= nil and appData ~= "" then
+        addCandidate(appData .. "/XIVLauncher/pluginConfigs/SomethingNeedDoing/fates_active.jsonl")
+    end
+
+    local lastError = nil
+    for _, candidate in ipairs(candidates) do
+        local probe, err = io.open(candidate, "a")
+        if probe ~= nil then
+            probe:close()
+            return candidate, nil
+        end
+        lastError = tostring(err)
+    end
+
+    return NormalizeFateLogValue(configuredPath), lastError
+end
+
 function MaybeLogActiveFates()
     if not FateDataLogEnabled then
         return
@@ -1980,10 +2047,6 @@ function MaybeLogActiveFates()
     end
     FateDataLogLastSignature = signature
 
-    if FateDataLogError then
-        return
-    end
-
     local ok, line = pcall(EncodeJsonValue, snapshot)
     if not ok then
         FateDataLogError = true
@@ -1991,10 +2054,34 @@ function MaybeLogActiveFates()
         return
     end
 
-    local file, err = io.open(FateDataLogPath, "a")
+    local logPath = NormalizeFateLogValue(FateDataLogResolvedPath)
+    if logPath == "" then
+        logPath = NormalizeFateLogValue(FateDataLogPath)
+    end
+    if logPath == "" then
+        logPath = "fates_active.jsonl"
+    end
+
+    local file, err = io.open(logPath, "a")
     if not file then
-        FateDataLogError = true
-        Dalamud.Log("[FATE] Failed to open fate data log file: " .. tostring(err))
+        local fallbackPath, _ = ResolveWritableFateLogPath(logPath)
+        if fallbackPath ~= nil and fallbackPath ~= "" and fallbackPath ~= logPath then
+            local fallbackFile, fallbackErr = io.open(fallbackPath, "a")
+            if fallbackFile ~= nil then
+                file = fallbackFile
+                logPath = fallbackPath
+                FateDataLogResolvedPath = fallbackPath
+            else
+                err = fallbackErr
+            end
+        end
+    end
+    if not file then
+        local now = os.time()
+        if FateDataLogLastOpenErrorAt == nil or (now - FateDataLogLastOpenErrorAt) >= 30 then
+            FateDataLogLastOpenErrorAt = now
+            Dalamud.Log("[FATE] Failed to open fate data log file: " .. tostring(err))
+        end
         return
     end
     file:write(line .. "\n")
@@ -5113,13 +5200,13 @@ function TryUseGysahlGreens()
         return false
     end
 
-    local triedDirectItem = false
+    local itemCallSucceeded = false
     if SndGameUtils ~= nil then
         local okUseItem = pcall(function()
             SndGameUtils.UseItem(4868, false)
         end)
         if okUseItem then
-            triedDirectItem = true
+            itemCallSucceeded = true
             if WaitForBuddySummon(2.4) then
                 ChocoboSummonFailureCount = 0
                 ChocoboSummonCooldownUntil = 0
@@ -5128,41 +5215,18 @@ function TryUseGysahlGreens()
         end
     end
 
-    local summonCommands = {
-        "/buddy",
-        "/companion",
-        '/generalaction "Companion"',
-        '/generalaction "バディ"'
-    }
-    for _, summonCommand in ipairs(summonCommands) do
-        local ok = pcall(function()
-            yield(summonCommand)
-        end)
-        if ok and WaitForBuddySummon(1.6) then
-            ChocoboSummonFailureCount = 0
-            ChocoboSummonCooldownUntil = 0
-            return true
-        end
-    end
-
-    if WaitForBuddySummon(1.5) then
-        ChocoboSummonFailureCount = 0
-        ChocoboSummonCooldownUntil = 0
-        return true
-    end
-
     ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
     if ChocoboSummonFailureCount >= 3 then
         ChocoboSummonFailureCount = 0
         ChocoboSummonCooldownUntil = os.clock() + 45
-        local msg = triedDirectItem
-            and "[FATE] Chocobo summon did not start after item/command retries. Pausing auto summon for 45s."
-            or "[FATE] Chocobo summon did not start after command retries. Pausing auto summon for 45s."
+        local msg = itemCallSucceeded
+            and "[FATE] Chocobo summon did not start after item retries. Pausing auto summon for 45s."
+            or "[FATE] Chocobo summon item call unavailable. Pausing auto summon for 45s."
         Dalamud.Log(msg)
         yield("/echo " .. msg)
         return false
     else
-        local msg = "[FATE] Chocobo summon did not start yet. Retry " ..
+        local msg = "[FATE] Chocobo summon (item only) did not start yet. Retry " ..
             tostring(ChocoboSummonFailureCount) .. "/3"
         Dalamud.Log(msg)
         return false
@@ -5658,21 +5722,27 @@ function FateFarming:Run()
     CompanionScriptMode        = Config.Get("Companion Script Mode")
     DiscordWebhookUrl          = Config.Get("Discord Webhook URL")
     -- 出現中FATEデータ保存
-    FateDataLogEnabled         = Config.Get("Save active FATE data?")
-    FateDataLogIntervalSeconds = Config.Get("FATE data log interval (secs)")
-    FateDataLogPath            = Config.Get("FATE data log path")
-    if FateDataLogEnabled == nil then
-        FateDataLogEnabled = true
-    end
+    FateDataLogEnabled         = ParseBool(Config.Get("Save active FATE data?"), true)
+    FateDataLogIntervalSeconds = tonumber(Config.Get("FATE data log interval (secs)"))
+    FateDataLogPath            = NormalizeFateLogValue(Config.Get("FATE data log path"))
     if FateDataLogIntervalSeconds == nil or FateDataLogIntervalSeconds < 1 then
         FateDataLogIntervalSeconds = 30
+    else
+        FateDataLogIntervalSeconds = math.floor(FateDataLogIntervalSeconds)
     end
-    if FateDataLogPath == nil or FateDataLogPath == "" then
+    if FateDataLogPath == "" then
         FateDataLogPath = "Fates/fates_active.jsonl"
+    end
+    FateDataLogResolvedPath, _ = ResolveWritableFateLogPath(FateDataLogPath)
+    if FateDataLogResolvedPath == nil or FateDataLogResolvedPath == "" then
+        FateDataLogResolvedPath = "fates_active.jsonl"
+    elseif FateDataLogResolvedPath ~= FateDataLogPath then
+        Dalamud.Log("[FATE] FATE data log path fallback in use: " .. tostring(FateDataLogResolvedPath))
     end
     FateDataLogLastTime = 0
     FateDataLogLastSignature = nil
     FateDataLogError = false
+    FateDataLogLastOpenErrorAt = 0
 
     -- Plugin warnings
     if Retainers and not HasPlugin("AutoRetainer") then
