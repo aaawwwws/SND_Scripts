@@ -4987,6 +4987,18 @@ function DoFate()
             LevelSyncWaitStartedAt = now
         end
 
+        if inSyncRange and (Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying]) then
+            Dismount(true)
+            return
+        end
+
+        if not inSyncRange then
+            local syncMoveTarget = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+            if HandleMovementStuck(syncMoveTarget) then
+                return
+            end
+        end
+
         -- While waiting for level sync, avoid chasing distant/invalid targets and wall-running.
         if Svc.Targets.Target ~= nil then
             local wrappedSyncTarget = EntityWrapper(Svc.Targets.Target)
@@ -5081,9 +5093,7 @@ function DoFate()
             return
         end
 
-        if not Svc.Condition[CharacterCondition.mounted]
-            and not navBusy
-        then
+        if not navBusy then
             local preferredSyncPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
             IPC.vnavmesh.PathfindAndMoveTo(preferredSyncPos, Player.CanFly and SelectedZone.flying)
         end
