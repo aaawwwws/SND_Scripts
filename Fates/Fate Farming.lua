@@ -228,7 +228,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,人鳥細工"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -1831,6 +1831,10 @@ function MoveToTargetHitbox()
     if Svc.Targets.Target == nil then
         return
     end
+    if not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
+        ClearTarget()
+        return
+    end
     local playerPos = GetLocalPlayerPosition()
     if playerPos == nil then
         return
@@ -1846,7 +1850,7 @@ function MoveToTargetHitbox()
     local ideal = targetPos + (dir * desiredRange)
     local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, FateMoveBoundaryBuffer or 4)
     local newPos = IPC.vnavmesh.PointOnFloor(boundedIdeal, false, 1.5) or boundedIdeal
-    IPC.vnavmesh.PathfindAndMoveTo(newPos, false)
+    IPC.vnavmesh.PathfindAndMoveTo(newPos, Player.CanFly and SelectedZone.flying)
 end
 
 function HasPlugin(name)
@@ -2122,7 +2126,8 @@ function NoteFateCombatStart(fateData)
         return
     end
     entry.combatStartAt = os.time()
-    Dalamud.Log(string.format("[FATE] Combat start tracked for fate #%s %s", tostring(entry.fateId), tostring(entry.fateName)))
+    Dalamud.Log(string.format("[FATE] Combat start tracked for fate #%s %s", tostring(entry.fateId),
+        tostring(entry.fateName)))
 end
 
 function AppendFateResultLogLine(line)
@@ -2438,7 +2443,8 @@ function WriteFateResultSummaryCsv(forceWrite)
         return
     end
 
-    file:write("zoneId,zoneName,fateId,fateName,fateType,totalRuns,completed,failed,completionRate,avgCombatSec,minCombatSec,maxCombatSec,lastEndAt\n")
+    file:write(
+    "zoneId,zoneName,fateId,fateName,fateType,totalRuns,completed,failed,completionRate,avgCombatSec,minCombatSec,maxCombatSec,lastEndAt\n")
     local rows = {}
     for _, entry in pairs(FateResultSummaryByKey) do
         rows[#rows + 1] = entry
@@ -2838,8 +2844,10 @@ function GetBestDawntrailZoneId(currentZoneId)
                     recencyBonus = 2
                 end
                 local noEligiblePenalty = (entry.noEligibleCount or 0) * 1.5
-                local unresponsivePenalty = ((entry.unresponsiveEma or 0) * 6.5) + ((entry.unresponsiveCount or 0) * 0.35)
-                score = activityScore + completionScore + speedScore + recencyBonus - noEligiblePenalty - unresponsivePenalty
+                local unresponsivePenalty = ((entry.unresponsiveEma or 0) * 6.5) +
+                ((entry.unresponsiveCount or 0) * 0.35)
+                score = activityScore + completionScore + speedScore + recencyBonus - noEligiblePenalty -
+                unresponsivePenalty
             end
         end
 
@@ -3088,13 +3096,13 @@ function SelectNextFateHelper(tempFate, nextFate)
 
     local tempProgress = GetFateProgressValue(tempFate, 0)
     local nextProgress = GetFateProgressValue(nextFate, 0)
-    if tempFate.timeLeft < MinTimeLeftToIgnoreFate or tempProgress > CompletionToIgnoreFate then
+    if tempFate.timeLeft <= MinTimeLeftToIgnoreFate or tempProgress > CompletionToIgnoreFate then
         Dalamud.Log("[FATE] Ignoring fate #" .. tempFate.fateId .. " due to insufficient time or high completion.")
         return nextFate
     elseif nextFate == nil then
         Dalamud.Log("[FATE] Selecting #" .. tempFate.fateId .. " because no other options so far.")
         return tempFate
-    elseif nextFate.timeLeft < MinTimeLeftToIgnoreFate or nextProgress > CompletionToIgnoreFate then
+    elseif nextFate.timeLeft <= MinTimeLeftToIgnoreFate or nextProgress > CompletionToIgnoreFate then
         Dalamud.Log("[FATE] Ignoring fate #" .. nextFate.fateId .. " due to insufficient time or high completion.")
         return tempFate
     end
@@ -3484,7 +3492,8 @@ function GetClosestAetheryteToPoint(position, teleportTimePenalty, fateId)
 end
 
 function TeleportToClosestAetheryteToFate(nextFate)
-    local aetheryteForClosestFate = GetClosestAetheryteToPoint(nextFate.position, 200, nextFate and nextFate.fateId or nil)
+    local aetheryteForClosestFate = GetClosestAetheryteToPoint(nextFate.position, 200,
+        nextFate and nextFate.fateId or nil)
     if aetheryteForClosestFate ~= nil then
         local teleported = TeleportTo(aetheryteForClosestFate.aetheryteName)
         return teleported == true
@@ -3828,7 +3837,7 @@ end
 function ChangeInstance()
     if SuccessiveInstanceChanges >= NumberOfInstances then
         if CompanionScriptMode then
-            local shouldWaitForBonusBuff = WaitIfBonusBuff and (HasStatusId(1288) or HasStatusId(1289))
+            local shouldWaitForBonusBuff = WaitIfBonusBuff and HasTwistOfFateBuff()
             if WaitingForFateRewards == nil and not shouldWaitForBonusBuff then
                 SetStopReason("Companion mode: no rewards/buff while instance cycling")
                 StopScript = true
@@ -4167,11 +4176,7 @@ function MiddleOfFateDismount()
                     end
                 else
                     Dalamud.Log("[FATE] MiddleOfFateDismount IPC.vnavmesh.PathfindAndMoveTo")
-                    if Svc.Condition[CharacterCondition.flying] then
-                        yield("/vnav flytarget")
-                    else
-                        yield("/vnav movetarget")
-                    end
+                    MoveToTargetHitbox()
                 end
             end
         else
@@ -4918,22 +4923,14 @@ function HandleUnexpectedCombat()
     if Svc.Targets.Target ~= nil then
         if GetDistanceToTargetFlat() > (MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius()) then
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                if Player.CanFly and SelectedZone.flying then
-                    yield("/vnav flytarget")
-                else
-                    MoveToTargetHitbox()
-                end
+                MoveToTargetHitbox()
             end
         else
             if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
                 yield("/vnav stop")
             elseif not Svc.Condition[CharacterCondition.inCombat] then
                 --inch closer 3 seconds
-                if Player.CanFly and SelectedZone.flying then
-                    yield("/vnav flytarget")
-                else
-                    MoveToTargetHitbox()
-                end
+                MoveToTargetHitbox()
                 yield("/wait 3")
             end
         end
@@ -4973,6 +4970,7 @@ function DoFate()
     end
     local combatStartBoostActive = CombatStartBoostFateId == CurrentFate.fateId
         and doFateNow < (CombatStartBoostUntil or 0)
+    local shouldPreserveBonusBuff = WaitIfBonusBuff and HasTwistOfFateBuff()
 
     local maxLevel = GetFateMaxLevelValue(CurrentFate, nil)
     local inCurrentFate = InActiveFate()
@@ -4996,12 +4994,11 @@ function DoFate()
                 ClearTarget()
             end
         end
-        if inCurrentFate and navBusy then
+        if inSyncRange and navBusy then
             yield("/vnav stop")
         end
 
-        local canAttemptLevelSync = inCurrentFate
-            and inSyncRange
+        local canAttemptLevelSync = inSyncRange
             and not Svc.Condition[CharacterCondition.inCombat]
             and not Svc.Condition[CharacterCondition.mounted]
             and not Svc.Condition[CharacterCondition.flying]
@@ -5031,6 +5028,21 @@ function DoFate()
                 LevelSyncFailureCount = (LevelSyncFailureCount or 0) + 1
                 local backoff = math.min(20, 4 + (LevelSyncFailureCount * 3))
                 LevelSyncNextAttemptAt = now + backoff
+
+                if inSyncRange and LevelSyncFailureCount >= (LevelSyncForceCenterAfterFailures or 2) then
+                    if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+                        yield("/vnav stop")
+                    end
+                    if Svc.Targets.Target ~= nil then
+                        ClearTarget()
+                    end
+                    local preferredSyncPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+                    if preferredSyncPos ~= nil and GetDistanceToPoint(preferredSyncPos) > 4 then
+                        IPC.vnavmesh.PathfindAndMoveTo(preferredSyncPos, false)
+                        LevelSyncNextAttemptAt = now + (LevelSyncCenterApproachSeconds or 2.5)
+                    end
+                end
+
                 if LevelSyncFailureCount >= 4 then
                     LevelSyncFailureCount = 0
                     LevelSyncHardCooldownUntil = now + 30
@@ -5043,7 +5055,7 @@ function DoFate()
         local levelSyncWaitElapsed = now - (LevelSyncWaitStartedAt or now)
         local syncLooksBlocked = (LevelSyncHardCooldownUntil or 0) > now or (LevelSyncFailureCount or 0) >= 3
         local earlySkipWait = UnresponsiveLevelSyncEarlySkipSeconds or 16
-        if inCurrentFate and inSyncRange and syncLooksBlocked and levelSyncWaitElapsed >= earlySkipWait then
+        if inSyncRange and syncLooksBlocked and levelSyncWaitElapsed >= earlySkipWait then
             local msg = string.format(
                 "[FATE] Early skip: level sync remained unavailable on fate #%s (%s) for %.1fs.",
                 tostring(CurrentFate.fateId or 0),
@@ -5056,7 +5068,10 @@ function DoFate()
             yield("/vnav stop")
             WaitingForFateRewards = nil
             ResetNoCombatRecoveryState()
-            if StayOnCurrentMapOnly then
+            if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
+                if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
+                    Dalamud.Log("[FATE] Preserving Twist of Fate buff: skip zone switch for level-sync recovery.")
+                end
                 CurrentFate = nil
                 NextFate = nil
             else
@@ -5168,7 +5183,10 @@ function DoFate()
                 ResetNoCombatRecoveryState()
                 WaitingForFateRewards = nil
                 yield("/vnav stop")
-                if StayOnCurrentMapOnly then
+                if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
+                    if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
+                        Dalamud.Log("[FATE] Preserving Twist of Fate buff: skip zone switch for no-target recovery.")
+                    end
                     CurrentFate = nil
                     NextFate = nil
                 else
@@ -5197,7 +5215,10 @@ function DoFate()
                 ResetNoCombatRecoveryState()
                 WaitingForFateRewards = nil
                 yield("/vnav stop")
-                if StayOnCurrentMapOnly then
+                if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
+                    if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
+                        Dalamud.Log("[FATE] Preserving Twist of Fate buff: skip zone switch for no-combat timeout.")
+                    end
                     CurrentFate = nil
                     NextFate = nil
                 else
@@ -5303,6 +5324,23 @@ function DoFate()
         UpdateCombatModeByNearbyEnemies()
     end
 
+    local hardBoundaryBuffer = FateHardBoundaryBuffer or 14
+    if IsFateActive(CurrentFate.fateObject)
+        and fateRadiusForAcquire > 0
+        and GetDistanceToPoint(CurrentFate.position) > (fateRadiusForAcquire + hardBoundaryBuffer)
+    then
+        Dalamud.Log("[FATE] Outside fate boundary while in combat loop. Returning to center.")
+        if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+            yield("/vnav stop")
+        end
+        if Svc.Targets.Target ~= nil then
+            ClearTarget()
+        end
+        local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+        IPC.vnavmesh.PathfindAndMoveTo(fallbackPos, false)
+        return
+    end
+
     if Svc.Condition[CharacterCondition.inCombat]
         and not CurrentFate.isCollectionsFate
         and not CurrentFate.isOtherNpcFate
@@ -5333,7 +5371,8 @@ function DoFate()
     -- clears target
     if Svc.Targets.Target ~= nil then
         local wrappedTarget = EntityWrapper(Svc.Targets.Target)
-        if wrappedTarget ~= nil and wrappedTarget.FateId ~= CurrentFate.fateId then
+        if wrappedTarget ~= nil and (wrappedTarget.FateId ~= CurrentFate.fateId
+                or not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4)) then
             ClearTarget()
         end
     end
@@ -5482,8 +5521,6 @@ function DoFate()
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
                     if not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
                         ClearTarget()
-                    elseif Player.CanFly and SelectedZone.flying then
-                        yield("/vnav flytarget")
                     else
                         MoveToTargetHitbox()
                     end
@@ -5513,7 +5550,7 @@ function Ready()
 
     CombatModsOn = false
 
-    local shouldWaitForBonusBuff = WaitIfBonusBuff and (HasStatusId(1288) or HasStatusId(1289))
+    local shouldWaitForBonusBuff = WaitIfBonusBuff and HasTwistOfFateBuff()
     local needsRepair = Inventory.GetItemsInNeedOfRepairs(RemainingDurabilityToRepair)
     local spiritbonded = Inventory.GetSpiritbondedItems()
 
@@ -6333,6 +6370,10 @@ function HasStatusId(statusId)
     return false
 end
 
+function HasTwistOfFateBuff()
+    return HasStatusId(1288) or HasStatusId(1289)
+end
+
 local function TrimString(value)
     if value == nil then
         return ""
@@ -6875,143 +6916,146 @@ function FateFarming:Run()
     if PrintSessionSummaryEnabled == nil then
         PrintSessionSummaryEnabled = true
     end
-    FateExpectedScoreEnabled = true
-    FatePrefetchProgressThreshold = 80
-    FatePrefetchIntervalSeconds = 8
-    FatePrefetchTtlSeconds = 25
-    CombatStartBoostDurationSeconds = 12
-    TeleportHysteresisEnterGain = 70
-    TeleportHysteresisExitGain = 25
-    NoCombatRecoveryRetargetRatio = 0.35
-    NoCombatRecoveryRepositionRatio = 0.7
-    MeleeApproachRetargetSeconds = 5
-    MeleeApproachMovePulseSeconds = 1.0
-    MountTravelMinDistance = 24
-    MountToggleCooldownSeconds = 2.2
-    MountRetryCooldownSeconds = 1.2
-    DismountRetryCooldownSeconds = 0.8
-    DynamicZoneSelectionEnabled = true
-    ZoneNoFateBlockSeconds = 180
+    FateExpectedScoreEnabled              = true
+    FatePrefetchProgressThreshold         = 80
+    FatePrefetchIntervalSeconds           = 8
+    FatePrefetchTtlSeconds                = 25
+    CombatStartBoostDurationSeconds       = 12
+    TeleportHysteresisEnterGain           = 70
+    TeleportHysteresisExitGain            = 25
+    NoCombatRecoveryRetargetRatio         = 0.35
+    NoCombatRecoveryRepositionRatio       = 0.7
+    MeleeApproachRetargetSeconds          = 5
+    MeleeApproachMovePulseSeconds         = 1.0
+    MountTravelMinDistance                = 24
+    MountToggleCooldownSeconds            = 2.2
+    MountRetryCooldownSeconds             = 1.2
+    DismountRetryCooldownSeconds          = 0.8
+    DynamicZoneSelectionEnabled           = true
+    ZoneNoFateBlockSeconds                = 180
     UnresponsiveLevelSyncEarlySkipSeconds = 16
-    UnresponsiveNoTargetSkipSeconds = 10
-    UnresponsiveSkipRatio = 0.65
+    UnresponsiveNoTargetSkipSeconds       = 10
+    UnresponsiveSkipRatio                 = 0.65
     FateResultSummaryWriteIntervalSeconds = 30
-    MiddleDismountForceAfterSeconds = 1.8
-    PreAcquireDistance = 130
-    PreAcquireAttemptIntervalSeconds = 1.2
-    FateTargetRadiusPadding = 3
-    FateMoveBoundaryBuffer = 4
-    LeashSafeRetargetBuffer = 18
-    DynamicAoeSwitchCooldownSeconds = 1.6
-    DynamicAoeEnableStableSamples = 2
-    DynamicAoeDisableStableSamples = 3
+    MiddleDismountForceAfterSeconds       = 1.8
+    PreAcquireDistance                    = 130
+    PreAcquireAttemptIntervalSeconds      = 1.2
+    FateTargetRadiusPadding               = 3
+    FateMoveBoundaryBuffer                = 4
+    FateHardBoundaryBuffer                = 14
+    LeashSafeRetargetBuffer               = 18
+    LevelSyncForceCenterAfterFailures     = 2
+    LevelSyncCenterApproachSeconds        = 2.5
+    DynamicAoeSwitchCooldownSeconds       = 1.6
+    DynamicAoeEnableStableSamples         = 2
+    DynamicAoeDisableStableSamples        = 3
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
-    StopScript                     = false
-    DidFate                        = false
-    RsrDynamicSingleApplied        = false
-    GemAnnouncementLock            = false
-    DeathAnnouncementLock          = false
-    MovingAnnouncementLock         = false
-    SuccessiveInstanceChanges      = 0
-    LastInstanceChangeTimestamp    = 0
-    LastTeleportTimeStamp          = 0
-    NoCombatStartTime              = nil
-    LastMoveTimestamp              = os.clock()
-    LastMovePosition               = nil
-    GotCollectionsFullCredit       = false
-    WaitingForFateRewards          = nil
-    LastFateEndTime                = os.clock()
-    LastStuckCheckTime             = os.clock()
-    local initialPosition          = GetLocalPlayerPosition()
-    LastStuckCheckPosition         = initialPosition or Vector3(0, 0, 0)
-    ExchangeMoveLastCheckTime      = 0
-    ExchangeMoveLastPosition       = nil
-    ExchangeMoveStuckCount         = 0
-    ExchangeMoveLastDistanceToShop = nil
-    ExchangeMoveGraceUntil         = 0
-    MoveStuckLastCheckTime         = 0
-    MoveStuckLastPosition          = nil
-    MoveStuckCount                 = 0
-    MoveStuckLastDistanceToTarget  = nil
-    MainClass                      = Player.Job
-    BossFatesClass                 = nil
-    BicolorGemExchangeThreshold    = 1400
-    ClusterMoveLastRefresh         = 0
-    ClusterMoveCachedFateId        = nil
-    ClusterMoveCachedPosition      = nil
-    SessionStartClock              = os.clock()
-    SessionStartGemCount           = Inventory.GetItemCount(26807)
-    SessionFatesStarted            = 0
-    SessionFatesCompleted          = 0
-    SessionFatesFailed             = 0
-    SessionStuckRepathCount        = 0
-    SessionStuckAetheryteCount     = 0
-    SessionStuckZoneSwitchCount    = 0
-    SessionStopReason              = nil
-    FoodAutoUseDisabled            = false
-    PotionAutoUseDisabled          = false
-    GysahlUseDisabled              = false
-    GysahlShopPurchaseAttempts     = 0
-    ChocoboSummonFailureCount      = 0
-    ChocoboSummonCooldownUntil     = 0
-    ChocoboSummonLastAttemptAt     = 0
-    LifestreamBusyWarned           = false
-    VnavReadyCheckWarned           = false
-    NativeItemCommandDisabled      = true
-    NativeItemCommandWarned        = false
-    TeleportFailureByDestination   = {}
-    TeleportFailureWarnedAt        = 0
-    LastLevelSyncAttemptAt         = 0
-    LevelSyncFailureCount          = 0
-    LevelSyncNextAttemptAt         = 0
-    LevelSyncHardCooldownUntil     = 0
-    LevelSyncWaitFateId            = nil
-    LevelSyncWaitStartedAt         = 0
-    PrefetchedNextFateId           = nil
-    PrefetchedNextFateAt           = 0
-    FatePrefetchLastAttemptAt      = 0
-    CombatStartBoostUntil          = 0
-    CombatStartBoostFateId         = nil
-    NoCombatRecoveryStage          = 0
-    NoCombatRecoveryFateId         = nil
-    NoCombatRecoveryLastActionAt   = 0
-    NoCombatNoTargetSince          = 0
-    MeleeEngageTargetSignature     = nil
-    MeleeEngageStartAt             = 0
-    MeleeEngageLastMoveAt          = 0
-    MeleeEngageNextRetargetAt      = 0
-    PreAcquireFateId               = nil
-    PreAcquireLastAttemptAt        = 0
-    DynamicAoeDecisionMode         = nil
-    DynamicAoeDecisionCount        = 0
-    DynamicAoeLastSwitchAt         = 0
-    MiddleDismountFateId           = nil
-    MiddleDismountStartedAt        = 0
-    MiddleDismountNoTargetSince    = 0
-    LastMountCommandAt             = 0
-    LastDismountCommandAt          = 0
-    FateTimingById                 = {}
-    FateResultLogPath              = "Fates/fates_results.jsonl"
-    FateResultLogResolvedPath      = FateResultLogPath
-    FateResultLogError             = false
-    FateResultLogLastOpenErrorAt   = 0
-    FateResultSummaryByKey         = {}
-    FateResultSummaryDirty         = false
-    FateResultSummaryLastWriteAt   = 0
-    FateResultSummaryCsvPath       = "Fates/fates_results_summary.csv"
-    FateResultSummaryCsvResolvedPath = FateResultSummaryCsvPath
-    FateResultSummaryLastOpenErrorAt = 0
-    ZonePerformanceById            = {}
-    ZoneSelectionLastSwitchAt      = 0
-    TeleportDecisionLastFateId     = nil
-    TeleportDecisionPreferAetheryte = false
+    StopScript                            = false
+    DidFate                               = false
+    RsrDynamicSingleApplied               = false
+    GemAnnouncementLock                   = false
+    DeathAnnouncementLock                 = false
+    MovingAnnouncementLock                = false
+    SuccessiveInstanceChanges             = 0
+    LastInstanceChangeTimestamp           = 0
+    LastTeleportTimeStamp                 = 0
+    NoCombatStartTime                     = nil
+    LastMoveTimestamp                     = os.clock()
+    LastMovePosition                      = nil
+    GotCollectionsFullCredit              = false
+    WaitingForFateRewards                 = nil
+    LastFateEndTime                       = os.clock()
+    LastStuckCheckTime                    = os.clock()
+    local initialPosition                 = GetLocalPlayerPosition()
+    LastStuckCheckPosition                = initialPosition or Vector3(0, 0, 0)
+    ExchangeMoveLastCheckTime             = 0
+    ExchangeMoveLastPosition              = nil
+    ExchangeMoveStuckCount                = 0
+    ExchangeMoveLastDistanceToShop        = nil
+    ExchangeMoveGraceUntil                = 0
+    MoveStuckLastCheckTime                = 0
+    MoveStuckLastPosition                 = nil
+    MoveStuckCount                        = 0
+    MoveStuckLastDistanceToTarget         = nil
+    MainClass                             = Player.Job
+    BossFatesClass                        = nil
+    BicolorGemExchangeThreshold           = 1400
+    ClusterMoveLastRefresh                = 0
+    ClusterMoveCachedFateId               = nil
+    ClusterMoveCachedPosition             = nil
+    SessionStartClock                     = os.clock()
+    SessionStartGemCount                  = Inventory.GetItemCount(26807)
+    SessionFatesStarted                   = 0
+    SessionFatesCompleted                 = 0
+    SessionFatesFailed                    = 0
+    SessionStuckRepathCount               = 0
+    SessionStuckAetheryteCount            = 0
+    SessionStuckZoneSwitchCount           = 0
+    SessionStopReason                     = nil
+    FoodAutoUseDisabled                   = false
+    PotionAutoUseDisabled                 = false
+    GysahlUseDisabled                     = false
+    GysahlShopPurchaseAttempts            = 0
+    ChocoboSummonFailureCount             = 0
+    ChocoboSummonCooldownUntil            = 0
+    ChocoboSummonLastAttemptAt            = 0
+    LifestreamBusyWarned                  = false
+    VnavReadyCheckWarned                  = false
+    NativeItemCommandDisabled             = true
+    NativeItemCommandWarned               = false
+    TeleportFailureByDestination          = {}
+    TeleportFailureWarnedAt               = 0
+    LastLevelSyncAttemptAt                = 0
+    LevelSyncFailureCount                 = 0
+    LevelSyncNextAttemptAt                = 0
+    LevelSyncHardCooldownUntil            = 0
+    LevelSyncWaitFateId                   = nil
+    LevelSyncWaitStartedAt                = 0
+    PrefetchedNextFateId                  = nil
+    PrefetchedNextFateAt                  = 0
+    FatePrefetchLastAttemptAt             = 0
+    CombatStartBoostUntil                 = 0
+    CombatStartBoostFateId                = nil
+    NoCombatRecoveryStage                 = 0
+    NoCombatRecoveryFateId                = nil
+    NoCombatRecoveryLastActionAt          = 0
+    NoCombatNoTargetSince                 = 0
+    MeleeEngageTargetSignature            = nil
+    MeleeEngageStartAt                    = 0
+    MeleeEngageLastMoveAt                 = 0
+    MeleeEngageNextRetargetAt             = 0
+    PreAcquireFateId                      = nil
+    PreAcquireLastAttemptAt               = 0
+    DynamicAoeDecisionMode                = nil
+    DynamicAoeDecisionCount               = 0
+    DynamicAoeLastSwitchAt                = 0
+    MiddleDismountFateId                  = nil
+    MiddleDismountStartedAt               = 0
+    MiddleDismountNoTargetSince           = 0
+    LastMountCommandAt                    = 0
+    LastDismountCommandAt                 = 0
+    FateTimingById                        = {}
+    FateResultLogPath                     = "Fates/fates_results.jsonl"
+    FateResultLogResolvedPath             = FateResultLogPath
+    FateResultLogError                    = false
+    FateResultLogLastOpenErrorAt          = 0
+    FateResultSummaryByKey                = {}
+    FateResultSummaryDirty                = false
+    FateResultSummaryLastWriteAt          = 0
+    FateResultSummaryCsvPath              = "Fates/fates_results_summary.csv"
+    FateResultSummaryCsvResolvedPath      = FateResultSummaryCsvPath
+    FateResultSummaryLastOpenErrorAt      = 0
+    ZonePerformanceById                   = {}
+    ZoneSelectionLastSwitchAt             = 0
+    TeleportDecisionLastFateId            = nil
+    TeleportDecisionPreferAetheryte       = false
 
     --Forlorns
-    IgnoreForlorns                 = false
-    IgnoreBigForlornOnly           = false
-    Forlorns                       = string.lower(Config.Get("Forlorns"))
+    IgnoreForlorns                        = false
+    IgnoreBigForlornOnly                  = false
+    Forlorns                              = string.lower(Config.Get("Forlorns"))
     if Forlorns == "none" then
         IgnoreForlorns = true
     elseif Forlorns == "small" then
@@ -7309,6 +7353,7 @@ function FateFarming:Run()
                             and not IsLifestreamBusySafe()
                             and not navBusy
                         if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
+                            local shouldPreserveBonusBuff = WaitIfBonusBuff and HasTwistOfFateBuff()
                             local timeoutZoneName = (SelectedZone and SelectedZone.zoneName) or "Unknown Zone"
                             local timeoutMsg = string.format(
                                 "[FATE] No-movement timeout triggered in zone: %s",
@@ -7324,7 +7369,10 @@ function FateFarming:Run()
                             LastMoveTimestamp = os.clock()
                             LastMovePosition = currentPos
                             yield("/vnav stop")
-                            if StayOnCurrentMapOnly then
+                            if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
+                                if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
+                                    Dalamud.Log("[FATE] Preserving Twist of Fate buff: skip zone switch for no-movement timeout.")
+                                end
                                 CurrentFate = nil
                                 NextFate = nil
                             else
@@ -7363,6 +7411,7 @@ function FateFarming:Run()
                 if NoCombatStartTime == nil then
                     NoCombatStartTime = os.clock()
                 elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
+                    local shouldPreserveBonusBuff = WaitIfBonusBuff and HasTwistOfFateBuff()
                     local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
                     local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
                     local timeoutMsg = string.format(
@@ -7382,7 +7431,10 @@ function FateFarming:Run()
                     LastMoveTimestamp = os.clock()
                     LastMovePosition = GetLocalPlayerPosition()
                     yield("/vnav stop")
-                    if StayOnCurrentMapOnly then
+                    if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
+                        if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
+                            Dalamud.Log("[FATE] Preserving Twist of Fate buff: skip zone switch for global no-combat timeout.")
+                        end
                         CurrentFate = nil
                         NextFate = nil
                     else
