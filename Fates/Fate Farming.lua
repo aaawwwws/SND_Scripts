@@ -365,6 +365,7 @@ local AcceptTeleportOfferLocation
 local ApplyChocoboStance
 local ARRetainersWaitingToBeProcessed
 local AttemptToTargetClosestFateEnemy
+local AttemptToTargetLowestHpFateEnemy
 local AutoBuyGysahlGreens
 local BuildFateTable
 local BuildZoneData
@@ -536,6 +537,11 @@ local LevelSyncNextAttemptAt
 local LevelSyncHardCooldownUntil
 local LevelSyncWasInRange
 local LevelSyncReentryAttemptPending
+local LevelSyncOutOfRangeNoProgressSince
+local LevelSyncOutOfRangeLastDistance
+local FinisherEstimateFateId
+local FinisherEstimateLastProgress
+local FinisherEstimatedSingleKillGain
 local PrefetchedNextFateId
 local PrefetchedNextFateAt
 local FatePrefetchLastAttemptAt
@@ -1652,6 +1658,60 @@ function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallba
     end
 
     return false
+end
+
+function AttemptToTargetLowestHpFateEnemy(maxDistance)
+    local fateIdFilter = CurrentFate and CurrentFate.fateId or 0
+    if fateIdFilter == 0 then
+        return false
+    end
+
+    local candidates = CollectFateEnemyCandidates(fateIdFilter, false, maxDistance)
+    if #candidates == 0 then
+        return false
+    end
+
+    local bestTarget = nil
+    local bestCurrentHp = nil
+    local bestHpRatio = nil
+    local bestDist = nil
+
+    for _, candidate in ipairs(candidates) do
+        local obj = candidate.obj
+        local currentHp = obj and obj.CurrentHp or nil
+        if currentHp ~= nil and currentHp > 0 then
+            local maxHp = obj.MaxHp
+            local hpRatio = 1
+            if maxHp ~= nil and maxHp > 0 then
+                hpRatio = currentHp / maxHp
+            end
+
+            local betterTarget = false
+            if bestTarget == nil then
+                betterTarget = true
+            elseif currentHp < bestCurrentHp then
+                betterTarget = true
+            elseif currentHp == bestCurrentHp and hpRatio < bestHpRatio then
+                betterTarget = true
+            elseif currentHp == bestCurrentHp and hpRatio == bestHpRatio and candidate.dist < bestDist then
+                betterTarget = true
+            end
+
+            if betterTarget then
+                bestTarget = obj
+                bestCurrentHp = currentHp
+                bestHpRatio = hpRatio
+                bestDist = candidate.dist
+            end
+        end
+    end
+
+    if bestTarget == nil then
+        return false
+    end
+
+    Svc.Targets.Target = bestTarget
+    return true
 end
 
 function GetDenseFateClusterCenter(fateIdFilter, clusterRadius, minClusterEnemies)
@@ -4993,6 +5053,8 @@ function DoFate()
             LevelSyncHardCooldownUntil = 0
             LevelSyncWasInRange = false
             LevelSyncReentryAttemptPending = false
+            LevelSyncOutOfRangeNoProgressSince = nil
+            LevelSyncOutOfRangeLastDistance = nil
         end
 
         if inSyncRange then
@@ -5000,9 +5062,23 @@ function DoFate()
                 LevelSyncWasInRange = true
                 LevelSyncReentryAttemptPending = true
             end
+            LevelSyncOutOfRangeNoProgressSince = nil
+            LevelSyncOutOfRangeLastDistance = nil
         else
             LevelSyncWasInRange = false
             LevelSyncReentryAttemptPending = false
+            local distanceToFateCenter = GetDistanceToPoint(CurrentFate.position)
+            if distanceToFateCenter ~= nil then
+                if LevelSyncOutOfRangeLastDistance == nil
+                    or (LevelSyncOutOfRangeLastDistance - distanceToFateCenter) >= 2
+                then
+                    LevelSyncOutOfRangeNoProgressSince = now
+                    LevelSyncOutOfRangeLastDistance = distanceToFateCenter
+                elseif LevelSyncOutOfRangeNoProgressSince == nil then
+                    LevelSyncOutOfRangeNoProgressSince = now
+                    LevelSyncOutOfRangeLastDistance = distanceToFateCenter
+                end
+            end
         end
 
         if inSyncRange and (Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying]) then
@@ -5013,6 +5089,19 @@ function DoFate()
         if not inSyncRange then
             local syncMoveTarget = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
             if HandleMovementStuck(syncMoveTarget) then
+                return
+            end
+
+            local noProgressElapsed = now - (LevelSyncOutOfRangeNoProgressSince or now)
+            if navBusy and noProgressElapsed >= (LevelSyncOutOfRangeForceRepathSeconds or 7) then
+                Dalamud.Log("[FATE] Outside sync range without approach progress. Repathing to fate center.")
+                if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+                    yield("/vnav stop")
+                    yield("/wait 0.2")
+                end
+                IPC.vnavmesh.PathfindAndMoveTo(syncMoveTarget, Player.CanFly and SelectedZone.flying)
+                LevelSyncOutOfRangeNoProgressSince = now
+                LevelSyncOutOfRangeLastDistance = GetDistanceToPoint(CurrentFate.position)
                 return
             end
         end
@@ -5030,6 +5119,7 @@ function DoFate()
 
         local forceReentryAttempt = LevelSyncReentryAttemptPending == true
         local canAttemptLevelSync = inSyncRange
+            and not Svc.Condition[CharacterCondition.inCombat]
             and not Svc.Condition[CharacterCondition.mounted]
             and not Svc.Condition[CharacterCondition.flying]
             and not Svc.Condition[CharacterCondition.casting]
@@ -5128,6 +5218,8 @@ function DoFate()
         LevelSyncWaitStartedAt = 0
         LevelSyncWasInRange = false
         LevelSyncReentryAttemptPending = false
+        LevelSyncOutOfRangeNoProgressSince = nil
+        LevelSyncOutOfRangeLastDistance = nil
     end
 
     if NoCombatTeleportTimeout > 0 and not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate then
@@ -5325,9 +5417,48 @@ function DoFate()
 
     GemAnnouncementLock = false
     local fateRadiusForAcquire = GetFateRadiusValue(CurrentFate, nil) or 0
+    local fateProgress = GetFateProgressValue(CurrentFate, nil)
+    if FinisherEstimateFateId ~= CurrentFate.fateId then
+        FinisherEstimateFateId = CurrentFate.fateId
+        FinisherEstimateLastProgress = fateProgress
+        FinisherEstimatedSingleKillGain = nil
+    elseif fateProgress ~= nil then
+        local lastProgress = FinisherEstimateLastProgress
+        if lastProgress ~= nil then
+            if fateProgress + 0.01 < lastProgress then
+                -- Same fate id can reappear later; reset sample when progress goes backward.
+                FinisherEstimatedSingleKillGain = nil
+            elseif fateProgress > lastProgress then
+                local progressDelta = fateProgress - lastProgress
+                if progressDelta > 0 and progressDelta <= (FinisherMaxSampleDelta or 25) then
+                    if FinisherEstimatedSingleKillGain == nil or progressDelta < FinisherEstimatedSingleKillGain then
+                        FinisherEstimatedSingleKillGain = progressDelta
+                    end
+                end
+            end
+        end
+        FinisherEstimateLastProgress = fateProgress
+    end
     local boostAcquireRadius = combatStartBoostActive
         and math.max((DynamicAoeCheckRadius or 30) + 20, (ClusterMoveRadius or 40) + 15, fateRadiusForAcquire + 35)
         or nil
+    local remainingProgress = fateProgress ~= nil and (100 - fateProgress) or nil
+    local estimatedOneKillProgress = FinisherEstimatedSingleKillGain
+    local dynamicFinisherWindow = nil
+    if estimatedOneKillProgress ~= nil then
+        dynamicFinisherWindow = math.max(
+            FinisherMinRemainingWindow or 0.8,
+            estimatedOneKillProgress * (FinisherRemainingMultiplier or 1.15)
+        )
+    end
+    local finisherFocusMode = fateProgress ~= nil
+        and fateProgress < 100
+        and not CurrentFate.isCollectionsFate
+        and not CurrentFate.isOtherNpcFate
+        and (
+            (dynamicFinisherWindow ~= nil and remainingProgress ~= nil and remainingProgress <= dynamicFinisherWindow)
+            or fateProgress >= (FinisherFallbackProgressThreshold or 97)
+        )
 
     -- switches to targeting forlorns for bonus (if present)
     if not IgnoreForlorns then
@@ -5385,7 +5516,11 @@ function DoFate()
             local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40),
                 fateRadiusForAcquire + 15, boostAcquireRadius or 0)
             farPullRadius = math.min(farPullRadius, leashSafeRadius)
-            AttemptToTargetClosestFateEnemy(true, farPullRadius, combatStartBoostActive)
+            if finisherFocusMode and AttemptToTargetLowestHpFateEnemy(farPullRadius) then
+                TurnOffAoes()
+            else
+                AttemptToTargetClosestFateEnemy(true, farPullRadius, combatStartBoostActive)
+            end
         end
     end
 
@@ -5395,8 +5530,17 @@ function DoFate()
         local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40),
             fateRadiusForAcquire + 15, boostAcquireRadius or 0)
         farPullRadius = math.min(farPullRadius, leashSafeRadius)
-        local gotUnengagedTarget = AttemptToTargetClosestFateEnemy(true, farPullRadius, combatStartBoostActive)
-        if not gotUnengagedTarget then
+        local gotTarget = false
+        if finisherFocusMode then
+            gotTarget = AttemptToTargetLowestHpFateEnemy(farPullRadius)
+            if gotTarget then
+                TurnOffAoes()
+            end
+        end
+        if not gotTarget then
+            gotTarget = AttemptToTargetClosestFateEnemy(true, farPullRadius, combatStartBoostActive)
+        end
+        if not gotTarget then
             yield("/battletarget")
         end
     end
@@ -5479,7 +5623,7 @@ function DoFate()
     end
 
     --hold buff thingy
-    local progress = GetFateProgressValue(CurrentFate, nil)
+    local progress = fateProgress
     TryPrefetchNextFate()
     if progress ~= nil and progress >= PercentageToHoldBuff then
         TurnOffRaidBuffs()
@@ -5525,7 +5669,16 @@ function DoFate()
             return
         else
             local acquisitionRadius = boostAcquireRadius
-            AttemptToTargetClosestFateEnemy(true, acquisitionRadius, combatStartBoostActive)
+            local gotTarget = false
+            if finisherFocusMode then
+                gotTarget = AttemptToTargetLowestHpFateEnemy(acquisitionRadius)
+                if gotTarget then
+                    TurnOffAoes()
+                end
+            end
+            if not gotTarget then
+                AttemptToTargetClosestFateEnemy(true, acquisitionRadius, combatStartBoostActive)
+            end
             yield("/wait " .. targetStickWait) -- short wait in case target doesnt stick
             if (Svc.Targets.Target == nil) and not Svc.Condition[CharacterCondition.casting] then
                 IPC.vnavmesh.PathfindAndMoveTo(preferredMovePos, false)
@@ -5535,7 +5688,16 @@ function DoFate()
         local leashSafeRadius = GetLeashSafeRetargetRadius()
         if Svc.Targets.Target ~= nil and GetDistanceToTargetFlat() > (leashSafeRadius + 5) then
             ClearTarget()
-            local gotNearTarget = AttemptToTargetClosestFateEnemy(true, leashSafeRadius, true)
+            local gotNearTarget = false
+            if finisherFocusMode then
+                gotNearTarget = AttemptToTargetLowestHpFateEnemy(leashSafeRadius)
+                if gotNearTarget then
+                    TurnOffAoes()
+                end
+            end
+            if not gotNearTarget then
+                gotNearTarget = AttemptToTargetClosestFateEnemy(true, leashSafeRadius, true)
+            end
             if not gotNearTarget then
                 yield("/battletarget")
             end
@@ -6979,6 +7141,11 @@ function FateFarming:Run()
     LeashSafeRetargetBuffer               = 18
     LevelSyncForceCenterAfterFailures     = 2
     LevelSyncCenterApproachSeconds        = 2.5
+    LevelSyncOutOfRangeForceRepathSeconds = 7
+    FinisherFallbackProgressThreshold     = 97
+    FinisherRemainingMultiplier           = 1.15
+    FinisherMinRemainingWindow            = 0.8
+    FinisherMaxSampleDelta                = 25
     DynamicAoeSwitchCooldownSeconds       = 1.6
     DynamicAoeEnableStableSamples         = 2
     DynamicAoeDisableStableSamples        = 3
@@ -7048,6 +7215,11 @@ function FateFarming:Run()
     LevelSyncWaitStartedAt                = 0
     LevelSyncWasInRange                   = false
     LevelSyncReentryAttemptPending        = false
+    LevelSyncOutOfRangeNoProgressSince    = nil
+    LevelSyncOutOfRangeLastDistance       = nil
+    FinisherEstimateFateId                = nil
+    FinisherEstimateLastProgress          = nil
+    FinisherEstimatedSingleKillGain       = nil
     PrefetchedNextFateId                  = nil
     PrefetchedNextFateAt                  = 0
     FatePrefetchLastAttemptAt             = 0
