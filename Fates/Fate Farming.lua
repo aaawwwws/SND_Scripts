@@ -530,17 +530,6 @@ local NativeItemCommandDisabled
 local NativeItemCommandWarned
 local TeleportFailureByDestination
 local TeleportFailureWarnedAt
-local LastLevelSyncAttemptAt
-local LevelSyncFailureCount
-local LevelSyncNextAttemptAt
-local LevelSyncHardCooldownUntil
-local PrefetchedNextFateId
-local PrefetchedNextFateAt
-local FatePrefetchLastAttemptAt
-local FatePrefetchProgressThreshold
-local FatePrefetchIntervalSeconds
-local FatePrefetchTtlSeconds
-local FateExpectedScoreEnabled
 
 -- 密集移動のキャッシュ
 local ClusterMoveLastRefresh
