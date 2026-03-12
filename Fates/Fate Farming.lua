@@ -534,6 +534,8 @@ local LastLevelSyncAttemptAt
 local LevelSyncFailureCount
 local LevelSyncNextAttemptAt
 local LevelSyncHardCooldownUntil
+local LevelSyncWasInRange
+local LevelSyncReentryAttemptPending
 local PrefetchedNextFateId
 local PrefetchedNextFateAt
 local FatePrefetchLastAttemptAt
@@ -4985,6 +4987,22 @@ function DoFate()
         if LevelSyncWaitFateId ~= CurrentFate.fateId then
             LevelSyncWaitFateId = CurrentFate.fateId
             LevelSyncWaitStartedAt = now
+            LastLevelSyncAttemptAt = 0
+            LevelSyncFailureCount = 0
+            LevelSyncNextAttemptAt = 0
+            LevelSyncHardCooldownUntil = 0
+            LevelSyncWasInRange = false
+            LevelSyncReentryAttemptPending = false
+        end
+
+        if inSyncRange then
+            if LevelSyncWasInRange ~= true then
+                LevelSyncWasInRange = true
+                LevelSyncReentryAttemptPending = true
+            end
+        else
+            LevelSyncWasInRange = false
+            LevelSyncReentryAttemptPending = false
         end
 
         if inSyncRange and (Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying]) then
@@ -5010,8 +5028,8 @@ function DoFate()
             yield("/vnav stop")
         end
 
+        local forceReentryAttempt = LevelSyncReentryAttemptPending == true
         local canAttemptLevelSync = inSyncRange
-            and not Svc.Condition[CharacterCondition.inCombat]
             and not Svc.Condition[CharacterCondition.mounted]
             and not Svc.Condition[CharacterCondition.flying]
             and not Svc.Condition[CharacterCondition.casting]
@@ -5025,10 +5043,12 @@ function DoFate()
             and not Svc.Condition[CharacterCondition.occupiedInQuestEvent]
             and not Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
             and not IsLifestreamBusySafe()
-            and (LevelSyncHardCooldownUntil == nil or now >= LevelSyncHardCooldownUntil)
-            and (LevelSyncNextAttemptAt == nil or now >= LevelSyncNextAttemptAt)
-            and (LastLevelSyncAttemptAt == nil or now - LastLevelSyncAttemptAt >= 1.5)
+            and (forceReentryAttempt
+                or ((LevelSyncHardCooldownUntil == nil or now >= LevelSyncHardCooldownUntil)
+                    and (LevelSyncNextAttemptAt == nil or now >= LevelSyncNextAttemptAt)
+                    and (LastLevelSyncAttemptAt == nil or now - LastLevelSyncAttemptAt >= 1.5)))
         if canAttemptLevelSync then
+            LevelSyncReentryAttemptPending = false
             LastLevelSyncAttemptAt = now
             yield("/lsync")
             yield("/wait 0.5") -- give it a second to register
@@ -5093,7 +5113,8 @@ function DoFate()
             return
         end
 
-        if not navBusy then
+        -- If already in sync range, avoid micro-repath loops; just hold position for /lsync.
+        if not inSyncRange and not navBusy then
             local preferredSyncPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
             IPC.vnavmesh.PathfindAndMoveTo(preferredSyncPos, Player.CanFly and SelectedZone.flying)
         end
@@ -5105,6 +5126,8 @@ function DoFate()
         LevelSyncHardCooldownUntil = 0
         LevelSyncWaitFateId = nil
         LevelSyncWaitStartedAt = 0
+        LevelSyncWasInRange = false
+        LevelSyncReentryAttemptPending = false
     end
 
     if NoCombatTeleportTimeout > 0 and not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate then
@@ -7023,6 +7046,8 @@ function FateFarming:Run()
     LevelSyncHardCooldownUntil            = 0
     LevelSyncWaitFateId                   = nil
     LevelSyncWaitStartedAt                = 0
+    LevelSyncWasInRange                   = false
+    LevelSyncReentryAttemptPending        = false
     PrefetchedNextFateId                  = nil
     PrefetchedNextFateAt                  = 0
     FatePrefetchLastAttemptAt             = 0
