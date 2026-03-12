@@ -365,7 +365,6 @@ local AcceptTeleportOfferLocation
 local ApplyChocoboStance
 local ARRetainersWaitingToBeProcessed
 local AttemptToTargetClosestFateEnemy
-local AttemptToTargetLowestHpFateEnemy
 local AutoBuyGysahlGreens
 local BuildFateTable
 local BuildZoneData
@@ -535,13 +534,6 @@ local LastLevelSyncAttemptAt
 local LevelSyncFailureCount
 local LevelSyncNextAttemptAt
 local LevelSyncHardCooldownUntil
-local LevelSyncWasInRange
-local LevelSyncReentryAttemptPending
-local LevelSyncOutOfRangeNoProgressSince
-local LevelSyncOutOfRangeLastDistance
-local FinisherEstimateFateId
-local FinisherEstimateLastProgress
-local FinisherEstimatedSingleKillGain
 local PrefetchedNextFateId
 local PrefetchedNextFateAt
 local FatePrefetchLastAttemptAt
