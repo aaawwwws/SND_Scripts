@@ -5020,9 +5020,9 @@ function DoFate()
     local needsLevelSync = maxLevel ~= nil and Player.Job and maxLevel < Player.Job.Level and not Player.IsLevelSynced
     if needsLevelSync then
         local radius = GetFateRadiusValue(CurrentFate, nil)
-        local inSyncRange = radius ~= nil
-            and IsFateActive(CurrentFate.fateObject)
-            and (GetDistanceToPoint(CurrentFate.position) <= radius + 8)
+        local distanceToFateCenter = GetDistanceToPoint(CurrentFate.position)
+        local inSyncRange = IsFateActive(CurrentFate.fateObject)
+            and ((radius ~= nil and distanceToFateCenter <= radius + 8) or inCurrentFate)
         local now = os.clock()
         local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
         if LevelSyncWaitFateId ~= CurrentFate.fateId then
@@ -5100,7 +5100,6 @@ function DoFate()
 
         local forceReentryAttempt = LevelSyncReentryAttemptPending == true
         local canAttemptLevelSync = inSyncRange
-            and not Svc.Condition[CharacterCondition.inCombat]
             and not Svc.Condition[CharacterCondition.mounted]
             and not Svc.Condition[CharacterCondition.flying]
             and not Svc.Condition[CharacterCondition.casting]
