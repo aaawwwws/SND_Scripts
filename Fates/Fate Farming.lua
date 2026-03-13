@@ -4454,7 +4454,12 @@ function MoveToFate()
             if (CurrentFate.isOtherNpcFate or CurrentFate.isCollectionsFate) and not InActiveFate() then
                 yield("/target " .. CurrentFate.npcName)
             else
-                AttemptToTargetClosestFateEnemy(true, nil, false)
+                local gotTarget = AttemptToTargetClosestFateEnemy(true, nil, true)
+                if not gotTarget and InActiveFate() then
+                    State = CharacterState.MiddleOfFateDismount
+                    Dalamud.Log("[FATE] State Change: MiddleOfFateDismount (fallback no target)")
+                    return
+                end
                 if Svc.Targets.Target == nil and OptimizeClusterMovement == true then
                     local center = GetPreferredFateMovePosition(CurrentFate)
                     if center ~= nil and GetDistanceToPoint(center) > 8 then
