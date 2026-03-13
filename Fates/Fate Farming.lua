@@ -3226,6 +3226,8 @@ function SelectNextFate()
     end
 
     local nextFate = nil
+    local fallbackFate = nil
+    local fallbackDistance = math.maxinteger
     for i = 0, fates.Count - 1 do
         Dalamud.Log("[FATE] Building fate table")
         local tempFate = BuildFateTable(fates[i])
@@ -3233,6 +3235,17 @@ function SelectNextFate()
         Dalamud.Log("[FATE] Time left on fate #:" ..
             tempFate.fateId .. ": " .. math.floor(tempFate.timeLeft // 60) .. "min, " ..
             math.floor(tempFate.timeLeft % 60) .. "s")
+
+        if not (tempFate.position.X == 0 and tempFate.position.Z == 0)
+            and not tempFate.isBlacklistedFate
+            and (tempFate.duration ~= 0 or tempFate.isOtherNpcFate or tempFate.isCollectionsFate)
+        then
+            local tempDist = GetDistanceToPoint(tempFate.position)
+            if tempDist < fallbackDistance then
+                fallbackDistance = tempDist
+                fallbackFate = tempFate
+            end
+        end
 
         if not (tempFate.position.X == 0 and tempFate.position.Z == 0) then -- sometimes game doesnt send the correct coords
             if not tempFate.isBlacklistedFate then                          -- check fate is not blacklisted for any reason
@@ -3278,6 +3291,12 @@ function SelectNextFate()
 
     Dalamud.Log("[FATE] Finished considering all fates")
     if nextFate == nil then
+        if fallbackFate ~= nil then
+            nextFate = fallbackFate
+            Dalamud.Log("[FATE] Fallback selected fate #" .. nextFate.fateId .. " " .. nextFate.fateName ..
+                " (strict filters yielded none).")
+            return nextFate
+        end
         local playerPos = GetPlayerPosition()
         Dalamud.Log("[FATE] No fates found. Player position: X=" ..
             playerPos.X .. ", Y=" .. playerPos.Y .. ", Z=" .. playerPos.Z)
@@ -4321,20 +4340,47 @@ function MoveToFate()
         Dalamud.Log("[FATE] State Change: Ready")
         return
     elseif CurrentFate == nil or NextFate.fateId ~= CurrentFate.fateId then
-        yield("/vnav stop")
-        CurrentFate = NextFate
-        ResetNoCombatRecoveryState()
-        ResetMeleeEngageRecoveryState()
-        ResetPreAcquireState()
-        ResetDynamicAoeSwitchState()
-        ResetMiddleDismountState()
-        if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
-            PrefetchedNextFateId = nil
-            PrefetchedNextFateAt = 0
+        local shouldSwitchFate = true
+        if CurrentFate ~= nil and IsFateActive(CurrentFate.fateObject) then
+            local currentProgress = GetFateProgressValue(CurrentFate, 0) or 0
+            local nextProgress = GetFateProgressValue(NextFate, 0) or 0
+            local currentDist = GetDistanceToPoint(CurrentFate.position)
+            local nextDist = GetDistanceToPoint(NextFate.position)
+            local currentBonus = CurrentFate.isBonusFate == true
+            local nextBonus = NextFate.isBonusFate == true
+            local progressGain = nextProgress - currentProgress
+            local distanceGain = currentDist - nextDist
+            local switchForBonus = nextBonus and not currentBonus
+            local switchForProgress = progressGain >= 15
+            local switchForDistance = distanceGain >= 35
+            shouldSwitchFate = switchForBonus or switchForProgress or switchForDistance
+            if not shouldSwitchFate then
+                Dalamud.Log(string.format(
+                    "[FATE] Keeping current target fate #%s; candidate #%s not better enough (progress %+0.1f, distance %+0.1f).",
+                    tostring(CurrentFate.fateId or 0),
+                    tostring(NextFate.fateId or 0),
+                    progressGain,
+                    distanceGain
+                ))
+                NextFate = CurrentFate
+            end
         end
-        local mappedPosition = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
-        SetMapFlag(SelectedZone.zoneId, mappedPosition)
-        return
+        if shouldSwitchFate then
+            yield("/vnav stop")
+            CurrentFate = NextFate
+            ResetNoCombatRecoveryState()
+            ResetMeleeEngageRecoveryState()
+            ResetPreAcquireState()
+            ResetDynamicAoeSwitchState()
+            ResetMiddleDismountState()
+            if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
+                PrefetchedNextFateId = nil
+                PrefetchedNextFateAt = 0
+            end
+            local mappedPosition = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+            SetMapFlag(SelectedZone.zoneId, mappedPosition)
+            return
+        end
     end
 
     -- change to secondary class if its a boss fate
