@@ -439,6 +439,10 @@ local MoveToFate
 local MoveToNPC
 local MoveToRandomNearbySpot
 local MoveToTargetHitbox
+local NeedsLevelSyncForFate
+local GetCurrentFateMoveBoundaryBuffer
+local GetCurrentFateHardBoundaryBuffer
+local GetCurrentFateTargetRadiusPadding
 local IsPositionInsideCurrentFateBounds
 local ClampPositionToCurrentFateBounds
 local IsCurrentTargetInsideCurrentFateBounds
@@ -1471,6 +1475,35 @@ function GetTargetName()
     end
 end
 
+function NeedsLevelSyncForFate(fate)
+    if fate == nil then
+        return false
+    end
+    local maxLevel = GetFateMaxLevelValue(fate, nil)
+    return maxLevel ~= nil and Player.Job and maxLevel < Player.Job.Level
+end
+
+function GetCurrentFateMoveBoundaryBuffer()
+    if NeedsLevelSyncForFate(CurrentFate) then
+        return FateLevelSyncBoundaryBuffer or 0.5
+    end
+    return FateMoveBoundaryBuffer or 4
+end
+
+function GetCurrentFateHardBoundaryBuffer()
+    if NeedsLevelSyncForFate(CurrentFate) then
+        return FateLevelSyncHardBoundaryBuffer or 2.5
+    end
+    return FateHardBoundaryBuffer or 14
+end
+
+function GetCurrentFateTargetRadiusPadding()
+    if NeedsLevelSyncForFate(CurrentFate) then
+        return FateLevelSyncTargetRadiusPadding or 0.5
+    end
+    return FateTargetRadiusPadding or 3
+end
+
 function IsPositionInsideCurrentFateBounds(position, margin)
     if position == nil or CurrentFate == nil or CurrentFate.position == nil then
         return true
@@ -1481,7 +1514,7 @@ function IsPositionInsideCurrentFateBounds(position, margin)
     end
     local effectiveMargin = margin
     if effectiveMargin == nil then
-        effectiveMargin = FateMoveBoundaryBuffer or 4
+        effectiveMargin = GetCurrentFateMoveBoundaryBuffer()
     end
     return DistanceBetweenFlat(CurrentFate.position, position) <= (fateRadius + effectiveMargin)
 end
@@ -1496,7 +1529,7 @@ function ClampPositionToCurrentFateBounds(position, margin)
     end
     local effectiveMargin = margin
     if effectiveMargin == nil then
-        effectiveMargin = FateMoveBoundaryBuffer or 4
+        effectiveMargin = GetCurrentFateMoveBoundaryBuffer()
     end
     local maxRadius = fateRadius + effectiveMargin
     local offset = position - CurrentFate.position
@@ -1540,7 +1573,7 @@ function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance)
                 if CurrentFate ~= nil and CurrentFate.fateId == objFateId and CurrentFate.position ~= nil then
                     local fateRadius = GetFateRadiusValue(CurrentFate, nil)
                     if fateRadius ~= nil and fateRadius > 0 then
-                        local fatePadding = FateTargetRadiusPadding or 3
+                        local fatePadding = GetCurrentFateTargetRadiusPadding()
                         passesFateRadiusFilter =
                             DistanceBetweenFlat(CurrentFate.position, obj.Position) <= (fateRadius + fatePadding)
                     end
@@ -1874,7 +1907,7 @@ function MoveToTargetHitbox()
     if Svc.Targets.Target == nil then
         return
     end
-    if not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
+    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
         ClearTarget()
         return
     end
@@ -1891,7 +1924,7 @@ function MoveToTargetHitbox()
     local dir = Normalize(playerPos - targetPos)
     if dir:Length() == 0 then return end
     local ideal = targetPos + (dir * desiredRange)
-    local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, FateMoveBoundaryBuffer or 4)
+    local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, GetCurrentFateMoveBoundaryBuffer())
     local newPos = IPC.vnavmesh.PointOnFloor(boundedIdeal, false, 1.5) or boundedIdeal
     IPC.vnavmesh.PathfindAndMoveTo(newPos, Player.CanFly and SelectedZone.flying)
 end
@@ -4230,7 +4263,7 @@ function MiddleOfFateDismount()
         MiddleDismountNoTargetSince = 0
         if GetDistanceToTarget() > (MaxDistance + GetTargetHitboxRadius() + 5) then
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                if not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
+                if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
                     ClearTarget()
                     local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
                     if fallbackPos ~= nil then
@@ -4426,7 +4459,7 @@ function MoveToFate()
     -- upon approaching fate, pick a target and switch to pathing towards target
     if distanceToPreferredMovePos < 60 then
         if Svc.Targets.Target ~= nil then
-            if not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
+            if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
                 ClearTarget()
                 local center = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
                 if center ~= nil and not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
@@ -5072,8 +5105,9 @@ function DoFate()
     if needsLevelSync then
         local radius = GetFateRadiusValue(CurrentFate, nil)
         local distanceToFateCenter = GetDistanceToPoint(CurrentFate.position)
+        local syncRangeBuffer = LevelSyncInRangeBuffer or 1.5
         local inSyncRange = IsFateActive(CurrentFate.fateObject)
-            and ((radius ~= nil and distanceToFateCenter <= radius + 8) or inCurrentFate)
+            and ((radius ~= nil and distanceToFateCenter <= radius + syncRangeBuffer) or inCurrentFate)
         local now = os.clock()
         local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
         if LevelSyncWaitFateId ~= CurrentFate.fateId then
@@ -5141,7 +5175,9 @@ function DoFate()
         -- While waiting for level sync, avoid chasing distant/invalid targets and wall-running.
         if Svc.Targets.Target ~= nil then
             local wrappedSyncTarget = EntityWrapper(Svc.Targets.Target)
-            if wrappedSyncTarget ~= nil and wrappedSyncTarget.FateId ~= CurrentFate.fateId then
+            local invalidTarget = wrappedSyncTarget == nil or wrappedSyncTarget.FateId ~= CurrentFate.fateId
+            local outsideBounds = not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer())
+            if invalidTarget or outsideBounds or not inSyncRange then
                 ClearTarget()
             end
         end
@@ -5519,7 +5555,7 @@ function DoFate()
         UpdateCombatModeByNearbyEnemies()
     end
 
-    local hardBoundaryBuffer = FateHardBoundaryBuffer or 14
+    local hardBoundaryBuffer = GetCurrentFateHardBoundaryBuffer()
     if IsFateActive(CurrentFate.fateObject)
         and fateRadiusForAcquire > 0
         and GetDistanceToPoint(CurrentFate.position) > (fateRadiusForAcquire + hardBoundaryBuffer)
@@ -5580,7 +5616,7 @@ function DoFate()
     if Svc.Targets.Target ~= nil then
         local wrappedTarget = EntityWrapper(Svc.Targets.Target)
         if wrappedTarget ~= nil and (wrappedTarget.FateId ~= CurrentFate.fateId
-                or not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4)) then
+                or not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer())) then
             ClearTarget()
         end
     end
@@ -5684,7 +5720,7 @@ function DoFate()
                     yield("/vnav stop")
                     yield("/wait " .. stopBeforeInchWait)                                                                                                           -- short pause before inching closer
                 elseif (GetDistanceToTargetFlat() > (1 + GetTargetHitboxRadius() + GetPlayerHitboxRadius())) and not Svc.Condition[CharacterCondition.casting] then -- never move into hitbox
-                    if IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
+                    if IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
                         MoveToTargetHitbox()
                         yield("/wait " .. inchCloserWait) -- inch closer briefly
                     else
@@ -5745,7 +5781,7 @@ function DoFate()
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
                 yield("/wait " .. preApproachWaitInCombat)
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
-                    if not IsCurrentTargetInsideCurrentFateBounds(FateMoveBoundaryBuffer or 4) then
+                    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
                         ClearTarget()
                     else
                         MoveToTargetHitbox()
@@ -7169,7 +7205,11 @@ function FateFarming:Run()
     FateTargetRadiusPadding               = 3
     FateMoveBoundaryBuffer                = 4
     FateHardBoundaryBuffer                = 14
+    FateLevelSyncTargetRadiusPadding      = 0.5
+    FateLevelSyncBoundaryBuffer           = 0.5
+    FateLevelSyncHardBoundaryBuffer       = 2.5
     LeashSafeRetargetBuffer               = 18
+    LevelSyncInRangeBuffer                = 1.5
     LevelSyncForceCenterAfterFailures     = 2
     LevelSyncCenterApproachSeconds        = 2.5
     LevelSyncOutOfRangeForceRepathSeconds = 7
