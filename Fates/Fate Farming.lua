@@ -4377,6 +4377,20 @@ function MoveToFate()
         if CurrentFate ~= nil and IsFateActive(CurrentFate.fateObject) then
             local currentProgress = GetFateProgressValue(CurrentFate, 0) or 0
             local nextProgress = GetFateProgressValue(NextFate, 0) or 0
+            local currentStarted = (CurrentFate.startTime or 0) > 0
+            local currentInProgress = currentProgress > 0 and currentProgress < 100
+            local lockCurrentFate = InActiveFate()
+                or Svc.Condition[CharacterCondition.inCombat]
+                or currentStarted
+                or currentInProgress
+            if lockCurrentFate then
+                shouldSwitchFate = false
+                NextFate = CurrentFate
+                Dalamud.Log(string.format(
+                    "[FATE] Keeping current target fate #%s; active/in-progress fate switch blocked.",
+                    tostring(CurrentFate.fateId or 0)
+                ))
+            else
             local currentDist = GetDistanceToPoint(CurrentFate.position)
             local nextDist = GetDistanceToPoint(NextFate.position)
             local currentBonus = CurrentFate.isBonusFate == true
@@ -4396,6 +4410,7 @@ function MoveToFate()
                     distanceGain
                 ))
                 NextFate = CurrentFate
+            end
             end
         end
         if shouldSwitchFate then
@@ -5890,9 +5905,23 @@ function Ready()
         return
     end
 
-    NextFate = GetBestAvailableNextFate(true)
     if CurrentFate ~= nil and not IsFateActive(CurrentFate.fateObject) then
         CurrentFate = nil
+    end
+    local keepCurrentFate = false
+    if CurrentFate ~= nil and IsFateActive(CurrentFate.fateObject) then
+        local currentProgress = GetFateProgressValue(CurrentFate, nil)
+        local progressInRange = currentProgress ~= nil and currentProgress > 0 and currentProgress < 100
+        local startedButNotFinished = (CurrentFate.startTime or 0) > 0 and (currentProgress == nil or currentProgress < 100)
+        keepCurrentFate = InActiveFate()
+            or Svc.Condition[CharacterCondition.inCombat]
+            or progressInRange
+            or startedButNotFinished
+    end
+    if keepCurrentFate then
+        NextFate = CurrentFate
+    else
+        NextFate = GetBestAvailableNextFate(true)
     end
 
     if NextFate == nil then
