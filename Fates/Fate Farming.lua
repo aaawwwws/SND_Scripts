@@ -7666,26 +7666,47 @@ function FateFarming:Run()
                                 "[FATE] No-movement timeout triggered in zone: %s",
                                 tostring(timeoutZoneName)
                             )
+                            local currentFateStillInProgress = false
+                            if CurrentFate ~= nil and IsFateActive(CurrentFate.fateObject) then
+                                local currentProgress = GetFateProgressValue(CurrentFate, nil)
+                                currentFateStillInProgress = currentProgress ~= nil and currentProgress < 100
+                            end
                             Dalamud.Log(timeoutMsg)
                             SendDiscordMessage(timeoutMsg)
-                            if StayOnCurrentMapOnly then
-                                Dalamud.Log("[FATE] No movement detected. Staying in current map due to setting.")
-                            else
-                                Dalamud.Log("[FATE] No movement detected. Switching zones.")
-                            end
-                            LastMoveTimestamp = os.clock()
-                            LastMovePosition = currentPos
-                            yield("/vnav stop")
-                            if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
-                                if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
-                                    Dalamud.Log("[FATE] Preserving Twist of Fate buff: skip zone switch for no-movement timeout.")
+                            if currentFateStillInProgress then
+                                Dalamud.Log(
+                                    "[FATE] No movement detected, but current fate is still active. Repathing to fate instead of switching."
+                                )
+                                LastMoveTimestamp = os.clock()
+                                LastMovePosition = currentPos
+                                yield("/vnav stop")
+                                local recoveryPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+                                if recoveryPos ~= nil then
+                                    IPC.vnavmesh.PathfindAndMoveTo(recoveryPos, Player.CanFly and SelectedZone.flying)
+                                    State = CharacterState.moveToFate
+                                else
+                                    State = CharacterState.ready
                                 end
-                                CurrentFate = nil
-                                NextFate = nil
                             else
-                                SelectNextDawntrailZone()
+                                if StayOnCurrentMapOnly then
+                                    Dalamud.Log("[FATE] No movement detected. Staying in current map due to setting.")
+                                else
+                                    Dalamud.Log("[FATE] No movement detected. Switching zones.")
+                                end
+                                LastMoveTimestamp = os.clock()
+                                LastMovePosition = currentPos
+                                yield("/vnav stop")
+                                if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
+                                    if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
+                                        Dalamud.Log("[FATE] Preserving Twist of Fate buff: skip zone switch for no-movement timeout.")
+                                    end
+                                    CurrentFate = nil
+                                    NextFate = nil
+                                else
+                                    SelectNextDawntrailZone()
+                                end
+                                State = CharacterState.ready
                             end
-                            State = CharacterState.ready
                         end
                     end
                 end
