@@ -440,6 +440,8 @@ local MoveToNPC
 local MoveToRandomNearbySpot
 local MoveToTargetHitbox
 local NeedsLevelSyncForFate
+local IsLevelSyncPendingForCurrentFate
+local IsCurrentFateInSyncRange
 local GetCurrentFateMoveBoundaryBuffer
 local GetCurrentFateHardBoundaryBuffer
 local GetCurrentFateTargetRadiusPadding
@@ -1502,6 +1504,35 @@ function GetCurrentFateTargetRadiusPadding()
         return FateLevelSyncTargetRadiusPadding or 0.5
     end
     return FateTargetRadiusPadding or 3
+end
+
+function IsLevelSyncPendingForCurrentFate()
+    if CurrentFate == nil then
+        return false
+    end
+    return NeedsLevelSyncForFate(CurrentFate) and Player.IsLevelSynced ~= true
+end
+
+function IsCurrentFateInSyncRange()
+    if CurrentFate == nil or CurrentFate.fateObject == nil then
+        return false
+    end
+    if not IsFateActive(CurrentFate.fateObject) then
+        return false
+    end
+    if InActiveFate() then
+        return true
+    end
+    local radius = GetFateRadiusValue(CurrentFate, nil)
+    if radius == nil then
+        return false
+    end
+    local distanceToFateCenter = GetDistanceToPoint(CurrentFate.position)
+    if distanceToFateCenter == nil then
+        return false
+    end
+    local syncRangeBuffer = LevelSyncInRangeBuffer or 1.5
+    return distanceToFateCenter <= (radius + syncRangeBuffer)
 end
 
 function IsPositionInsideCurrentFateBounds(position, margin)
@@ -4266,6 +4297,10 @@ function MiddleOfFateDismount()
         MiddleDismountStartedAt = now
         MiddleDismountNoTargetSince = 0
     end
+    local levelSyncPending = IsLevelSyncPendingForCurrentFate()
+    if levelSyncPending and Svc.Targets.Target ~= nil then
+        ClearTarget()
+    end
 
     if Svc.Targets.Target ~= nil then
         MiddleDismountNoTargetSince = 0
@@ -4294,6 +4329,37 @@ function MiddleOfFateDismount()
             end
         end
     else
+        if MiddleDismountNoTargetSince == nil or MiddleDismountNoTargetSince <= 0 then
+            MiddleDismountNoTargetSince = now
+        end
+        local noTargetElapsed = now - MiddleDismountNoTargetSince
+        if levelSyncPending then
+            if not IsCurrentFateInSyncRange() then
+                local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+                if fallbackPos ~= nil and not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                    IPC.vnavmesh.PathfindAndMoveTo(fallbackPos, Player.CanFly and SelectedZone.flying)
+                end
+                return
+            end
+            if Svc.Condition[CharacterCondition.mounted] then
+                if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+                    yield("/vnav stop")
+                end
+                if noTargetElapsed >= (MiddleDismountForceAfterSeconds or 1.8) then
+                    Dalamud.Log("[FATE] MiddleOfFateDismount: level sync pending, force dismount.")
+                    Dismount(true)
+                end
+                return
+            end
+            if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+                yield("/vnav stop")
+            end
+            ResetMiddleDismountState()
+            State = CharacterState.doFate
+            Dalamud.Log("[FATE] State Change: DoFate")
+            return
+        end
+
         local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
         local acquireRadius = math.max((DynamicAoeCheckRadius or 30) + 10, (ClusterMoveRadius or 40), fateRadius + 20)
         local gotTarget = AttemptToTargetClosestFateEnemy(true, acquireRadius, true)
@@ -4301,11 +4367,6 @@ function MiddleOfFateDismount()
             MiddleDismountNoTargetSince = 0
             return
         end
-
-        if MiddleDismountNoTargetSince == nil or MiddleDismountNoTargetSince <= 0 then
-            MiddleDismountNoTargetSince = now
-        end
-        local noTargetElapsed = now - MiddleDismountNoTargetSince
 
         if Svc.Condition[CharacterCondition.mounted] then
             if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
@@ -4453,8 +4514,10 @@ function MoveToFate()
 
     local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
     local distanceToPreferredMovePos = GetDistanceToPoint(preferredMovePos)
+    local levelSyncPending = IsLevelSyncPendingForCurrentFate()
 
     if not (CurrentFate.isOtherNpcFate or CurrentFate.isCollectionsFate)
+        and not levelSyncPending
         and distanceToPreferredMovePos <= (PreAcquireDistance or 130)
         and distanceToPreferredMovePos > 60
     then
@@ -4481,6 +4544,21 @@ function MoveToFate()
 
     -- upon approaching fate, pick a target and switch to pathing towards target
     if distanceToPreferredMovePos < 60 then
+        if levelSyncPending then
+            if Svc.Targets.Target ~= nil then
+                ClearTarget()
+            end
+            local center = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+            if center ~= nil
+                and not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning())
+                and not IsCurrentFateInSyncRange()
+            then
+                IPC.vnavmesh.PathfindAndMoveTo(center, Player.CanFly and SelectedZone.flying)
+            end
+            State = CharacterState.MiddleOfFateDismount
+            return
+        end
+
         if Svc.Targets.Target ~= nil then
             if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
                 ClearTarget()
