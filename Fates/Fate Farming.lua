@@ -3310,7 +3310,15 @@ function SelectNextFate()
                     Dalamud.Log("[FATE] Normal fate")
                     nextFate = SelectNextFateHelper(tempFate, nextFate)
                 else
-                    Dalamud.Log("[FATE] Fate duration was zero.")
+                    local tempProgress = GetFateProgressValue(tempFate, nil)
+                    local startedButUnusual = (tempFate.startTime or 0) > 0
+                    local progressingButUnusual = tempProgress ~= nil and tempProgress > 0 and tempProgress < 100
+                    if startedButUnusual or progressingButUnusual then
+                        Dalamud.Log("[FATE] Fate duration was zero, but fate is active. Treating as normal fate.")
+                        nextFate = SelectNextFateHelper(tempFate, nextFate)
+                    else
+                        Dalamud.Log("[FATE] Fate duration was zero.")
+                    end
                 end
                 Dalamud.Log("[FATE] Finished considering fate #" .. tempFate.fateId .. " " .. tempFate.fateName)
             else
