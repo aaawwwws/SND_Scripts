@@ -4974,9 +4974,10 @@ end
 function TurnOffAoes()
     if AoesOn then
         if RotationPlugin == "RSR" then
+            -- Keep RSR auto casting active while forcing single-target behavior.
             yield("/rotation settings aoetype 1")
-            yield("/rotation manual")
-            Dalamud.Log("[FATE] TurnOffAoes /rotation manual")
+            yield("/rotation auto on")
+            Dalamud.Log("[FATE] TurnOffAoes /rotation auto on")
         elseif RotationPlugin == "BMR" then
             IPC.BossMod.SetActive(RotationSingleTargetPreset)
         elseif RotationPlugin == "VBM" then
