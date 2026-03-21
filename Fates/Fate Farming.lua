@@ -228,7 +228,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,人鳥細工"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,人鳥細工,恐怖！ キノコ魔物,落ち石拾い"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -2551,7 +2551,7 @@ function WriteFateResultSummaryCsv(forceWrite)
     end
 
     file:write(
-    "zoneId,zoneName,fateId,fateName,fateType,totalRuns,completed,failed,completionRate,avgCombatSec,minCombatSec,maxCombatSec,lastEndAt\n")
+        "zoneId,zoneName,fateId,fateName,fateType,totalRuns,completed,failed,completionRate,avgCombatSec,minCombatSec,maxCombatSec,lastEndAt\n")
     local rows = {}
     for _, entry in pairs(FateResultSummaryByKey) do
         rows[#rows + 1] = entry
@@ -2952,9 +2952,9 @@ function GetBestDawntrailZoneId(currentZoneId)
                 end
                 local noEligiblePenalty = (entry.noEligibleCount or 0) * 1.5
                 local unresponsivePenalty = ((entry.unresponsiveEma or 0) * 6.5) +
-                ((entry.unresponsiveCount or 0) * 0.35)
+                    ((entry.unresponsiveCount or 0) * 0.35)
                 score = activityScore + completionScore + speedScore + recencyBonus - noEligiblePenalty -
-                unresponsivePenalty
+                    unresponsivePenalty
             end
         end
 
@@ -4460,26 +4460,26 @@ function MoveToFate()
                     tostring(CurrentFate.fateId or 0)
                 ))
             else
-            local currentDist = GetDistanceToPoint(CurrentFate.position)
-            local nextDist = GetDistanceToPoint(NextFate.position)
-            local currentBonus = CurrentFate.isBonusFate == true
-            local nextBonus = NextFate.isBonusFate == true
-            local progressGain = nextProgress - currentProgress
-            local distanceGain = currentDist - nextDist
-            local switchForBonus = nextBonus and not currentBonus
-            local switchForProgress = progressGain >= 15
-            local switchForDistance = distanceGain >= 35
-            shouldSwitchFate = switchForBonus or switchForProgress or switchForDistance
-            if not shouldSwitchFate then
-                Dalamud.Log(string.format(
-                    "[FATE] Keeping current target fate #%s; candidate #%s not better enough (progress %+0.1f, distance %+0.1f).",
-                    tostring(CurrentFate.fateId or 0),
-                    tostring(NextFate.fateId or 0),
-                    progressGain,
-                    distanceGain
-                ))
-                NextFate = CurrentFate
-            end
+                local currentDist = GetDistanceToPoint(CurrentFate.position)
+                local nextDist = GetDistanceToPoint(NextFate.position)
+                local currentBonus = CurrentFate.isBonusFate == true
+                local nextBonus = NextFate.isBonusFate == true
+                local progressGain = nextProgress - currentProgress
+                local distanceGain = currentDist - nextDist
+                local switchForBonus = nextBonus and not currentBonus
+                local switchForProgress = progressGain >= 15
+                local switchForDistance = distanceGain >= 35
+                shouldSwitchFate = switchForBonus or switchForProgress or switchForDistance
+                if not shouldSwitchFate then
+                    Dalamud.Log(string.format(
+                        "[FATE] Keeping current target fate #%s; candidate #%s not better enough (progress %+0.1f, distance %+0.1f).",
+                        tostring(CurrentFate.fateId or 0),
+                        tostring(NextFate.fateId or 0),
+                        progressGain,
+                        distanceGain
+                    ))
+                    NextFate = CurrentFate
+                end
             end
         end
         if shouldSwitchFate then
@@ -5999,7 +5999,8 @@ function Ready()
     if CurrentFate ~= nil and IsFateActive(CurrentFate.fateObject) then
         local currentProgress = GetFateProgressValue(CurrentFate, nil)
         local progressInRange = currentProgress ~= nil and currentProgress > 0 and currentProgress < 100
-        local startedButNotFinished = (CurrentFate.startTime or 0) > 0 and (currentProgress == nil or currentProgress < 100)
+        local startedButNotFinished = (CurrentFate.startTime or 0) > 0 and
+            (currentProgress == nil or currentProgress < 100)
         keepCurrentFate = InActiveFate()
             or Svc.Condition[CharacterCondition.inCombat]
             or progressInRange
@@ -7785,7 +7786,8 @@ function FateFarming:Run()
                                 yield("/vnav stop")
                                 if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
                                     if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
-                                        Dalamud.Log("[FATE] Preserving Twist of Fate buff: skip zone switch for no-movement timeout.")
+                                        Dalamud.Log(
+                                            "[FATE] Preserving Twist of Fate buff: skip zone switch for no-movement timeout.")
                                     end
                                     CurrentFate = nil
                                     NextFate = nil
@@ -7848,7 +7850,8 @@ function FateFarming:Run()
                     yield("/vnav stop")
                     if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
                         if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
-                            Dalamud.Log("[FATE] Preserving Twist of Fate buff: skip zone switch for global no-combat timeout.")
+                            Dalamud.Log(
+                                "[FATE] Preserving Twist of Fate buff: skip zone switch for global no-combat timeout.")
                         end
                         CurrentFate = nil
                         NextFate = nil
