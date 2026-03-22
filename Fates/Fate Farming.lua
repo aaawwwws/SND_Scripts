@@ -3672,6 +3672,7 @@ local function NormalizeTeleportName(name)
     end
     local normalized = string.lower(tostring(name))
     normalized = normalized:gsub("%s+", "")
+    normalized = normalized:gsub("　", "")
     normalized = normalized:gsub("・", "")
     normalized = normalized:gsub("%-", "")
     normalized = normalized:gsub("'", "")
@@ -3835,6 +3836,29 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
     return false
 end
 
+local function TryNativeTeleportByPlaceName(destinationName)
+    if destinationName == nil or destinationName == "" then
+        return false
+    end
+    local escapedName = tostring(destinationName):gsub('"', "")
+    if escapedName == "" then
+        return false
+    end
+
+    local nativeCommands = {
+        '/tp "' .. escapedName .. '"',
+        "/tp " .. escapedName
+    }
+    for _, nativeCommand in ipairs(nativeCommands) do
+        yield(nativeCommand)
+        if WaitForTeleportStart(3.5) then
+            return true
+        end
+    end
+
+    return false
+end
+
 local function GetTeleportFailureEntry(destinationName)
     if TeleportFailureByDestination == nil then
         TeleportFailureByDestination = {}
@@ -3913,17 +3937,21 @@ function TeleportTo(aetheryteName)
     local teleportStarted = false
 
     if resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Teleport) == "function" then
-        local ok, result = pcall(function()
-            return IPC.Lifestream.Teleport(resolvedId, 0)
+        local ok = pcall(function()
+            IPC.Lifestream.Teleport(resolvedId, 0)
         end)
-        if ok and result == true then
-            teleportStarted = WaitForTeleportStart(2.2)
+        if ok then
+            teleportStarted = WaitForTeleportStart(3.5)
         end
     end
 
     if not teleportStarted then
         for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
             if TryLifestreamTeleportByPlaceName(candidateName) then
+                teleportStarted = true
+                break
+            end
+            if TryNativeTeleportByPlaceName(candidateName) then
                 teleportStarted = true
                 break
             end
@@ -3966,6 +3994,27 @@ function TeleportTo(aetheryteName)
     MarkTeleportSuccess(aetheryteName)
     HasFlownUpYet = false
     return true
+end
+
+local function TeleportToSelectedZoneAetheryte()
+    if SelectedZone == nil or SelectedZone.aetheryteList == nil then
+        return false, {}
+    end
+
+    local attemptedNames = {}
+    local attemptedLookup = {}
+    for _, aetheryte in ipairs(SelectedZone.aetheryteList) do
+        local aetheryteName = aetheryte and aetheryte.aetheryteName or nil
+        if type(aetheryteName) == "string" and aetheryteName ~= "" and attemptedLookup[aetheryteName] ~= true then
+            attemptedLookup[aetheryteName] = true
+            table.insert(attemptedNames, aetheryteName)
+            if TeleportTo(aetheryteName) == true then
+                return true, attemptedNames
+            end
+        end
+    end
+
+    return false, attemptedNames
 end
 
 function ChangeInstance()
@@ -5959,7 +6008,7 @@ function Ready()
     end
 
     if Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
-        if not SelectedZone or not SelectedZone.aetheryteList or not SelectedZone.aetheryteList[1] then
+        if not SelectedZone or not SelectedZone.aetheryteList or #SelectedZone.aetheryteList == 0 then
             local msg = "ERROR: No aetheryte found for selected zone. Cannot teleport. Stopping script."
             yield("/echo [FATE] " .. msg)
             SendDiscordMessage(msg)
@@ -5967,9 +6016,13 @@ function Ready()
             StopScript = true
             return
         end
-        local teleSuccess = TeleportTo(SelectedZone.aetheryteList[1].aetheryteName)
+        local teleSuccess, attemptedNames = TeleportToSelectedZoneAetheryte()
         if teleSuccess == false then
-            local msg = "ERROR: Teleportation failed. Stopping script."
+            local attempted = table.concat(attemptedNames or {}, ", ")
+            if attempted == "" then
+                attempted = "none"
+            end
+            local msg = "ERROR: Teleportation failed for selected zone (attempted: " .. attempted .. "). Stopping script."
             yield("/echo [FATE] " .. msg)
             SendDiscordMessage(msg)
             SetStopReason(msg)
@@ -6599,7 +6652,10 @@ function Repair()
             end
 
             if Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
-                TeleportTo(SelectedZone.aetheryteList[1].aetheryteName)
+                local teleSuccess = TeleportToSelectedZoneAetheryte()
+                if teleSuccess ~= true then
+                    yield("/wait 3")
+                end
                 return
             end
 
