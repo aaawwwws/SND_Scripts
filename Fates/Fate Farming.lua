@@ -4996,6 +4996,45 @@ function GetPlayerHitboxRadius()
     end
 end
 
+function NormalizePresetName(name)
+    local value = tostring(name or "")
+    value = value:gsub("^%s+", "")
+    value = value:gsub("%s+$", "")
+    return value
+end
+
+function SelectPresetName(primary, fallback1, fallback2)
+    local candidates = { primary, fallback1, fallback2 }
+    for _, candidate in ipairs(candidates) do
+        local normalized = NormalizePresetName(candidate)
+        if normalized ~= "" then
+            return normalized
+        end
+    end
+    return ""
+end
+
+function ActivateBossModPreset(primary, fallback1, fallback2, reason)
+    local selectedPreset = SelectPresetName(primary, fallback1, fallback2)
+    if selectedPreset == "" then
+        if BossModPresetMissingWarned ~= true then
+            BossModPresetMissingWarned = true
+            Dalamud.Log(
+                "[FATE] Warning: No valid BMR/VBM preset configured (AoE/Single/Hold are empty). Preset switch skipped.")
+            yield("/echo [FATE] Warning: BMR/VBM preset is empty. Set AoE/Single/Hold presets in config.")
+        end
+        return false
+    end
+    local ok = pcall(function()
+        IPC.BossMod.SetActive(selectedPreset)
+    end)
+    if not ok then
+        Dalamud.Log("[FATE] Failed to apply BMR/VBM preset for " .. tostring(reason) .. ": " .. selectedPreset)
+        return false
+    end
+    return true
+end
+
 function TurnOnAoes()
     if not AoesOn then
         if RotationPlugin == "RSR" then
@@ -5011,9 +5050,9 @@ function TurnOnAoes()
                 yield("/rotation settings aoetype 2")
             end
         elseif RotationPlugin == "BMR" then
-            IPC.BossMod.SetActive(RotationAoePreset)
+            ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "aoe")
         elseif RotationPlugin == "VBM" then
-            IPC.BossMod.SetActive(RotationAoePreset)
+            ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "aoe")
         end
         AoesOn = true
         RsrDynamicSingleApplied = false
@@ -5028,9 +5067,9 @@ function TurnOffAoes()
             yield("/rotation auto on")
             Dalamud.Log("[FATE] TurnOffAoes /rotation auto on")
         elseif RotationPlugin == "BMR" then
-            IPC.BossMod.SetActive(RotationSingleTargetPreset)
+            ActivateBossModPreset(RotationSingleTargetPreset, RotationAoePreset, RotationHoldBuffPreset, "single")
         elseif RotationPlugin == "VBM" then
-            IPC.BossMod.SetActive(RotationSingleTargetPreset)
+            ActivateBossModPreset(RotationSingleTargetPreset, RotationAoePreset, RotationHoldBuffPreset, "single")
         end
         AoesOn = false
         RsrDynamicSingleApplied = false
@@ -5038,12 +5077,10 @@ function TurnOffAoes()
 end
 
 function TurnOffRaidBuffs()
-    if AoesOn then
-        if RotationPlugin == "BMR" then
-            IPC.BossMod.SetActive(RotationHoldBuffPreset)
-        elseif RotationPlugin == "VBM" then
-            IPC.BossMod.SetActive(RotationHoldBuffPreset)
-        end
+    if RotationPlugin == "BMR" then
+        ActivateBossModPreset(RotationHoldBuffPreset, RotationSingleTargetPreset, RotationAoePreset, "hold-buffs")
+    elseif RotationPlugin == "VBM" then
+        ActivateBossModPreset(RotationHoldBuffPreset, RotationSingleTargetPreset, RotationAoePreset, "hold-buffs")
     end
 end
 
@@ -5084,9 +5121,9 @@ function TurnOnCombatMods(rotationMode)
                 Dalamud.Log("[FATE] TurnOnCombatMods /rotation auto on")
             end
         elseif RotationPlugin == "BMR" then
-            IPC.BossMod.SetActive(RotationAoePreset)
+            ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "combat-on")
         elseif RotationPlugin == "VBM" then
-            IPC.BossMod.SetActive(RotationAoePreset)
+            ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "combat-on")
         elseif RotationPlugin == "Wrath" then
             yield("/wrath auto on")
         end
@@ -7449,6 +7486,7 @@ function FateFarming:Run()
     VnavReadyCheckWarned                  = false
     NativeItemCommandDisabled             = true
     NativeItemCommandWarned               = false
+    BossModPresetMissingWarned            = false
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
@@ -7542,10 +7580,19 @@ function FateFarming:Run()
     RSRAoeType                 = "Full" --Options: Cleave/Full/Off
 
     -- For BMR/VBM/Wrath rotation plugins
-    RotationSingleTargetPreset = Config.Get("Single Target Rotation")  --Preset name with single target strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
-    RotationAoePreset          = Config.Get("AoE Rotation")            --Preset with AOE + Buff strategies.
-    RotationHoldBuffPreset     = Config.Get("Hold Buff Rotation")      --Preset to hold 2min burst when progress gets to seleted %
+    RotationSingleTargetPreset = NormalizePresetName(Config.Get("Single Target Rotation")) --Preset name with single target strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
+    RotationAoePreset          = NormalizePresetName(Config.Get("AoE Rotation"))            --Preset with AOE + Buff strategies.
+    RotationHoldBuffPreset     = NormalizePresetName(Config.Get("Hold Buff Rotation"))      --Preset to hold 2min burst when progress gets to seleted %
     PercentageToHoldBuff       = Config.Get("Percentage to Hold Buff") --Ideally youll want to make full use of your buffs, higher than 70% will still waste a few seconds if progress is too fast.
+    if RotationPlugin == "BMR" or RotationPlugin == "VBM" then
+        RotationAoePreset = SelectPresetName(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset)
+        RotationSingleTargetPreset = SelectPresetName(RotationSingleTargetPreset, RotationAoePreset, RotationHoldBuffPreset)
+        RotationHoldBuffPreset = SelectPresetName(RotationHoldBuffPreset, RotationSingleTargetPreset, RotationAoePreset)
+        if RotationAoePreset == "" then
+            yield(
+                "/echo [FATE] Warning: AoE/Single/Hold preset are all empty. BMR/VBM actions (including defensives) can become unstable.")
+        end
+    end
 
     -- Dodge plugin
     local dodgeConfig          = string.lower(Config.Get("Dodging Plugin")) -- Options: Any / BossModReborn / BossMod / None
