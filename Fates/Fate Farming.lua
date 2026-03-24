@@ -3469,10 +3469,73 @@ function RandomAdjustCoordinates(position, maxDistance)
     return Vector3(randomX, randomY, randomZ)
 end
 
+function TryReadAetheryteBoolean(aetheryte, memberName)
+    if aetheryte == nil or memberName == nil or memberName == "" then
+        return nil
+    end
+
+    local okValue, value = pcall(function()
+        return aetheryte[memberName]
+    end)
+    if okValue and type(value) == "boolean" then
+        return value
+    end
+
+    if okValue and type(value) == "function" then
+        local okCallDirect, callDirect = pcall(function()
+            return value()
+        end)
+        if okCallDirect and type(callDirect) == "boolean" then
+            return callDirect
+        end
+        local okCallSelf, callSelf = pcall(function()
+            return value(aetheryte)
+        end)
+        if okCallSelf and type(callSelf) == "boolean" then
+            return callSelf
+        end
+    end
+
+    local okProp, prop = pcall(function()
+        local objType = aetheryte.GetType and aetheryte:GetType() or nil
+        if objType == nil then
+            return nil
+        end
+        return objType:GetProperty(memberName)
+    end)
+    if okProp and prop ~= nil then
+        local okPropValue, propValue = pcall(function()
+            return prop:GetValue(aetheryte, nil)
+        end)
+        if okPropValue and type(propValue) == "boolean" then
+            return propValue
+        end
+    end
+
+    return nil
+end
+
+function IsAetheryteAttunedSafe(aetheryte)
+    local candidateMembers = {
+        "IsAetheryteUnlocked",
+        "IsAttuned",
+        "IsUnlocked",
+        "Unlocked"
+    }
+    for _, memberName in ipairs(candidateMembers) do
+        local value = TryReadAetheryteBoolean(aetheryte, memberName)
+        if value ~= nil then
+            return value == true
+        end
+    end
+    -- Unknown object shape: keep legacy behavior.
+    return true
+end
+
 function GetAetherytesInZone(zoneId)
     local aetherytesInZone = {}
     for _, aetheryte in ipairs(Svc.AetheryteList) do
-        if aetheryte.TerritoryId == zoneId then
+        if aetheryte.TerritoryId == zoneId and IsAetheryteAttunedSafe(aetheryte) then
             table.insert(aetherytesInZone, aetheryte)
         end
     end
@@ -3746,22 +3809,26 @@ local function ResolveTeleportDestination(name)
     end
 
     for _, aetheryte in ipairs(Svc.AetheryteList) do
-        local aetheryteName = GetAetheryteName(aetheryte)
-        if normalizedCandidates[NormalizeTeleportName(aetheryteName)] then
-            return aetheryteName, aetheryte.AetheryteId
+        if IsAetheryteAttunedSafe(aetheryte) == true then
+            local aetheryteName = GetAetheryteName(aetheryte)
+            if normalizedCandidates[NormalizeTeleportName(aetheryteName)] then
+                return aetheryteName, aetheryte.AetheryteId
+            end
         end
     end
 
     for _, aetheryte in ipairs(Svc.AetheryteList) do
-        local aetheryteName = GetAetheryteName(aetheryte)
-        local normalizedAetheryteName = NormalizeTeleportName(aetheryteName)
-        for normalizedCandidate, _ in pairs(normalizedCandidates) do
-            if normalizedAetheryteName ~= "" and normalizedCandidate ~= "" and (
-                    string.find(normalizedAetheryteName, normalizedCandidate, 1, true)
-                    or string.find(normalizedCandidate, normalizedAetheryteName, 1, true)
-                )
-            then
-                return aetheryteName, aetheryte.AetheryteId
+        if IsAetheryteAttunedSafe(aetheryte) == true then
+            local aetheryteName = GetAetheryteName(aetheryte)
+            local normalizedAetheryteName = NormalizeTeleportName(aetheryteName)
+            for normalizedCandidate, _ in pairs(normalizedCandidates) do
+                if normalizedAetheryteName ~= "" and normalizedCandidate ~= "" and (
+                        string.find(normalizedAetheryteName, normalizedCandidate, 1, true)
+                        or string.find(normalizedCandidate, normalizedAetheryteName, 1, true)
+                    )
+                then
+                    return aetheryteName, aetheryte.AetheryteId
+                end
             end
         end
     end
@@ -3777,6 +3844,29 @@ local function WaitForTeleportStart(timeoutSeconds)
             return true
         end
         yield("/wait 0.1")
+    end
+    return false
+end
+
+function WaitUntilTeleportUsable(timeoutSeconds)
+    local startWait = os.clock()
+    local timeout = tonumber(timeoutSeconds) or 6
+    while os.clock() - startWait < timeout do
+        local blocked = Svc.Condition[CharacterCondition.dead]
+            or Svc.Condition[CharacterCondition.inCombat]
+            or Svc.Condition[CharacterCondition.casting]
+            or Svc.Condition[CharacterCondition.betweenAreas]
+            or Svc.Condition[CharacterCondition.betweenAreasForDuty]
+            or Svc.Condition[CharacterCondition.boundByDuty34]
+            or Svc.Condition[CharacterCondition.boundByDuty56]
+            or Svc.Condition[CharacterCondition.occupied]
+            or Svc.Condition[CharacterCondition.occupiedInEvent]
+            or Svc.Condition[CharacterCondition.occupiedInQuestEvent]
+            or Svc.Condition[CharacterCondition.beingMoved]
+        if not blocked then
+            return true
+        end
+        yield("/wait 0.2")
     end
     return false
 end
@@ -3859,6 +3949,22 @@ local function TryNativeTeleportByPlaceName(destinationName)
     return false
 end
 
+function TryNativeTeleportById(destinationId)
+    if destinationId == nil then
+        return false
+    end
+    if Actions == nil or type(Actions.Teleport) ~= "function" then
+        return false
+    end
+    local ok = pcall(function()
+        Actions.Teleport(destinationId)
+    end)
+    if not ok then
+        return false
+    end
+    return WaitForTeleportStart(3.5)
+end
+
 local function GetTeleportFailureEntry(destinationName)
     if TeleportFailureByDestination == nil then
         TeleportFailureByDestination = {}
@@ -3905,6 +4011,11 @@ end
 
 function TeleportTo(aetheryteName)
     AcceptTeleportOfferLocation(aetheryteName)
+    if IPC ~= nil and IPC.vnavmesh ~= nil and (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+        yield("/vnav stop")
+        yield("/wait 0.2")
+    end
+    WaitUntilTeleportUsable(6)
     local blocked, blockEntry = IsTeleportDestinationBlocked(aetheryteName)
     if blocked then
         local now = os.clock()
@@ -3945,11 +4056,17 @@ function TeleportTo(aetheryteName)
         end
     end
 
+    if not teleportStarted and resolvedId ~= nil then
+        teleportStarted = TryNativeTeleportById(resolvedId)
+    end
+
     if not teleportStarted then
         for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
-            if TryLifestreamTeleportByPlaceName(candidateName) then
-                teleportStarted = true
-                break
+            if resolvedId == nil then
+                if TryLifestreamTeleportByPlaceName(candidateName) then
+                    teleportStarted = true
+                    break
+                end
             end
             if TryNativeTeleportByPlaceName(candidateName) then
                 teleportStarted = true
