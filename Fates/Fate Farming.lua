@@ -1307,7 +1307,15 @@ function GetLangTable(lang)
                 ["aetheryte"] = "エーテライト",
                 ["extract materia"] = "マテリア精製",
                 ["teleport"] = "テレポート",
-                ["sprint"] = "スプリント"
+                ["sprint"] = "スプリント",
+                ["Shield Lob"] = "シールドロブ",
+                ["Tomahawk"] = "トマホーク",
+                ["Unmend"] = "アンメンド",
+                ["Lightning Shot"] = "サンダーバレット",
+                ["Fast Blade"] = "ファストブレード",
+                ["Heavy Swing"] = "ヘヴィスウィング",
+                ["Hard Slash"] = "ハードスラッシュ",
+                ["Keen Edge"] = "キーンエッジ"
             },
             bitColorExchangeData = {
                 {
@@ -1342,7 +1350,15 @@ function GetLangTable(lang)
                 ["aetheryte"] = "aetheryte",
                 ["extract materia"] = "Materia Extraction",
                 ["teleport"] = "Teleport",
-                ["sprint"] = "Sprint"
+                ["sprint"] = "Sprint",
+                ["Shield Lob"] = "Shield Lob",
+                ["Tomahawk"] = "Tomahawk",
+                ["Unmend"] = "Unmend",
+                ["Lightning Shot"] = "Lightning Shot",
+                ["Fast Blade"] = "Fast Blade",
+                ["Heavy Swing"] = "Heavy Swing",
+                ["Hard Slash"] = "Hard Slash",
+                ["Keen Edge"] = "Keen Edge"
             },
             bitColorExchangeData = {
                 {
@@ -3248,9 +3264,7 @@ local function TryPrefetchNextFate()
     if progress == nil or progress < FatePrefetchProgressThreshold then
         return
     end
-    if Svc.Condition[CharacterCondition.inCombat]
-        or Svc.Condition[CharacterCondition.casting]
-        or Svc.Condition[CharacterCondition.mounted]
+    if Svc.Condition[CharacterCondition.mounted]
         or Svc.Condition[CharacterCondition.betweenAreas]
         or Svc.Condition[CharacterCondition.betweenAreasForDuty]
         or IsLifestreamBusySafe()
@@ -5227,6 +5241,102 @@ function GetPlayerHitboxRadius()
     end
 end
 
+function TryUseActionOnTarget(actionName)
+    if actionName == nil or actionName == "" then
+        return false
+    end
+    if Svc.Targets.Target == nil or Svc.Targets.Target.IsDead then
+        return false
+    end
+
+    local actionText = tostring(actionName)
+    local cmd = nil
+    if string.find(actionText, " ", 1, true) ~= nil then
+        cmd = '/ac "' .. actionText .. '" <t>'
+    else
+        cmd = "/ac " .. actionText .. " <t>"
+    end
+    yield(cmd)
+    return true
+end
+
+function GetCombatOpenActionCandidates()
+    if Player.Job == nil then
+        return {}
+    end
+
+    local jobId = Player.Job.Id
+    if jobId == ClassList.pld.classId then
+        return {
+            LANG.actions["Shield Lob"] or "Shield Lob",
+            LANG.actions["Fast Blade"] or "Fast Blade"
+        }
+    elseif jobId == ClassList.war.classId then
+        return {
+            LANG.actions["Tomahawk"] or "Tomahawk",
+            LANG.actions["Heavy Swing"] or "Heavy Swing"
+        }
+    elseif jobId == ClassList.drk.classId then
+        return {
+            LANG.actions["Unmend"] or "Unmend",
+            LANG.actions["Hard Slash"] or "Hard Slash"
+        }
+    elseif jobId == ClassList.gnb.classId then
+        return {
+            LANG.actions["Lightning Shot"] or "Lightning Shot",
+            LANG.actions["Keen Edge"] or "Keen Edge"
+        }
+    end
+
+    return {}
+end
+
+function TryForceCombatOpenOnTarget(now, targetDistanceFlat)
+    if CurrentFate == nil or Svc.Condition[CharacterCondition.inCombat] then
+        return false
+    end
+    if Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.mounted]
+        or Svc.Condition[CharacterCondition.flying]
+    then
+        return false
+    end
+    if Svc.Targets.Target == nil or Svc.Targets.Target.IsDead then
+        return false
+    end
+    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
+        return false
+    end
+
+    local openRange = CombatOpenActionMaxRange or 20.5
+    if targetDistanceFlat == nil or targetDistanceFlat > openRange then
+        return false
+    end
+    if now - (CombatOpenLastActionAt or 0) < (CombatOpenActionRetrySeconds or 0.65) then
+        return false
+    end
+
+    local candidates = GetCombatOpenActionCandidates()
+    if #candidates == 0 then
+        return false
+    end
+
+    local sequence = (CombatOpenActionSequence or 0) + 1
+    CombatOpenActionSequence = sequence
+    local index = ((sequence - 1) % #candidates) + 1
+    local selectedAction = candidates[index]
+    if selectedAction == nil or selectedAction == "" then
+        return false
+    end
+
+    local used = TryUseActionOnTarget(selectedAction)
+    if used then
+        CombatOpenLastActionAt = now
+        Dalamud.Log("[FATE] Combat opener attempted: " .. tostring(selectedAction))
+    end
+    return used
+end
+
 function NormalizePresetName(name)
     local value = tostring(name or "")
     value = value:gsub("^%s+", "")
@@ -6190,13 +6300,15 @@ function DoFate()
         if CombatOpenTargetSignature ~= targetSignature then
             CombatOpenTargetSignature = targetSignature
             CombatOpenTargetSince = now
+            CombatOpenActionSequence = 0
         elseif (CombatOpenTargetSince or 0) <= 0 then
             CombatOpenTargetSince = now
         end
 
         local engageRange = math.max(2.5, MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius() + 0.5)
         local targetDistanceFlat = GetDistanceToTargetFlat()
-        local shouldForceOpen = targetDistanceFlat <= engageRange
+        local openActionRange = CombatOpenActionMaxRange or 20.5
+        local shouldForceOpen = targetDistanceFlat <= math.max(engageRange, openActionRange)
             and now - (CombatOpenTargetSince or now) >= (CombatOpenNoCombatGraceSeconds or 1.3)
             and now - (CombatOpenLastPulseAt or 0) >= (CombatOpenPulseSeconds or 1.4)
         if shouldForceOpen then
@@ -6211,6 +6323,9 @@ function DoFate()
                     WrathAutoEnabled = true
                 end
                 MarkWrathAutoPulse(now)
+            end
+            if TryForceCombatOpenOnTarget(now, targetDistanceFlat) then
+                CombatOpenTargetSince = now
             end
 
             local retargetAfter = CombatOpenRetargetSeconds or 2.2
@@ -6237,6 +6352,7 @@ function DoFate()
         CombatOpenTargetSignature = nil
         CombatOpenTargetSince = 0
         CombatOpenLastPulseAt = 0
+        CombatOpenActionSequence = 0
     end
 
     local meleeOrTank = Player.Job and (Player.Job.IsMeleeDPS or Player.Job.IsTank)
@@ -6339,6 +6455,9 @@ function DoFate()
 
     MaybeRearmWrathAuto()
 
+    -- Prefetch next candidate while current fate is still ongoing (even in combat/cast state).
+    TryPrefetchNextFate()
+
     -- do not interrupt casts to path towards enemies
     if Svc.Condition[CharacterCondition.casting] then
         return
@@ -6346,7 +6465,6 @@ function DoFate()
 
     --hold buff thingy
     local progress = fateProgress
-    TryPrefetchNextFate()
     if progress ~= nil and progress >= PercentageToHoldBuff then
         TurnOffRaidBuffs()
     end
@@ -6753,6 +6871,8 @@ function ResetTargetAcquireWatchdog()
     CombatOpenTargetSignature = nil
     CombatOpenTargetSince = 0
     CombatOpenLastPulseAt = 0
+    CombatOpenLastActionAt = 0
+    CombatOpenActionSequence = 0
 end
 
 function ResetMovementStuckState()
@@ -7912,9 +8032,9 @@ function FateFarming:Run()
     PreferredHighLevelZonePenaltyDecay    = 0.62
     SkipLevelSyncForHighLevelFates        = false
     LevelSyncBypassMinFateLevel           = 96
-    FatePrefetchProgressThreshold         = FastCombatPacing and 65 or 80
-    FatePrefetchIntervalSeconds           = FastCombatPacing and 2.5 or 8
-    FatePrefetchTtlSeconds                = 25
+    FatePrefetchProgressThreshold         = FastCombatPacing and 45 or 70
+    FatePrefetchIntervalSeconds           = FastCombatPacing and 0.9 or 3.5
+    FatePrefetchTtlSeconds                = 30
     MainLoopWaitSeconds                   = FastCombatPacing and 0.14 or 0.25
     FastNoFateZoneSwitchCooldownSeconds   = FastCombatPacing and 0.8 or 4
     CombatStartBoostDurationSeconds       = 12
@@ -7958,8 +8078,10 @@ function FateFarming:Run()
     PreferUnengagedFateTargets            = true
     TargetAcquireRetrySeconds             = FastCombatPacing and 0.55 or 0.9
     TargetAcquireStopNavSeconds           = FastCombatPacing and 1.6 or 2.4
-    CombatOpenNoCombatGraceSeconds        = FastCombatPacing and 0.8 or 1.3
-    CombatOpenPulseSeconds                = FastCombatPacing and 0.8 or 1.4
+    CombatOpenNoCombatGraceSeconds        = FastCombatPacing and 0.35 or 0.8
+    CombatOpenPulseSeconds                = FastCombatPacing and 0.45 or 0.8
+    CombatOpenActionRetrySeconds          = FastCombatPacing and 0.55 or 0.9
+    CombatOpenActionMaxRange              = 20.5
     CombatOpenRetargetSeconds             = FastCombatPacing and 1.6 or 2.2
     MeleeApproachHardRecoverSeconds       = FastCombatPacing and 4.8 or 6.5
     MeleeApproachForceGapDistance         = FastCombatPacing and 6 or 8
@@ -8053,6 +8175,8 @@ function FateFarming:Run()
     CombatOpenTargetSignature             = nil
     CombatOpenTargetSince                 = 0
     CombatOpenLastPulseAt                 = 0
+    CombatOpenLastActionAt                = 0
+    CombatOpenActionSequence              = 0
     MeleeEngageTargetSignature            = nil
     MeleeEngageStartAt                    = 0
     MeleeEngageLastMoveAt                 = 0
