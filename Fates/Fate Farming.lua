@@ -1482,7 +1482,29 @@ function NeedsLevelSyncForFate(fate)
         return false
     end
     local maxLevel = GetFateMaxLevelValue(fate, nil)
-    return maxLevel ~= nil and Player.Job and maxLevel < Player.Job.Level
+    if maxLevel == nil or Player.Job == nil then
+        return false
+    end
+    if SkipLevelSyncForHighLevelFates == true then
+        local bypassMinLevel = tonumber(LevelSyncBypassMinFateLevel) or 96
+        if maxLevel >= bypassMinLevel then
+            return false
+        end
+    end
+    return maxLevel < Player.Job.Level
+end
+
+function IsHighPriorityFateLevel(fate)
+    local currentZoneId = SelectedZone and SelectedZone.zoneId or Svc.ClientState.TerritoryType
+    if currentZoneId == 1191 or currentZoneId == 1192 then
+        return true
+    end
+    local maxLevel = GetFateMaxLevelValue(fate, nil)
+    if maxLevel == nil then
+        return false
+    end
+    local minPriorityLevel = tonumber(HighLevelFatePriorityMinLevel) or 96
+    return maxLevel >= minPriorityLevel
 end
 
 function GetCurrentFateMoveBoundaryBuffer()
@@ -2912,6 +2934,10 @@ function RecordZoneUnresponsiveSkip(zoneId, reason)
     end
 end
 
+local function IsPreferredHighLevelZone(zoneId)
+    return zoneId == 1191 or zoneId == 1192 -- Heritage Found / Living Memory
+end
+
 function GetBestDawntrailZoneId(currentZoneId)
     if DynamicZoneSelectionEnabled ~= true then
         return nil
@@ -2956,6 +2982,18 @@ function GetBestDawntrailZoneId(currentZoneId)
                 score = activityScore + completionScore + speedScore + recencyBonus - noEligiblePenalty -
                     unresponsivePenalty
             end
+        end
+
+        if PreferredHighLevelZoneBiasEnabled == true and IsPreferredHighLevelZone(zoneId) then
+            local bonus = tonumber(PreferredHighLevelZoneScoreBonus) or 2.4
+            if entry ~= nil then
+                local noEligibleCount = entry.noEligibleCount or 0
+                if noEligibleCount > 0 then
+                    local decay = tonumber(PreferredHighLevelZonePenaltyDecay) or 0.6
+                    bonus = bonus * math.max(0.2, decay ^ noEligibleCount)
+                end
+            end
+            score = score + bonus
         end
 
         if zoneId == currentZoneId then
@@ -3238,7 +3276,12 @@ function SelectNextFateHelper(tempFate, nextFate)
 
     -- Evaluate based on priority (Loop through list return first non-equal priority)
     for _, criteria in ipairs(FatePriority) do
-        if criteria == "Progress" then
+        if criteria == "HighLevel" then
+            local tempIsHighLevel = IsHighPriorityFateLevel(tempFate)
+            local nextIsHighLevel = IsHighPriorityFateLevel(nextFate)
+            if tempIsHighLevel and not nextIsHighLevel then return tempFate end
+            if nextIsHighLevel and not tempIsHighLevel then return nextFate end
+        elseif criteria == "Progress" then
             Dalamud.Log("[FATE] Comparing progress: " ..
                 tostring(tempProgress) .. " vs " .. tostring(nextProgress))
             if tempProgress > nextProgress then return tempFate end
@@ -5423,7 +5466,7 @@ function DoFate()
 
     local maxLevel = GetFateMaxLevelValue(CurrentFate, nil)
     local inCurrentFate = InActiveFate()
-    local needsLevelSync = maxLevel ~= nil and Player.Job and maxLevel < Player.Job.Level and not Player.IsLevelSynced
+    local needsLevelSync = NeedsLevelSyncForFate(CurrentFate) and not Player.IsLevelSynced
     if needsLevelSync then
         local radius = GetFateRadiusValue(CurrentFate, nil)
         local distanceToFateCenter = GetDistanceToPoint(CurrentFate.position)
@@ -7499,7 +7542,13 @@ function FateFarming:Run()
     StuckCheckIntervalSeconds        = Config.Get("Stuck check interval (secs)")
     StuckMovementThreshold           = Config.Get("Stuck movement threshold")
     PrintSessionSummaryEnabled       = Config.Get("Print session summary?")
-    FatePriority                     = { "DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
+    HighLevelFatePriorityEnabled          = true
+    HighLevelFatePriorityMinLevel         = 96
+    if HighLevelFatePriorityEnabled then
+        FatePriority = { "HighLevel", "DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
+    else
+        FatePriority = { "DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
+    end
     MeleeDist                        = Config.Get("Max melee distance")
     RangedDist                       = Config.Get("Max ranged distance")
     HitboxBuffer                     = 0.5
@@ -7552,6 +7601,11 @@ function FateFarming:Run()
         PrintSessionSummaryEnabled = true
     end
     FateExpectedScoreEnabled              = true
+    PreferredHighLevelZoneBiasEnabled     = true
+    PreferredHighLevelZoneScoreBonus      = FastCombatPacing and 2.8 or 2.4
+    PreferredHighLevelZonePenaltyDecay    = 0.62
+    SkipLevelSyncForHighLevelFates        = true
+    LevelSyncBypassMinFateLevel           = 96
     FatePrefetchProgressThreshold         = 80
     FatePrefetchIntervalSeconds           = FastCombatPacing and 2.5 or 8
     FatePrefetchTtlSeconds                = 25
