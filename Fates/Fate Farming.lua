@@ -5319,7 +5319,7 @@ function HandleUnexpectedCombat()
         TurnOffCombatMods()
         State = CharacterState.ready
         Dalamud.Log("[FATE] State Change: Ready")
-        local randomWait = (math.floor(math.random() * MaxWait * 1000) / 1000) + MinWait -- truncated to 3 decimal places
+        local randomWait = GetPostFateWaitSeconds()
         yield("/wait " .. randomWait)
         return
     end
@@ -5739,8 +5739,7 @@ function DoFate()
         else
             DidFate = true
             Dalamud.Log("[FATE] No continuation for " .. CurrentFate.fateName)
-            local randomWait = (math.floor(math.random() * (math.max(0, MaxWait - 3)) * 1000) / 1000) +
-                MinWait -- truncated to 3 decimal places
+            local randomWait = GetPostFateWaitSeconds()
             yield("/wait " .. randomWait)
             TurnOffCombatMods()
             ForlornMarked = false
@@ -7299,6 +7298,21 @@ function SetStopReason(reason)
     end
 end
 
+function GetPostFateWaitSeconds()
+    local minWait = tonumber(MinWait) or 0
+    local maxWait = tonumber(MaxWait) or minWait
+    if maxWait < minWait then
+        minWait, maxWait = maxWait, minWait
+    end
+    minWait = math.max(0, minWait)
+    maxWait = math.max(0, maxWait)
+    if maxWait <= minWait then
+        return minWait
+    end
+    local roll = minWait + (math.random() * (maxWait - minWait))
+    return math.floor(roll * 1000) / 1000
+end
+
 function PrintSessionSummary()
     if PrintSessionSummaryEnabled ~= true then
         return
@@ -7493,8 +7507,9 @@ function FateFarming:Run()
     end
     FateExpectedScoreEnabled              = true
     FatePrefetchProgressThreshold         = 80
-    FatePrefetchIntervalSeconds           = 8
+    FatePrefetchIntervalSeconds           = FastCombatPacing and 2.5 or 8
     FatePrefetchTtlSeconds                = 25
+    MainLoopWaitSeconds                   = FastCombatPacing and 0.18 or 0.25
     CombatStartBoostDurationSeconds       = 12
     TeleportHysteresisEnterGain           = 70
     TeleportHysteresisExitGain            = 25
@@ -7731,8 +7746,8 @@ function FateFarming:Run()
     end
 
     --Post Fate Settings
-    MinWait                        = 3     --Min number of seconds it should wait until mounting up for next fate.
-    MaxWait                        = 10    --Max number of seconds it should wait until mounting up for next fate.
+    MinWait                        = FastCombatPacing and 0.35 or 3 --Min number of seconds it should wait until mounting up for next fate.
+    MaxWait                        = FastCombatPacing and 1.2 or 10  --Max number of seconds it should wait until mounting up for next fate.
     --Actual wait time will be a randomly generated number between MinWait and MaxWait.
     DownTimeWaitAtNearestAetheryte = false --When waiting for fates to pop, should you fly to the nearest Aetheryte and wait there?
     MoveToRandomSpot               = false --Randomly fly to spot while waiting on fate.
@@ -8134,7 +8149,7 @@ function FateFarming:Run()
         then
             State()
         end
-        yield("/wait 0.25")
+        yield("/wait " .. tostring(MainLoopWaitSeconds or 0.25))
     end
     if SessionStopReason == nil then
         SetStopReason("StopScript flag set")
