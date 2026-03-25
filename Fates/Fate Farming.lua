@@ -6477,11 +6477,11 @@ function DoFate()
         TurnOffRaidBuffs()
     end
 
-    local stopBeforeInchWait = FastCombatPacing and 0.25 or 5.002
-    local inchCloserWait = FastCombatPacing and 0.25 or 1
-    local preApproachWaitOutOfCombat = FastCombatPacing and 0.8 or 5.003
-    local preApproachWaitInCombat = FastCombatPacing and 0.8 or 5.004
-    local targetStickWait = FastCombatPacing and 0.2 or 1
+    local stopBeforeInchWait = FastCombatPacing and 0.12 or 5.002
+    local inchCloserWait = FastCombatPacing and 0.12 or 1
+    local preApproachWaitOutOfCombat = FastCombatPacing and 0.45 or 5.003
+    local preApproachWaitInCombat = FastCombatPacing and 0.45 or 5.004
+    local targetStickWait = FastCombatPacing and 0.1 or 1
 
     -- pathfind closer if enemies are too far
     if not Svc.Condition[CharacterCondition.inCombat] then
@@ -8043,28 +8043,28 @@ function FateFarming:Run()
     FatePrefetchProgressThreshold         = FastCombatPacing and 45 or 70
     FatePrefetchIntervalSeconds           = FastCombatPacing and 0.9 or 3.5
     FatePrefetchTtlSeconds                = 30
-    MainLoopWaitSeconds                   = FastCombatPacing and 0.14 or 0.25
+    MainLoopWaitSeconds                   = FastCombatPacing and 0.11 or 0.25
     FastNoFateZoneSwitchCooldownSeconds   = FastCombatPacing and 0.8 or 4
     CombatStartBoostDurationSeconds       = 12
     TeleportHysteresisEnterGain           = FastCombatPacing and 52 or 70
     TeleportHysteresisExitGain            = FastCombatPacing and 16 or 25
-    NoCombatRecoveryRetargetRatio         = 0.35
-    NoCombatRecoveryRepositionRatio       = 0.7
+    NoCombatRecoveryRetargetRatio         = FastCombatPacing and 0.25 or 0.35
+    NoCombatRecoveryRepositionRatio       = FastCombatPacing and 0.55 or 0.7
     MeleeApproachRetargetSeconds          = FastCombatPacing and 3.2 or 5
     MeleeApproachMovePulseSeconds         = FastCombatPacing and 0.55 or 1.0
-    MountTravelMinDistance                = FastCombatPacing and 16 or 24
-    MountToggleCooldownSeconds            = FastCombatPacing and 1.45 or 2.2
-    MountRetryCooldownSeconds             = FastCombatPacing and 0.65 or 1.2
-    DismountRetryCooldownSeconds          = FastCombatPacing and 0.45 or 0.8
+    MountTravelMinDistance                = FastCombatPacing and 20 or 24
+    MountToggleCooldownSeconds            = FastCombatPacing and 1.25 or 2.2
+    MountRetryCooldownSeconds             = FastCombatPacing and 0.45 or 1.2
+    DismountRetryCooldownSeconds          = FastCombatPacing and 0.35 or 0.8
     DynamicZoneSelectionEnabled           = true
     ZoneNoFateBlockSeconds                = 180
     UnresponsiveLevelSyncEarlySkipSeconds = 16
-    UnresponsiveNoTargetSkipSeconds       = 10
+    UnresponsiveNoTargetSkipSeconds       = FastCombatPacing and 6 or 10
     UnresponsiveSkipRatio                 = 0.65
     FateResultSummaryWriteIntervalSeconds = 30
     MiddleDismountForceAfterSeconds       = 1.8
-    PreAcquireDistance                    = FastCombatPacing and 170 or 130
-    PreAcquireAttemptIntervalSeconds      = FastCombatPacing and 0.7 or 1.2
+    PreAcquireDistance                    = FastCombatPacing and 220 or 130
+    PreAcquireAttemptIntervalSeconds      = FastCombatPacing and 0.45 or 1.2
     FateTargetRadiusPadding               = 3
     FateMoveBoundaryBuffer                = 4
     FateHardBoundaryBuffer                = 14
@@ -8085,19 +8085,19 @@ function FateFarming:Run()
     DynamicAoeDisableStableSamples        = 3
     DynamicAoeMixedPackMinimumEnemies     = 2
     PreferUnengagedFateTargets            = true
-    TargetAcquireRetrySeconds             = FastCombatPacing and 0.55 or 0.9
-    TargetAcquireStopNavSeconds           = FastCombatPacing and 1.6 or 2.4
+    TargetAcquireRetrySeconds             = FastCombatPacing and 0.4 or 0.9
+    TargetAcquireStopNavSeconds           = FastCombatPacing and 1.2 or 2.4
     CombatOpenNoCombatGraceSeconds        = FastCombatPacing and 0.35 or 0.8
     CombatOpenPulseSeconds                = FastCombatPacing and 0.45 or 0.8
     CombatOpenActionRetrySeconds          = FastCombatPacing and 0.55 or 0.9
     CombatOpenActionMaxRange              = 20.5
-    CombatOpenRetargetSeconds             = FastCombatPacing and 1.6 or 2.2
+    CombatOpenRetargetSeconds             = FastCombatPacing and 1.2 or 2.2
     MeleeApproachHardRecoverSeconds       = FastCombatPacing and 4.8 or 6.5
     MeleeApproachForceGapDistance         = FastCombatPacing and 6 or 8
     MeleeApproachHardRecoverCooldown      = FastCombatPacing and 1.8 or 2.6
     WrathKeepAliveEnabled                 = true
-    WrathKeepAliveIntervalSeconds         = FastCombatPacing and 1.8 or 2.8
-    WrathStallRecoverySeconds             = FastCombatPacing and 2.8 or 4.2
+    WrathKeepAliveIntervalSeconds         = FastCombatPacing and 1.3 or 2.8
+    WrathStallRecoverySeconds             = FastCombatPacing and 2.0 or 4.2
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
