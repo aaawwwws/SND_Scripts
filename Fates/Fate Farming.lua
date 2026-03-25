@@ -3893,6 +3893,10 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
         return false
     end
     local escapedName = tostring(destinationName):gsub('"', "")
+    escapedName = escapedName:gsub("^%s+", "")
+    escapedName = escapedName:gsub("%s+$", "")
+    escapedName = escapedName:gsub("^　+", "")
+    escapedName = escapedName:gsub("　+$", "")
     if escapedName == "" then
         return false
     end
@@ -4003,8 +4007,12 @@ function TeleportTo(aetheryteName)
 
     local resolvedName, resolvedId = ResolveTeleportDestination(aetheryteName)
     local teleportStarted = false
+    local attemptedById = false
+    local attemptedByActionId = false
+    local attemptedByLiName = false
 
     if resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Teleport) == "function" then
+        attemptedById = true
         local ok = pcall(function()
             IPC.Lifestream.Teleport(resolvedId, 0)
         end)
@@ -4014,16 +4022,16 @@ function TeleportTo(aetheryteName)
     end
 
     if not teleportStarted and resolvedId ~= nil then
+        attemptedByActionId = true
         teleportStarted = TryNativeTeleportById(resolvedId)
     end
 
     if not teleportStarted then
         for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
-            if resolvedId == nil then
-                if TryLifestreamTeleportByPlaceName(candidateName) then
-                    teleportStarted = true
-                    break
-                end
+            attemptedByLiName = true
+            if TryLifestreamTeleportByPlaceName(candidateName) then
+                teleportStarted = true
+                break
             end
         end
     end
@@ -4032,6 +4040,8 @@ function TeleportTo(aetheryteName)
         local failureEntry = MarkTeleportFailure(aetheryteName)
         local msg = "[FATE] Teleport failed: destination not found or cast did not start (" ..
             tostring(aetheryteName) .. ")"
+        msg = msg .. " | paths id/action/li = " ..
+            tostring(attemptedById) .. "/" .. tostring(attemptedByActionId) .. "/" .. tostring(attemptedByLiName)
         if failureEntry ~= nil and failureEntry.count ~= nil and failureEntry.count >= 3 then
             local blockedFor = math.max(1, math.floor((failureEntry.blockedUntil or os.clock()) - os.clock()))
             msg = msg .. " | too many failures, blocking for " .. tostring(blockedFor) .. "s"
