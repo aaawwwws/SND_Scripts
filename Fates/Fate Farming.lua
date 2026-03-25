@@ -6204,7 +6204,10 @@ function DoFate()
             and now - (CombatOpenLastPulseAt or 0) >= (CombatOpenPulseSeconds or 1.4)
         if shouldForceOpen then
             CombatOpenLastPulseAt = now
-            yield("/attack")
+            if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+                yield("/vnav stop")
+            end
+            MoveToTargetHitbox()
             if RotationPlugin == "Wrath" then
                 if WrathAutoEnabled ~= true then
                     yield("/wrath auto")
