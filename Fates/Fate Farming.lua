@@ -6206,7 +6206,22 @@ function Ready()
 
     if NextFate == nil then
         local hasInstances = GetZoneInstance() > 0
-        if AutoTeleportToNextZone and not StayOnCurrentMapOnly and not shouldWaitForBonusBuff and not CompanionScriptMode then
+        local canAutoSwitchZone = AutoTeleportToNextZone
+            and not StayOnCurrentMapOnly
+            and not shouldWaitForBonusBuff
+            and not CompanionScriptMode
+        local preferFastZoneSwitch = canAutoSwitchZone and FastCombatPacing == true
+        if preferFastZoneSwitch then
+            local cooldown = FastNoFateZoneSwitchCooldownSeconds or 1.2
+            local switchedRecently = ZoneSelectionLastSwitchAt ~= nil and
+                (os.clock() - ZoneSelectionLastSwitchAt) < cooldown
+            if not switchedRecently then
+                Dalamud.Log("[FATE] No eligible fates. Fast pacing enabled, switching zone immediately.")
+                SelectNextDawntrailZone()
+                return
+            end
+        end
+        if canAutoSwitchZone then
             if EnableChangeInstance and hasInstances and SuccessiveInstanceChanges < NumberOfInstances then
                 State = CharacterState.changingInstances
                 Dalamud.Log("[FATE] State Change: ChangingInstances")
@@ -7510,6 +7525,7 @@ function FateFarming:Run()
     FatePrefetchIntervalSeconds           = FastCombatPacing and 2.5 or 8
     FatePrefetchTtlSeconds                = 25
     MainLoopWaitSeconds                   = FastCombatPacing and 0.18 or 0.25
+    FastNoFateZoneSwitchCooldownSeconds   = FastCombatPacing and 1.2 or 4
     CombatStartBoostDurationSeconds       = 12
     TeleportHysteresisEnterGain           = 70
     TeleportHysteresisExitGain            = 25
