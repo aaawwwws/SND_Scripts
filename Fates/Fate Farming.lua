@@ -3871,6 +3871,21 @@ local function WaitForTeleportStart(timeoutSeconds, destinationName)
     return false
 end
 
+local function WaitForLifestreamBusyClear(timeoutSeconds)
+    local timeout = tonumber(timeoutSeconds) or 8
+    local startWait = os.clock()
+    while os.clock() - startWait < timeout do
+        if not IsLifestreamBusySafe() then
+            return true
+        end
+        if Svc.Condition[CharacterCondition.casting] or Svc.Condition[CharacterCondition.betweenAreas] then
+            return true
+        end
+        yield("/wait 0.1")
+    end
+    return false
+end
+
 function WaitUntilTeleportUsable(timeoutSeconds)
     local startWait = os.clock()
     local timeout = tonumber(timeoutSeconds) or 6
@@ -3925,9 +3940,20 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
     end
 
     local liCommand = "/li tp " .. escapedName
-    yield(liCommand)
-    if WaitForTeleportStart(2.8, escapedName) then
-        return true
+    local attempts = 2
+    local startTimeout = FastCombatPacing and 5.0 or 6.5
+    for _ = 1, attempts do
+        yield(liCommand)
+        if WaitForTeleportStart(startTimeout, escapedName) then
+            return true
+        end
+        if IsLifestreamBusySafe() then
+            WaitForLifestreamBusyClear(8)
+            if Svc.Condition[CharacterCondition.casting] or Svc.Condition[CharacterCondition.betweenAreas] then
+                return true
+            end
+        end
+        yield("/wait 0.25")
     end
 
     return false
@@ -3946,7 +3972,8 @@ function TryNativeTeleportById(destinationId, destinationName)
     if not ok then
         return false
     end
-    return WaitForTeleportStart(3.5, destinationName)
+    local startTimeout = FastCombatPacing and 4.5 or 6.0
+    return WaitForTeleportStart(startTimeout, destinationName)
 end
 
 local function GetTeleportFailureEntry(destinationName)
@@ -4040,7 +4067,8 @@ function TeleportTo(aetheryteName)
             IPC.Lifestream.Teleport(resolvedId, 0)
         end)
         if ok then
-            teleportStarted = WaitForTeleportStart(3.5, (resolvedName ~= "" and resolvedName) or aetheryteName)
+            local startTimeout = FastCombatPacing and 4.5 or 6.0
+            teleportStarted = WaitForTeleportStart(startTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName)
         end
     end
 
@@ -4326,7 +4354,8 @@ function MoveToRandomNearbySpot(minDist, maxDist)
     local targetPos = Vector3(playerPos.X + dx, playerPos.Y + yOffset, playerPos.Z + dz)
     if not Svc.Condition[CharacterCondition.mounted] then
         Mount()
-        yield("/wait 2")
+        local randomMoveMountWait = FastCombatPacing and 0.35 or 2
+        yield("/wait " .. tostring(randomMoveMountWait))
     end
     IPC.vnavmesh.PathfindAndMoveTo(targetPos, true)
     yield("/echo [FATE] Moving to a random location while waiting...")
@@ -4366,12 +4395,14 @@ function Mount()
     else
         yield('/mount "' .. MountToUse)
     end
-    yield("/wait 0.5")
+    local mountCommandSettleWait = FastCombatPacing and 0.2 or 0.5
+    yield("/wait " .. tostring(mountCommandSettleWait))
 end
 
 function MountState()
     if Svc.Condition[CharacterCondition.mounted] then
-        yield("/wait 1") -- wait a second to make sure youre firmly on the mount
+        local postMountWait = FastCombatPacing and 0.12 or 1
+        yield("/wait " .. tostring(postMountWait)) -- short settle wait before movement state
         State = CharacterState.moveToFate
         Dalamud.Log("[FATE] State Change: MoveToFate")
     else
@@ -7534,9 +7565,9 @@ function FateFarming:Run()
     MeleeApproachRetargetSeconds          = 5
     MeleeApproachMovePulseSeconds         = 1.0
     MountTravelMinDistance                = 24
-    MountToggleCooldownSeconds            = 2.2
-    MountRetryCooldownSeconds             = 1.2
-    DismountRetryCooldownSeconds          = 0.8
+    MountToggleCooldownSeconds            = FastCombatPacing and 1.45 or 2.2
+    MountRetryCooldownSeconds             = FastCombatPacing and 0.65 or 1.2
+    DismountRetryCooldownSeconds          = FastCombatPacing and 0.45 or 0.8
     DynamicZoneSelectionEnabled           = true
     ZoneNoFateBlockSeconds                = 180
     UnresponsiveLevelSyncEarlySkipSeconds = 16
