@@ -3004,8 +3004,14 @@ function RecordZoneUnresponsiveSkip(zoneId, reason)
     end
 end
 
-local function IsPreferredHighLevelZone(zoneId)
-    return zoneId == 1191 or zoneId == 1192 -- Heritage Found / Living Memory
+local function GetPreferredHighLevelZoneBonusWeight(zoneId)
+    if zoneId == 1191 or zoneId == 1192 then -- Heritage Found / Living Memory
+        return 1.0
+    end
+    if zoneId == 1190 then -- Shaaloani (lower than the two guaranteed 96+ maps)
+        return 0.5
+    end
+    return 0
 end
 
 function GetBestDawntrailZoneId(currentZoneId)
@@ -3054,8 +3060,9 @@ function GetBestDawntrailZoneId(currentZoneId)
             end
         end
 
-        if PreferredHighLevelZoneBiasEnabled == true and IsPreferredHighLevelZone(zoneId) then
-            local bonus = tonumber(PreferredHighLevelZoneScoreBonus) or 2.4
+        local highLevelWeight = GetPreferredHighLevelZoneBonusWeight(zoneId)
+        if PreferredHighLevelZoneBiasEnabled == true and highLevelWeight > 0 then
+            local bonus = (tonumber(PreferredHighLevelZoneScoreBonus) or 2.4) * highLevelWeight
             if entry ~= nil then
                 local noEligibleCount = entry.noEligibleCount or 0
                 if noEligibleCount > 0 then
@@ -5250,7 +5257,7 @@ function TryUseActionOnTarget(actionName)
     end
 
     local actionText = tostring(actionName)
-    local cmd = '/ac "' .. actionText .. '" <t>'
+    local cmd = '/ac "' .. actionText .. '"'
     yield(cmd)
     return true
 end
