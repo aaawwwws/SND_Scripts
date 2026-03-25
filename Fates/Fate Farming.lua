@@ -5956,6 +5956,7 @@ function DoFate()
             TurnOffCombatMods()
             ForlornMarked = false
             MovingAnnouncementLock = false
+            ResetTargetAcquireWatchdog()
             State = CharacterState.ready
             Dalamud.Log("[FATE] State Change: Ready")
         end
@@ -6038,7 +6039,7 @@ function DoFate()
             ClearTarget()
         elseif not Svc.Targets.Target.IsDead then
             if not ForlornMarked then
-                yield("/enemysign attack1")
+                yield("/mk attack1 <t>")
                 if Echo == "all" then
                     yield("/echo Found Forlorn! <se.3>")
                 end
@@ -6084,7 +6085,7 @@ function DoFate()
             if finisherFocusMode and AttemptToTargetLowestHpFateEnemy(farPullRadius) then
                 TurnOffAoes()
             else
-                AttemptToTargetClosestFateEnemy(true, farPullRadius, combatStartBoostActive)
+                AttemptToTargetClosestFateEnemy(true, farPullRadius, true)
             end
         end
     end
@@ -6103,7 +6104,7 @@ function DoFate()
             end
         end
         if not gotTarget then
-            gotTarget = AttemptToTargetClosestFateEnemy(true, farPullRadius, combatStartBoostActive)
+            gotTarget = AttemptToTargetClosestFateEnemy(true, farPullRadius, true)
         end
         if not gotTarget then
             yield("/battletarget")
@@ -6116,6 +6117,56 @@ function DoFate()
         if wrappedTarget ~= nil and (wrappedTarget.FateId ~= CurrentFate.fateId
                 or not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer())) then
             ClearTarget()
+        end
+    end
+
+    if not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate then
+        local hasValidTarget = false
+        if Svc.Targets.Target ~= nil and not Svc.Targets.Target.IsDead then
+            local wrappedTarget = EntityWrapper(Svc.Targets.Target)
+            hasValidTarget = wrappedTarget ~= nil
+                and wrappedTarget.FateId == CurrentFate.fateId
+                and IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer())
+        end
+
+        local now = os.clock()
+        if hasValidTarget then
+            TargetAcquireNoTargetSince = 0
+        else
+            if (TargetAcquireNoTargetSince or 0) <= 0 then
+                TargetAcquireNoTargetSince = now
+            end
+
+            local canForceAcquire = not Svc.Condition[CharacterCondition.casting]
+                and not Svc.Condition[CharacterCondition.mounted]
+                and not Svc.Condition[CharacterCondition.flying]
+                and not Svc.Condition[CharacterCondition.betweenAreas]
+                and not Svc.Condition[CharacterCondition.betweenAreasForDuty]
+                and not Svc.Condition[CharacterCondition.occupied]
+                and not Svc.Condition[CharacterCondition.occupiedInEvent]
+                and not Svc.Condition[CharacterCondition.occupiedInQuestEvent]
+                and not Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
+                and not IsLifestreamBusySafe()
+            if canForceAcquire and now - (TargetAcquireLastAttemptAt or 0) >= (TargetAcquireRetrySeconds or 0.9) then
+                TargetAcquireLastAttemptAt = now
+                local reacquireRadius = math.max(
+                    (DynamicAoeCheckRadius or 30) + 12,
+                    (ClusterMoveRadius or 40),
+                    fateRadiusForAcquire + 24
+                )
+                local gotFallbackTarget = AttemptToTargetClosestFateEnemy(false, reacquireRadius, true)
+                if not gotFallbackTarget then
+                    yield("/battletarget")
+                end
+            end
+
+            local noTargetElapsed = now - (TargetAcquireNoTargetSince or now)
+            if Svc.Targets.Target == nil
+                and noTargetElapsed >= (TargetAcquireStopNavSeconds or 2.4)
+                and (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning())
+            then
+                yield("/vnav stop")
+            end
         end
     end
 
@@ -6243,7 +6294,10 @@ function DoFate()
                 end
             end
             if not gotTarget then
-                AttemptToTargetClosestFateEnemy(true, acquisitionRadius, combatStartBoostActive)
+                gotTarget = AttemptToTargetClosestFateEnemy(true, acquisitionRadius, true)
+            end
+            if not gotTarget then
+                yield("/battletarget")
             end
             yield("/wait " .. targetStickWait) -- short wait in case target doesnt stick
             if (Svc.Targets.Target == nil) and not Svc.Condition[CharacterCondition.casting] then
@@ -6501,6 +6555,7 @@ function Ready()
     ResetPreAcquireState()
     ResetDynamicAoeSwitchState()
     ResetMiddleDismountState()
+    ResetTargetAcquireWatchdog()
     if PrefetchedNextFateId ~= nil and CurrentFate ~= nil and PrefetchedNextFateId == CurrentFate.fateId then
         PrefetchedNextFateId = nil
         PrefetchedNextFateAt = 0
@@ -6514,6 +6569,7 @@ end
 
 function HandleDeath()
     CurrentFate = nil
+    ResetTargetAcquireWatchdog()
 
     if CombatModsOn then
         TurnOffCombatMods()
@@ -6583,6 +6639,11 @@ function ResetMiddleDismountState()
     MiddleDismountFateId = nil
     MiddleDismountStartedAt = 0
     MiddleDismountNoTargetSince = 0
+end
+
+function ResetTargetAcquireWatchdog()
+    TargetAcquireNoTargetSince = 0
+    TargetAcquireLastAttemptAt = 0
 end
 
 function ResetMovementStuckState()
@@ -7785,6 +7846,11 @@ function FateFarming:Run()
     DynamicAoeSwitchCooldownSeconds       = 1.6
     DynamicAoeEnableStableSamples         = 2
     DynamicAoeDisableStableSamples        = 3
+    TargetAcquireRetrySeconds             = FastCombatPacing and 0.55 or 0.9
+    TargetAcquireStopNavSeconds           = FastCombatPacing and 1.6 or 2.4
+    MeleeApproachHardRecoverSeconds       = FastCombatPacing and 4.8 or 6.5
+    MeleeApproachForceGapDistance         = FastCombatPacing and 6 or 8
+    MeleeApproachHardRecoverCooldown      = FastCombatPacing and 1.8 or 2.6
     WrathKeepAliveEnabled                 = true
     WrathKeepAliveIntervalSeconds         = FastCombatPacing and 1.8 or 2.8
     WrathStallRecoverySeconds             = FastCombatPacing and 2.8 or 4.2
@@ -7869,10 +7935,13 @@ function FateFarming:Run()
     NoCombatRecoveryFateId                = nil
     NoCombatRecoveryLastActionAt          = 0
     NoCombatNoTargetSince                 = 0
+    TargetAcquireNoTargetSince            = 0
+    TargetAcquireLastAttemptAt            = 0
     MeleeEngageTargetSignature            = nil
     MeleeEngageStartAt                    = 0
     MeleeEngageLastMoveAt                 = 0
     MeleeEngageNextRetargetAt             = 0
+    MeleeEngageLastHardRecoverAt          = 0
     PreAcquireFateId                      = nil
     PreAcquireLastAttemptAt               = 0
     DynamicAoeDecisionMode                = nil
