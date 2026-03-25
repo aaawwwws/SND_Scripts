@@ -3897,53 +3897,10 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
         return false
     end
 
-    if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.ExecuteCommand) == "function" then
-        local commands = {
-            'tp "' .. escapedName .. '"',
-            "tp " .. escapedName
-        }
-        for _, commandText in ipairs(commands) do
-            local ok = pcall(function()
-                IPC.Lifestream.ExecuteCommand(commandText)
-            end)
-            if ok and WaitForTeleportStart(2.8) then
-                return true
-            end
-        end
-    end
-
-    local liCommands = {
-        '/li tp "' .. escapedName .. '"',
-        "/li tp " .. escapedName
-    }
-    for _, liCommand in ipairs(liCommands) do
-        yield(liCommand)
-        if WaitForTeleportStart(2.8) then
-            return true
-        end
-    end
-
-    return false
-end
-
-local function TryNativeTeleportByPlaceName(destinationName)
-    if destinationName == nil or destinationName == "" then
-        return false
-    end
-    local escapedName = tostring(destinationName):gsub('"', "")
-    if escapedName == "" then
-        return false
-    end
-
-    local nativeCommands = {
-        '/tp "' .. escapedName .. '"',
-        "/tp " .. escapedName
-    }
-    for _, nativeCommand in ipairs(nativeCommands) do
-        yield(nativeCommand)
-        if WaitForTeleportStart(3.5) then
-            return true
-        end
+    local liCommand = "/li tp " .. escapedName
+    yield(liCommand)
+    if WaitForTeleportStart(2.8) then
+        return true
     end
 
     return false
@@ -4067,10 +4024,6 @@ function TeleportTo(aetheryteName)
                     teleportStarted = true
                     break
                 end
-            end
-            if TryNativeTeleportByPlaceName(candidateName) then
-                teleportStarted = true
-                break
             end
         end
     end
