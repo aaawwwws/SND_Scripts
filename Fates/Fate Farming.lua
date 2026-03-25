@@ -3699,6 +3699,19 @@ function TeleportToClosestAetheryteToFate(nextFate)
 end
 
 function AcceptTeleportOfferLocation(destinationAetheryte)
+    local destinationText = tostring(destinationAetheryte or "")
+    local function compact(value)
+        local normalized = string.lower(tostring(value or ""))
+        normalized = normalized:gsub('"', "")
+        normalized = normalized:gsub("%s+", "")
+        normalized = normalized:gsub("　", "")
+        normalized = normalized:gsub("・", "")
+        normalized = normalized:gsub("%-", "")
+        normalized = normalized:gsub("'", "")
+        normalized = normalized:gsub("’", "")
+        return normalized
+    end
+
     if AddonReady("_NotificationTelepo") then
         local location = GetNodeText("_NotificationTelepo", 3, 4)
         if type(location) == "string" then
@@ -3713,18 +3726,27 @@ function AcceptTeleportOfferLocation(destinationAetheryte)
         local teleportOfferMessage = GetNodeText("SelectYesno", 1, 2)
         if type(teleportOfferMessage) == "string" then
             local teleportOfferLocation = teleportOfferMessage:match("Accept Teleport to (.+)%?")
-            if teleportOfferLocation ~= nil then
-                if string.lower(teleportOfferLocation) == string.lower(destinationAetheryte) then
-                    yield("/callback SelectYesno true 0") -- accept teleport
-                    return
-                else
-                    Dalamud.Log("Offer for " ..
-                        teleportOfferLocation ..
-                        " and destination " .. destinationAetheryte .. " are not the same. Declining teleport.")
+            local shouldAccept = false
+            if destinationText ~= "" then
+                local destinationCompact = compact(destinationText)
+                if teleportOfferLocation ~= nil then
+                    shouldAccept = compact(teleportOfferLocation) == destinationCompact
                 end
+                if not shouldAccept then
+                    local messageCompact = compact(teleportOfferMessage)
+                    shouldAccept = (teleportOfferMessage:find(destinationText, 1, true) ~= nil)
+                        or (destinationCompact ~= "" and messageCompact:find(destinationCompact, 1, true) ~= nil)
+                end
+            else
+                local lowerMsg = string.lower(teleportOfferMessage)
+                shouldAccept = lowerMsg:find("teleport", 1, true) ~= nil
+                    or teleportOfferMessage:find("テレポ", 1, true) ~= nil
             end
-            yield("/callback SelectYesno true 2") -- decline teleport
-            return
+
+            if shouldAccept then
+                yield("/callback SelectYesno true 0") -- accept teleport
+                return
+            end
         end
     end
 end
@@ -3836,10 +3858,11 @@ local function ResolveTeleportDestination(name)
     return tostring(name or ""), nil
 end
 
-local function WaitForTeleportStart(timeoutSeconds)
+local function WaitForTeleportStart(timeoutSeconds, destinationName)
     local startWait = os.clock()
     local timeout = tonumber(timeoutSeconds) or 2
     while os.clock() - startWait < timeout do
+        AcceptTeleportOfferLocation(destinationName)
         if Svc.Condition[CharacterCondition.casting] or Svc.Condition[CharacterCondition.betweenAreas] then
             return true
         end
@@ -3881,7 +3904,7 @@ local function TryLocalAetheryteShortcut(destinationName)
                 return IPC.Lifestream.AethernetTeleport(candidateName)
             end)
             if ok and result == true then
-                return WaitForTeleportStart(3.5)
+                return WaitForTeleportStart(3.5, candidateName)
             end
         end
     end
@@ -3903,14 +3926,14 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
 
     local liCommand = "/li tp " .. escapedName
     yield(liCommand)
-    if WaitForTeleportStart(2.8) then
+    if WaitForTeleportStart(2.8, escapedName) then
         return true
     end
 
     return false
 end
 
-function TryNativeTeleportById(destinationId)
+function TryNativeTeleportById(destinationId, destinationName)
     if destinationId == nil then
         return false
     end
@@ -3923,7 +3946,7 @@ function TryNativeTeleportById(destinationId)
     if not ok then
         return false
     end
-    return WaitForTeleportStart(3.5)
+    return WaitForTeleportStart(3.5, destinationName)
 end
 
 local function GetTeleportFailureEntry(destinationName)
@@ -4017,13 +4040,13 @@ function TeleportTo(aetheryteName)
             IPC.Lifestream.Teleport(resolvedId, 0)
         end)
         if ok then
-            teleportStarted = WaitForTeleportStart(3.5)
+            teleportStarted = WaitForTeleportStart(3.5, (resolvedName ~= "" and resolvedName) or aetheryteName)
         end
     end
 
     if not teleportStarted and resolvedId ~= nil then
         attemptedByActionId = true
-        teleportStarted = TryNativeTeleportById(resolvedId)
+        teleportStarted = TryNativeTeleportById(resolvedId, (resolvedName ~= "" and resolvedName) or aetheryteName)
     end
 
     if not teleportStarted then
