@@ -6208,6 +6208,42 @@ function DoFate()
                     MeleeEngageLastMoveAt = now
                 end
 
+                local hardRecoverSeconds = MeleeApproachHardRecoverSeconds or 6.5
+                local hardRecoverCooldown = MeleeApproachHardRecoverCooldown or 2.6
+                local forceGapDistance = MeleeApproachForceGapDistance or 8
+                local shouldHardRecover = (now - (MeleeEngageStartAt or now) >= hardRecoverSeconds)
+                    and (targetDistanceFlat > (engageRange + forceGapDistance))
+                    and (now - (MeleeEngageLastHardRecoverAt or 0) >= hardRecoverCooldown)
+                if shouldHardRecover then
+                    MeleeEngageLastHardRecoverAt = now
+                    Dalamud.Log("[FATE] Melee hard recovery: forcing approach and target refresh.")
+                    if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+                        yield("/vnav stop")
+                    end
+                    if not Svc.Condition[CharacterCondition.casting]
+                        and not Svc.Condition[CharacterCondition.mounted]
+                        and not Svc.Condition[CharacterCondition.flying]
+                    then
+                        MoveToTargetHitbox()
+                        MeleeEngageLastMoveAt = now
+                    end
+
+                    local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
+                    local retargetRadius = math.max(
+                        (DynamicAoeCheckRadius or 30) + 10,
+                        (ClusterMoveRadius or 40),
+                        fateRadius + 18
+                    )
+                    ClearTarget()
+                    local reacquired = AttemptToTargetClosestFateEnemy(true, retargetRadius, true)
+                    if not reacquired then
+                        yield("/battletarget")
+                    end
+                    MeleeEngageStartAt = now
+                    MeleeEngageNextRetargetAt = now + 2
+                    return
+                end
+
                 local retargetSeconds = MeleeApproachRetargetSeconds or 5
                 if now - (MeleeEngageStartAt or now) >= retargetSeconds
                     and now >= (MeleeEngageNextRetargetAt or 0)
@@ -6622,6 +6658,7 @@ function ResetMeleeEngageRecoveryState()
     MeleeEngageStartAt = 0
     MeleeEngageLastMoveAt = 0
     MeleeEngageNextRetargetAt = 0
+    MeleeEngageLastHardRecoverAt = 0
 end
 
 function ResetPreAcquireState()
