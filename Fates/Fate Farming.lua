@@ -1954,6 +1954,7 @@ function UpdateCombatModeByNearbyEnemies()
     local shouldUseAoe = enemyCount >= DynamicAoeEnemyCount
 
     local sameNameRequired = DynamicAoeSameNameEnemyCount or 2
+    local sameNameBlockedAoe = false
     if shouldUseAoe and sameNameRequired > 1 and Svc.Targets.Target ~= nil then
         local currentTargetName = GetTargetName()
         local sameNameEnemyCount = CountNearbyFateEnemiesWithName(
@@ -1963,7 +1964,12 @@ function UpdateCombatModeByNearbyEnemies()
         )
         if sameNameEnemyCount < sameNameRequired then
             shouldUseAoe = false
+            sameNameBlockedAoe = true
         end
+    end
+
+    if sameNameBlockedAoe and enemyCount >= (DynamicAoeMixedPackMinimumEnemies or 2) then
+        shouldUseAoe = true
     end
 
     local desiredMode = shouldUseAoe and "aoe" or "single"
@@ -8077,6 +8083,7 @@ function FateFarming:Run()
     DynamicAoeSwitchCooldownSeconds       = 1.6
     DynamicAoeEnableStableSamples         = 2
     DynamicAoeDisableStableSamples        = 3
+    DynamicAoeMixedPackMinimumEnemies     = 2
     PreferUnengagedFateTargets            = true
     TargetAcquireRetrySeconds             = FastCombatPacing and 0.55 or 0.9
     TargetAcquireStopNavSeconds           = FastCombatPacing and 1.6 or 2.4
