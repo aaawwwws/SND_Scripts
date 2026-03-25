@@ -1737,7 +1737,7 @@ end
 
 function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallbackToAny)
     local fateIdFilter = CurrentFate and CurrentFate.fateId or 0
-    local unengagedOnly = onlyUnengaged == true
+    local unengagedOnly = (onlyUnengaged == true) and (PreferUnengagedFateTargets == true)
     if allowFallbackToAny == nil then
         allowFallbackToAny = true
     end
@@ -5413,10 +5413,10 @@ function MaybeRearmWrathAuto()
         return
     end
 
-    yield("/wrath auto on")
+    -- /wrath auto is toggle-only in this environment, so avoid pulsing commands here.
     MarkWrathAutoPulse(now)
     if stalled then
-        Dalamud.Log(string.format("[FATE] Wrath keepalive pulse: no cast for %.1fs.", sinceNoCast))
+        Dalamud.Log(string.format("[FATE] Wrath keepalive observed stall: no cast for %.1fs.", sinceNoCast))
     end
 end
 
@@ -5438,7 +5438,10 @@ function TurnOnCombatMods(rotationMode)
         elseif RotationPlugin == "VBM" then
             ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "combat-on")
         elseif RotationPlugin == "Wrath" then
-            yield("/wrath auto on")
+            if WrathAutoEnabled ~= true then
+                yield("/wrath auto")
+                WrathAutoEnabled = true
+            end
             MarkWrathAutoPulse(os.clock())
         end
 
@@ -5484,7 +5487,10 @@ function TurnOffCombatMods()
         elseif RotationPlugin == "VBM" then
             IPC.BossMod.ClearActive()
         elseif RotationPlugin == "Wrath" then
-            yield("/wrath auto off")
+            if WrathAutoEnabled == true then
+                yield("/wrath auto")
+                WrathAutoEnabled = false
+            end
             ResetWrathKeepAliveState()
         end
 
@@ -6170,6 +6176,49 @@ function DoFate()
         end
     end
 
+    if not CurrentFate.isCollectionsFate
+        and not CurrentFate.isOtherNpcFate
+        and Svc.Targets.Target ~= nil
+        and not Svc.Targets.Target.IsDead
+        and not Svc.Condition[CharacterCondition.inCombat]
+        and not Svc.Condition[CharacterCondition.casting]
+        and not Svc.Condition[CharacterCondition.mounted]
+        and not Svc.Condition[CharacterCondition.flying]
+    then
+        local now = os.clock()
+        local targetPos = Svc.Targets.Target.Position
+        local targetSignature = tostring(Svc.Targets.Target.DataId or 0) .. ":" ..
+            tostring(math.floor(targetPos.X)) .. ":" ..
+            tostring(math.floor(targetPos.Z))
+        if CombatOpenTargetSignature ~= targetSignature then
+            CombatOpenTargetSignature = targetSignature
+            CombatOpenTargetSince = now
+        elseif (CombatOpenTargetSince or 0) <= 0 then
+            CombatOpenTargetSince = now
+        end
+
+        local engageRange = math.max(2.5, MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius() + 0.5)
+        local targetDistanceFlat = GetDistanceToTargetFlat()
+        local shouldForceOpen = targetDistanceFlat <= engageRange
+            and now - (CombatOpenTargetSince or now) >= (CombatOpenNoCombatGraceSeconds or 1.3)
+            and now - (CombatOpenLastPulseAt or 0) >= (CombatOpenPulseSeconds or 1.4)
+        if shouldForceOpen then
+            CombatOpenLastPulseAt = now
+            yield("/attack")
+            if RotationPlugin == "Wrath" then
+                if WrathAutoEnabled ~= true then
+                    yield("/wrath auto")
+                    WrathAutoEnabled = true
+                end
+                MarkWrathAutoPulse(now)
+            end
+        end
+    else
+        CombatOpenTargetSignature = nil
+        CombatOpenTargetSince = 0
+        CombatOpenLastPulseAt = 0
+    end
+
     local meleeOrTank = Player.Job and (Player.Job.IsMeleeDPS or Player.Job.IsTank)
     if not meleeOrTank or Svc.Targets.Target == nil then
         ResetMeleeEngageRecoveryState()
@@ -6681,6 +6730,9 @@ end
 function ResetTargetAcquireWatchdog()
     TargetAcquireNoTargetSince = 0
     TargetAcquireLastAttemptAt = 0
+    CombatOpenTargetSignature = nil
+    CombatOpenTargetSince = 0
+    CombatOpenLastPulseAt = 0
 end
 
 function ResetMovementStuckState()
@@ -7883,8 +7935,11 @@ function FateFarming:Run()
     DynamicAoeSwitchCooldownSeconds       = 1.6
     DynamicAoeEnableStableSamples         = 2
     DynamicAoeDisableStableSamples        = 3
+    PreferUnengagedFateTargets            = false
     TargetAcquireRetrySeconds             = FastCombatPacing and 0.55 or 0.9
     TargetAcquireStopNavSeconds           = FastCombatPacing and 1.6 or 2.4
+    CombatOpenNoCombatGraceSeconds        = FastCombatPacing and 0.8 or 1.3
+    CombatOpenPulseSeconds                = FastCombatPacing and 0.8 or 1.4
     MeleeApproachHardRecoverSeconds       = FastCombatPacing and 4.8 or 6.5
     MeleeApproachForceGapDistance         = FastCombatPacing and 6 or 8
     MeleeApproachHardRecoverCooldown      = FastCombatPacing and 1.8 or 2.6
@@ -7974,6 +8029,9 @@ function FateFarming:Run()
     NoCombatNoTargetSince                 = 0
     TargetAcquireNoTargetSince            = 0
     TargetAcquireLastAttemptAt            = 0
+    CombatOpenTargetSignature             = nil
+    CombatOpenTargetSince                 = 0
+    CombatOpenLastPulseAt                 = 0
     MeleeEngageTargetSignature            = nil
     MeleeEngageStartAt                    = 0
     MeleeEngageLastMoveAt                 = 0
@@ -7991,6 +8049,7 @@ function FateFarming:Run()
     WrathKeepAliveNoCastSince             = 0
     WrathKeepAliveLastTargetSignature     = nil
     WrathKeepAliveFateId                  = nil
+    WrathAutoEnabled                      = false
     LastMountCommandAt                    = 0
     LastDismountCommandAt                 = 0
     FateTimingById                        = {}
