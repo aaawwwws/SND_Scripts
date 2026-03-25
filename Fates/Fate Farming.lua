@@ -5250,12 +5250,7 @@ function TryUseActionOnTarget(actionName)
     end
 
     local actionText = tostring(actionName)
-    local cmd = nil
-    if string.find(actionText, " ", 1, true) ~= nil then
-        cmd = '/ac "' .. actionText .. '" <t>'
-    else
-        cmd = "/ac " .. actionText .. " <t>"
-    end
+    local cmd = '/ac "' .. actionText .. '" <t>'
     yield(cmd)
     return true
 end
