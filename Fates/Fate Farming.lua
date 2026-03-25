@@ -3211,6 +3211,9 @@ local function EnsureFateSelectionMetrics(fate)
 
     local bonusScore = fate.isBonusFate and 120 or 0
     local specialScore = fate.isSpecialFate and 35 or 0
+    local combatTypeBonus = (not fate.isBossFate and not fate.isCollectionsFate and not fate.isOtherNpcFate)
+        and (CombatFateSelectionBonus or 0) or 0
+    local bossTypePenalty = (fate.isBossFate and not fate.isSpecialFate) and (BossFateSelectionPenalty or 0) or 0
     local startedScore = (fate.startTime and fate.startTime > 0) and 20 or 0
     local progressScore = progress * 2.1
     local urgencyBonus = progress >= 70 and ((progress - 70) * 1.6) or 0
@@ -3219,7 +3222,8 @@ local function EnsureFateSelectionMetrics(fate)
     local missPenalty = arrivalSlackSeconds < 0 and (math.abs(arrivalSlackSeconds) * 1.2) or 0
 
     fate.selectionTravelDistance = travelDistance
-    fate.selectionExpectedScore = bonusScore + specialScore + startedScore + progressScore + urgencyBonus +
+    fate.selectionExpectedScore = bonusScore + specialScore + combatTypeBonus - bossTypePenalty +
+        startedScore + progressScore + urgencyBonus +
         remainingTimeScore - travelPenalty - missPenalty
     fate.selectionMetricsComputed = true
 end
@@ -5568,11 +5572,16 @@ function TurnOnCombatMods(rotationMode)
 
             if DodgingPlugin == "BMR" then
                 yield("/bmrai on")
-                yield("/bmrai followtarget off")
-                yield("/bmrai followcombat off")
                 yield("/bmrai maxdistancetarget " .. MaxDistance)
                 if MoveToMob == true then
+                    -- Melee/tank: let BMR stick to target so it can sidestep/front-aoe dodge and re-engage faster.
+                    yield("/bmrai followtarget on")
+                    yield("/bmrai followcombat on")
                     yield("/bmrai followoutofcombat on")
+                else
+                    yield("/bmrai followtarget off")
+                    yield("/bmrai followcombat off")
+                    yield("/bmrai followoutofcombat off")
                 end
             elseif DodgingPlugin == "VBM" then
                 yield("/vbm ai on")
@@ -8040,6 +8049,8 @@ function FateFarming:Run()
     PreferredHighLevelZonePenaltyDecay    = 0.62
     SkipLevelSyncForHighLevelFates        = false
     LevelSyncBypassMinFateLevel           = 96
+    CombatFateSelectionBonus              = FastCombatPacing and 9 or 5
+    BossFateSelectionPenalty              = FastCombatPacing and 20 or 12
     FatePrefetchProgressThreshold         = FastCombatPacing and 45 or 70
     FatePrefetchIntervalSeconds           = FastCombatPacing and 0.9 or 3.5
     FatePrefetchTtlSeconds                = 30
