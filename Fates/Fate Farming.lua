@@ -8156,9 +8156,9 @@ function FateFarming:Run()
     end
 
     --Post Fate Settings
-    MinWait                        = FastCombatPacing and 0.35 or
+    MinWait                        = FastCombatPacing and 0.05 or
         3                                  --Min number of seconds it should wait until mounting up for next fate.
-    MaxWait                        = FastCombatPacing and 1.2 or
+    MaxWait                        = FastCombatPacing and 0.25 or
         10                                 --Max number of seconds it should wait until mounting up for next fate.
     --Actual wait time will be a randomly generated number between MinWait and MaxWait.
     DownTimeWaitAtNearestAetheryte = false --When waiting for fates to pop, should you fly to the nearest Aetheryte and wait there?
