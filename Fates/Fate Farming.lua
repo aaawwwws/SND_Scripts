@@ -5338,6 +5338,88 @@ function GetLeashSafeRetargetRadius()
     return math.max(roleMin, currentMax + buffer)
 end
 
+function ResetWrathKeepAliveState()
+    WrathKeepAliveLastPulseAt = 0
+    WrathKeepAliveNoCastSince = 0
+    WrathKeepAliveLastTargetSignature = nil
+    WrathKeepAliveFateId = nil
+end
+
+function MarkWrathAutoPulse(nowValue)
+    local pulseAt = nowValue or os.clock()
+    WrathKeepAliveLastPulseAt = pulseAt
+    WrathKeepAliveNoCastSince = pulseAt
+end
+
+function MaybeRearmWrathAuto()
+    if RotationPlugin ~= "Wrath" or WrathKeepAliveEnabled ~= true then
+        return
+    end
+
+    if CurrentFate == nil or not Svc.Condition[CharacterCondition.inCombat] then
+        WrathKeepAliveNoCastSince = 0
+        WrathKeepAliveLastTargetSignature = nil
+        return
+    end
+
+    if Svc.Condition[CharacterCondition.mounted]
+        or Svc.Condition[CharacterCondition.flying]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or Svc.Condition[CharacterCondition.betweenAreasForDuty]
+        or IsLifestreamBusySafe()
+    then
+        return
+    end
+
+    local now = os.clock()
+    if WrathKeepAliveFateId ~= CurrentFate.fateId then
+        WrathKeepAliveFateId = CurrentFate.fateId
+        WrathKeepAliveLastTargetSignature = nil
+        MarkWrathAutoPulse(now)
+    end
+
+    local target = Svc.Targets.Target
+    if target == nil or target.IsDead then
+        WrathKeepAliveNoCastSince = 0
+        WrathKeepAliveLastTargetSignature = nil
+        return
+    end
+
+    local targetPos = target.Position
+    local targetSignature = tostring(target.DataId or 0) .. ":" ..
+        tostring(math.floor(targetPos.X)) .. ":" ..
+        tostring(math.floor(targetPos.Z))
+    if WrathKeepAliveLastTargetSignature ~= targetSignature then
+        WrathKeepAliveLastTargetSignature = targetSignature
+        WrathKeepAliveNoCastSince = now
+    end
+
+    if Svc.Condition[CharacterCondition.casting] then
+        WrathKeepAliveNoCastSince = now
+        return
+    end
+
+    if (WrathKeepAliveNoCastSince or 0) <= 0 then
+        WrathKeepAliveNoCastSince = now
+    end
+
+    local pulseInterval = WrathKeepAliveIntervalSeconds or 2.5
+    local stallSeconds = WrathStallRecoverySeconds or (pulseInterval + 1.5)
+    local sincePulse = now - (WrathKeepAliveLastPulseAt or 0)
+    local sinceNoCast = now - (WrathKeepAliveNoCastSince or now)
+    local shouldPulse = sincePulse >= pulseInterval
+    local stalled = sinceNoCast >= stallSeconds
+    if not shouldPulse and not stalled then
+        return
+    end
+
+    yield("/wrath auto on")
+    MarkWrathAutoPulse(now)
+    if stalled then
+        Dalamud.Log(string.format("[FATE] Wrath keepalive pulse: no cast for %.1fs.", sinceNoCast))
+    end
+end
+
 function TurnOnCombatMods(rotationMode)
     if not CombatModsOn then
         CombatModsOn = true
@@ -5357,6 +5439,7 @@ function TurnOnCombatMods(rotationMode)
             ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "combat-on")
         elseif RotationPlugin == "Wrath" then
             yield("/wrath auto on")
+            MarkWrathAutoPulse(os.clock())
         end
 
         if not AiDodgingOn then
@@ -5402,6 +5485,7 @@ function TurnOffCombatMods()
             IPC.BossMod.ClearActive()
         elseif RotationPlugin == "Wrath" then
             yield("/wrath auto off")
+            ResetWrathKeepAliveState()
         end
 
         -- turn off BMR so you dont start following other mobs
@@ -6096,6 +6180,8 @@ function DoFate()
             end
         end
     end
+
+    MaybeRearmWrathAuto()
 
     -- do not interrupt casts to path towards enemies
     if Svc.Condition[CharacterCondition.casting] then
@@ -7699,6 +7785,9 @@ function FateFarming:Run()
     DynamicAoeSwitchCooldownSeconds       = 1.6
     DynamicAoeEnableStableSamples         = 2
     DynamicAoeDisableStableSamples        = 3
+    WrathKeepAliveEnabled                 = true
+    WrathKeepAliveIntervalSeconds         = FastCombatPacing and 1.8 or 2.8
+    WrathStallRecoverySeconds             = FastCombatPacing and 2.8 or 4.2
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
@@ -7792,6 +7881,10 @@ function FateFarming:Run()
     MiddleDismountFateId                  = nil
     MiddleDismountStartedAt               = 0
     MiddleDismountNoTargetSince           = 0
+    WrathKeepAliveLastPulseAt             = 0
+    WrathKeepAliveNoCastSince             = 0
+    WrathKeepAliveLastTargetSignature     = nil
+    WrathKeepAliveFateId                  = nil
     LastMountCommandAt                    = 0
     LastDismountCommandAt                 = 0
     FateTimingById                        = {}
