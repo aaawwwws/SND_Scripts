@@ -6212,6 +6212,26 @@ function DoFate()
                 end
                 MarkWrathAutoPulse(now)
             end
+
+            local retargetAfter = CombatOpenRetargetSeconds or 2.2
+            if now - (CombatOpenTargetSince or now) >= retargetAfter then
+                local pullRadius = math.max(
+                    (DynamicAoeCheckRadius or 30) + 10,
+                    (ClusterMoveRadius or 40),
+                    fateRadiusForAcquire + 25
+                )
+                ClearTarget()
+                local retargeted = AttemptToTargetClosestFateEnemy(true, pullRadius, true)
+                if not retargeted then
+                    retargeted = AttemptToTargetClosestFateEnemy(false, pullRadius, true)
+                end
+                if not retargeted then
+                    yield("/battletarget")
+                end
+                CombatOpenTargetSignature = nil
+                CombatOpenTargetSince = now
+                return
+            end
         end
     else
         CombatOpenTargetSignature = nil
@@ -7935,11 +7955,12 @@ function FateFarming:Run()
     DynamicAoeSwitchCooldownSeconds       = 1.6
     DynamicAoeEnableStableSamples         = 2
     DynamicAoeDisableStableSamples        = 3
-    PreferUnengagedFateTargets            = false
+    PreferUnengagedFateTargets            = true
     TargetAcquireRetrySeconds             = FastCombatPacing and 0.55 or 0.9
     TargetAcquireStopNavSeconds           = FastCombatPacing and 1.6 or 2.4
     CombatOpenNoCombatGraceSeconds        = FastCombatPacing and 0.8 or 1.3
     CombatOpenPulseSeconds                = FastCombatPacing and 0.8 or 1.4
+    CombatOpenRetargetSeconds             = FastCombatPacing and 1.6 or 2.2
     MeleeApproachHardRecoverSeconds       = FastCombatPacing and 4.8 or 6.5
     MeleeApproachForceGapDistance         = FastCombatPacing and 6 or 8
     MeleeApproachHardRecoverCooldown      = FastCombatPacing and 1.8 or 2.6
