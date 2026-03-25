@@ -228,7 +228,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,人鳥細工,恐怖！ キノコ魔物,落ち石拾い"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -1474,6 +1474,60 @@ function GetTargetName()
         return ""
     else
         return Svc.Targets.Target.Name:GetText()
+    end
+end
+
+function IsForlornTargetName(targetName)
+    if targetName == nil then
+        return false
+    end
+    local text = tostring(targetName)
+    if text == "" then
+        return false
+    end
+    local lowerText = string.lower(text)
+    if string.find(lowerText, "forlorn", 1, true) ~= nil then
+        return true
+    end
+    if string.find(text, "フォーローン", 1, true) ~= nil then
+        return true
+    end
+    return false
+end
+
+function IsBigForlornTargetName(targetName)
+    if not IsForlornTargetName(targetName) then
+        return false
+    end
+    local text = tostring(targetName or "")
+    local lowerText = string.lower(text)
+    if string.find(lowerText, "the forlorn", 1, true) ~= nil then
+        return true
+    end
+    if string.find(text, "メイデン", 1, true) ~= nil then
+        return false
+    end
+    if string.find(text, "フォーローン", 1, true) ~= nil then
+        return true
+    end
+    return false
+end
+
+function TryTargetForlorn()
+    if IgnoreForlorns then
+        return
+    end
+    local targetNames = {
+        "Forlorn Maiden",
+        "フォーローン・メイデン",
+        "フォーローンメイデン"
+    }
+    if not IgnoreBigForlornOnly then
+        table.insert(targetNames, "The Forlorn")
+        table.insert(targetNames, "フォーローン")
+    end
+    for _, targetName in ipairs(targetNames) do
+        yield("/target " .. targetName)
     end
 end
 
@@ -5892,15 +5946,11 @@ function DoFate()
         )
 
     -- switches to targeting forlorns for bonus (if present)
-    if not IgnoreForlorns then
-        yield("/target Forlorn Maiden")
-        if not IgnoreBigForlornOnly then
-            yield("/target The Forlorn")
-        end
-    end
+    TryTargetForlorn()
 
-    if (GetTargetName() == "Forlorn Maiden" or GetTargetName() == "The Forlorn") then
-        if IgnoreForlorns or (IgnoreBigForlornOnly and GetTargetName() == "The Forlorn") then
+    local activeTargetName = GetTargetName()
+    if IsForlornTargetName(activeTargetName) then
+        if IgnoreForlorns or (IgnoreBigForlornOnly and IsBigForlornTargetName(activeTargetName)) then
             ClearTarget()
         elseif not Svc.Targets.Target.IsDead then
             if not ForlornMarked then
@@ -5942,7 +5992,7 @@ function DoFate()
         and not Svc.Condition[CharacterCondition.casting]
     then
         local currentTargetName = GetTargetName()
-        if currentTargetName ~= "Forlorn Maiden" and currentTargetName ~= "The Forlorn" then
+        if not IsForlornTargetName(currentTargetName) then
             local leashSafeRadius = GetLeashSafeRetargetRadius()
             local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40),
                 fateRadiusForAcquire + 15, boostAcquireRadius or 0)
@@ -5993,8 +6043,7 @@ function DoFate()
         if targetName == nil
             or targetName == ""
             or targetName == CurrentFate.npcName
-            or targetName == "Forlorn Maiden"
-            or targetName == "The Forlorn"
+            or IsForlornTargetName(targetName)
         then
             ResetMeleeEngageRecoveryState()
         else
@@ -6235,7 +6284,8 @@ function Ready()
             if attempted == "" then
                 attempted = "none"
             end
-            local msg = "ERROR: Teleportation failed for selected zone (attempted: " .. attempted .. "). Stopping script."
+            local msg = "ERROR: Teleportation failed for selected zone (attempted: " ..
+                attempted .. "). Stopping script."
             yield("/echo [FATE] " .. msg)
             SendDiscordMessage(msg)
             SetStopReason(msg)
@@ -7542,16 +7592,16 @@ function FateFarming:Run()
     StuckCheckIntervalSeconds        = Config.Get("Stuck check interval (secs)")
     StuckMovementThreshold           = Config.Get("Stuck movement threshold")
     PrintSessionSummaryEnabled       = Config.Get("Print session summary?")
-    HighLevelFatePriorityEnabled          = true
-    HighLevelFatePriorityMinLevel         = 96
+    HighLevelFatePriorityEnabled     = true
+    HighLevelFatePriorityMinLevel    = 96
     if HighLevelFatePriorityEnabled then
         FatePriority = { "HighLevel", "DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
     else
         FatePriority = { "DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
     end
-    MeleeDist                        = Config.Get("Max melee distance")
-    RangedDist                       = Config.Get("Max ranged distance")
-    HitboxBuffer                     = 0.5
+    MeleeDist    = Config.Get("Max melee distance")
+    RangedDist   = Config.Get("Max ranged distance")
+    HitboxBuffer = 0.5
     if PreferDensePulls == nil then
         PreferDensePulls = true
     end
@@ -7604,21 +7654,21 @@ function FateFarming:Run()
     PreferredHighLevelZoneBiasEnabled     = true
     PreferredHighLevelZoneScoreBonus      = FastCombatPacing and 2.8 or 2.4
     PreferredHighLevelZonePenaltyDecay    = 0.62
-    SkipLevelSyncForHighLevelFates        = true
+    SkipLevelSyncForHighLevelFates        = false
     LevelSyncBypassMinFateLevel           = 96
-    FatePrefetchProgressThreshold         = 80
+    FatePrefetchProgressThreshold         = FastCombatPacing and 65 or 80
     FatePrefetchIntervalSeconds           = FastCombatPacing and 2.5 or 8
     FatePrefetchTtlSeconds                = 25
-    MainLoopWaitSeconds                   = FastCombatPacing and 0.18 or 0.25
-    FastNoFateZoneSwitchCooldownSeconds   = FastCombatPacing and 1.2 or 4
+    MainLoopWaitSeconds                   = FastCombatPacing and 0.14 or 0.25
+    FastNoFateZoneSwitchCooldownSeconds   = FastCombatPacing and 0.8 or 4
     CombatStartBoostDurationSeconds       = 12
-    TeleportHysteresisEnterGain           = 70
-    TeleportHysteresisExitGain            = 25
+    TeleportHysteresisEnterGain           = FastCombatPacing and 52 or 70
+    TeleportHysteresisExitGain            = FastCombatPacing and 16 or 25
     NoCombatRecoveryRetargetRatio         = 0.35
     NoCombatRecoveryRepositionRatio       = 0.7
-    MeleeApproachRetargetSeconds          = 5
-    MeleeApproachMovePulseSeconds         = 1.0
-    MountTravelMinDistance                = 24
+    MeleeApproachRetargetSeconds          = FastCombatPacing and 3.2 or 5
+    MeleeApproachMovePulseSeconds         = FastCombatPacing and 0.55 or 1.0
+    MountTravelMinDistance                = FastCombatPacing and 16 or 24
     MountToggleCooldownSeconds            = FastCombatPacing and 1.45 or 2.2
     MountRetryCooldownSeconds             = FastCombatPacing and 0.65 or 1.2
     DismountRetryCooldownSeconds          = FastCombatPacing and 0.45 or 0.8
@@ -7629,8 +7679,8 @@ function FateFarming:Run()
     UnresponsiveSkipRatio                 = 0.65
     FateResultSummaryWriteIntervalSeconds = 30
     MiddleDismountForceAfterSeconds       = 1.8
-    PreAcquireDistance                    = 130
-    PreAcquireAttemptIntervalSeconds      = 1.2
+    PreAcquireDistance                    = FastCombatPacing and 170 or 130
+    PreAcquireAttemptIntervalSeconds      = FastCombatPacing and 0.7 or 1.2
     FateTargetRadiusPadding               = 3
     FateMoveBoundaryBuffer                = 4
     FateHardBoundaryBuffer                = 14
@@ -7800,12 +7850,13 @@ function FateFarming:Run()
 
     -- For BMR/VBM/Wrath rotation plugins
     RotationSingleTargetPreset = NormalizePresetName(Config.Get("Single Target Rotation")) --Preset name with single target strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
-    RotationAoePreset          = NormalizePresetName(Config.Get("AoE Rotation"))            --Preset with AOE + Buff strategies.
-    RotationHoldBuffPreset     = NormalizePresetName(Config.Get("Hold Buff Rotation"))      --Preset to hold 2min burst when progress gets to seleted %
-    PercentageToHoldBuff       = Config.Get("Percentage to Hold Buff") --Ideally youll want to make full use of your buffs, higher than 70% will still waste a few seconds if progress is too fast.
+    RotationAoePreset          = NormalizePresetName(Config.Get("AoE Rotation"))           --Preset with AOE + Buff strategies.
+    RotationHoldBuffPreset     = NormalizePresetName(Config.Get("Hold Buff Rotation"))     --Preset to hold 2min burst when progress gets to seleted %
+    PercentageToHoldBuff       = Config.Get("Percentage to Hold Buff")                     --Ideally youll want to make full use of your buffs, higher than 70% will still waste a few seconds if progress is too fast.
     if RotationPlugin == "BMR" or RotationPlugin == "VBM" then
         RotationAoePreset = SelectPresetName(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset)
-        RotationSingleTargetPreset = SelectPresetName(RotationSingleTargetPreset, RotationAoePreset, RotationHoldBuffPreset)
+        RotationSingleTargetPreset = SelectPresetName(RotationSingleTargetPreset, RotationAoePreset,
+            RotationHoldBuffPreset)
         RotationHoldBuffPreset = SelectPresetName(RotationHoldBuffPreset, RotationSingleTargetPreset, RotationAoePreset)
         if RotationAoePreset == "" then
             yield(
@@ -7814,7 +7865,7 @@ function FateFarming:Run()
     end
 
     -- Dodge plugin
-    local dodgeConfig          = string.lower(Config.Get("Dodging Plugin")) -- Options: Any / BossModReborn / BossMod / None
+    local dodgeConfig = string.lower(Config.Get("Dodging Plugin")) -- Options: Any / BossModReborn / BossMod / None
 
     -- Resolve "any" or specific plugin if available
     if dodgeConfig == "any" then
@@ -7847,8 +7898,10 @@ function FateFarming:Run()
     end
 
     --Post Fate Settings
-    MinWait                        = FastCombatPacing and 0.35 or 3 --Min number of seconds it should wait until mounting up for next fate.
-    MaxWait                        = FastCombatPacing and 1.2 or 10  --Max number of seconds it should wait until mounting up for next fate.
+    MinWait                        = FastCombatPacing and 0.35 or
+        3                                  --Min number of seconds it should wait until mounting up for next fate.
+    MaxWait                        = FastCombatPacing and 1.2 or
+        10                                 --Max number of seconds it should wait until mounting up for next fate.
     --Actual wait time will be a randomly generated number between MinWait and MaxWait.
     DownTimeWaitAtNearestAetheryte = false --When waiting for fates to pop, should you fly to the nearest Aetheryte and wait there?
     MoveToRandomSpot               = false --Randomly fly to spot while waiting on fate.
