@@ -5730,7 +5730,7 @@ function DoFate()
     end
     local combatStartBoostActive = CombatStartBoostFateId == CurrentFate.fateId
         and doFateNow < (CombatStartBoostUntil or 0)
-    local shouldPreserveBonusBuff = WaitIfBonusBuff and HasTwistOfFateBuff()
+    local shouldPreserveBonusBuff = ShouldPreserveBonusBuffForZoneSwitch(true)
 
     local maxLevel = GetFateMaxLevelValue(CurrentFate, nil)
     local inCurrentFate = InActiveFate()
@@ -6708,11 +6708,16 @@ function Ready()
         NextFate = GetBestAvailableNextFate(true)
     end
 
+    if NextFate ~= nil then
+        ResetBonusBuffHoldWindow()
+    end
+
     if NextFate == nil then
+        local shouldPreserveBonusBuffForSwitch = ShouldPreserveBonusBuffForZoneSwitch(true)
         local hasInstances = GetZoneInstance() > 0
         local canAutoSwitchZone = AutoTeleportToNextZone
             and not StayOnCurrentMapOnly
-            and not shouldWaitForBonusBuff
+            and not shouldPreserveBonusBuffForSwitch
             and not CompanionScriptMode
         local preferFastZoneSwitch = canAutoSwitchZone and FastCombatPacing == true
         if preferFastZoneSwitch then
@@ -6736,7 +6741,7 @@ function Ready()
                 return
             end
         end
-        if EnableChangeInstance and hasInstances and not shouldWaitForBonusBuff then
+        if EnableChangeInstance and hasInstances and not shouldPreserveBonusBuffForSwitch then
             State = CharacterState.changingInstances
             Dalamud.Log("[FATE] State Change: ChangingInstances")
             return
@@ -6764,7 +6769,7 @@ function Ready()
     end
 
 
-    if NextFate == nil and shouldWaitForBonusBuff and DownTimeWaitAtNearestAetheryte then
+    if NextFate == nil and ShouldPreserveBonusBuffForZoneSwitch(true) and DownTimeWaitAtNearestAetheryte then
         if Svc.Targets.Target == nil or GetTargetName() ~= "aetheryte" or GetDistanceToTarget() > 20 then
             State = CharacterState.flyBackToAetheryte
             Dalamud.Log("[FATE] State Change: FlyBackToAetheryte")
@@ -7478,6 +7483,50 @@ end
 
 function HasTwistOfFateBuff()
     return HasStatusId(1288) or HasStatusId(1289)
+end
+
+function ResetBonusBuffHoldWindow()
+    BonusBuffNoEligibleSince = 0
+    BonusBuffHoldWindowExpiredAnnounced = false
+end
+
+function ShouldPreserveBonusBuffForZoneSwitch(markNoEligible)
+    if WaitIfBonusBuff ~= true or not HasTwistOfFateBuff() then
+        ResetBonusBuffHoldWindow()
+        return false
+    end
+
+    local now = os.clock()
+    if markNoEligible == true then
+        if (BonusBuffNoEligibleSince or 0) <= 0 then
+            BonusBuffNoEligibleSince = now
+            BonusBuffHoldWindowExpiredAnnounced = false
+        end
+    elseif (BonusBuffNoEligibleSince or 0) <= 0 then
+        return true
+    end
+
+    local holdWindow = BonusBuffHoldMaxWaitSeconds or 35
+    local startedAt = BonusBuffNoEligibleSince or 0
+    if startedAt <= 0 then
+        return true
+    end
+
+    local elapsed = now - startedAt
+    if elapsed <= holdWindow then
+        return true
+    end
+
+    if BonusBuffHoldWindowExpiredAnnounced ~= true then
+        Dalamud.Log(string.format(
+            "[FATE] Twist of Fate hold window elapsed (%.1fs >= %.1fs). Allowing zone switch.",
+            elapsed,
+            holdWindow
+        ))
+        BonusBuffHoldWindowExpiredAnnounced = true
+    end
+
+    return false
 end
 
 local function TrimString(value)
@@ -8232,6 +8281,8 @@ function FateFarming:Run()
     ZoneSelectionLastSwitchAt             = 0
     TeleportDecisionLastFateId            = nil
     TeleportDecisionPreferAetheryte       = false
+    BonusBuffNoEligibleSince              = 0
+    BonusBuffHoldWindowExpiredAnnounced   = false
 
     --Forlorns
     IgnoreForlorns                        = false
@@ -8330,6 +8381,7 @@ function FateFarming:Run()
     MoveToRandomSpot               = false --Randomly fly to spot while waiting on fate.
     InventorySlotsLeft             = 5     --how much inventory space before turning in
     WaitIfBonusBuff                = true  --Dont change instances if you have the Twist of Fate bonus buff
+    BonusBuffHoldMaxWaitSeconds    = FastCombatPacing and 35 or 45
     NumberOfInstances              = 3
     RemainingDurabilityToRepair    = 10    --the amount it needs to drop before Repairing (set it to 0 if you don't want it to repair)
     ShouldAutoBuyDarkMatter        = true  --Automatically buys a 99 stack of Grade 8 Dark Matter from the Limsa gil vendor if you're out
@@ -8546,7 +8598,7 @@ function FateFarming:Run()
                             and not IsLifestreamBusySafe()
                             and not navBusy
                         if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
-                            local shouldPreserveBonusBuff = WaitIfBonusBuff and HasTwistOfFateBuff()
+                            local shouldPreserveBonusBuff = ShouldPreserveBonusBuffForZoneSwitch(true)
                             local timeoutZoneName = (SelectedZone and SelectedZone.zoneName) or "Unknown Zone"
                             local timeoutMsg = string.format(
                                 "[FATE] No-movement timeout triggered in zone: %s",
@@ -8626,7 +8678,7 @@ function FateFarming:Run()
                 if NoCombatStartTime == nil then
                     NoCombatStartTime = os.clock()
                 elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
-                    local shouldPreserveBonusBuff = WaitIfBonusBuff and HasTwistOfFateBuff()
+                    local shouldPreserveBonusBuff = ShouldPreserveBonusBuffForZoneSwitch(true)
                     local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
                     local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
                     local timeoutMsg = string.format(
