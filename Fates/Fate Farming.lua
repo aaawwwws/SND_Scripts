@@ -228,7 +228,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -8383,9 +8383,9 @@ function FateFarming:Run()
     WaitIfBonusBuff                = true  --Dont change instances if you have the Twist of Fate bonus buff
     BonusBuffHoldMaxWaitSeconds    = FastCombatPacing and 35 or 45
     NumberOfInstances              = 3
-    RemainingDurabilityToRepair    = 10    --the amount it needs to drop before Repairing (set it to 0 if you don't want it to repair)
-    ShouldAutoBuyDarkMatter        = true  --Automatically buys a 99 stack of Grade 8 Dark Matter from the Limsa gil vendor if you're out
-    ShouldExtractMateria           = true  --should it Extract Materia
+    RemainingDurabilityToRepair    = 10   --the amount it needs to drop before Repairing (set it to 0 if you don't want it to repair)
+    ShouldAutoBuyDarkMatter        = true --Automatically buys a 99 stack of Grade 8 Dark Matter from the Limsa gil vendor if you're out
+    ShouldExtractMateria           = true --should it Extract Materia
 
     -- Config settings
     EnableChangeInstance           = Config.Get("Change instances if no FATEs?")
