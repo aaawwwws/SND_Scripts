@@ -203,6 +203,9 @@ configs:
     default: "Attacker"
     is_choice: true
     choices: ["Follow", "Free", "Defender", "Healer", "Attacker", "None"]
+  Summon Chocobo?:
+    description: 戦闘時にチョコボを召喚するかどうか。
+    default: true
   Buy Gysahl Greens?:
     description: 在庫が無い場合、リムサのNPCからギサールの野菜を99個自動購入します。
     default: false
@@ -3498,8 +3501,12 @@ function SelectNextFate()
             return nextFate
         end
         local playerPos = GetPlayerPosition()
-        Dalamud.Log("[FATE] No fates found. Player position: X=" ..
-            playerPos.X .. ", Y=" .. playerPos.Y .. ", Z=" .. playerPos.Z)
+        if playerPos ~= nil then
+            Dalamud.Log("[FATE] No fates found. Player position: X=" ..
+                playerPos.X .. ", Y=" .. playerPos.Y .. ", Z=" .. playerPos.Z)
+        else
+            Dalamud.Log("[FATE] No fates found. Player position is nil.")
+        end
         --TeleportTo("メワヘイゾーン")
         if Echo == "all" then
             yield("/echo [FATE] No eligible fates found.")
@@ -7999,7 +8006,7 @@ function FateFarming:Run()
     ChocoboStance             = Config.Get("Chocobo Companion Stance") -- Options: Follow, Free, Defender, Healer, Attacker, None. Do not summon if None.
     local stanceRaw           = tostring(ChocoboStance or "")
     local stanceLower         = string.lower(stanceRaw)
-    ShouldSummonChocobo       = not (stanceLower == "none" or stanceRaw == "なし")
+    ShouldSummonChocobo       = Config.Get("Summon Chocobo?") and not (stanceLower == "none" or stanceRaw == "なし")
     ShouldAutoBuyGysahlGreens = Config.Get("Buy Gysahl Greens?")
     MountToUse                = "mount roulette" --The mount youd like to use when flying between fates
 
