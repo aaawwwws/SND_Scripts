@@ -3824,6 +3824,10 @@ function GetClosestAetheryteToPoint(position, teleportTimePenalty, fateId)
 end
 
 function TeleportToClosestAetheryteToFate(nextFate)
+    if GetLocalPlayerPosition() == nil then
+        Dalamud.Log("[FATE] Skipping TeleportToClosestAetheryteToFate: player position not available")
+        return false
+    end
     local aetheryteForClosestFate = GetClosestAetheryteToPoint(nextFate.position, 200,
         nextFate and nextFate.fateId or nil)
     if aetheryteForClosestFate ~= nil then
@@ -4737,6 +4741,12 @@ function MoveToFate()
     SuccessiveInstanceChanges = 0
 
     if not Player.Available then
+        return
+    end
+
+    if GetLocalPlayerPosition() == nil then
+        Dalamud.Log("[FATE] Player position not ready yet, skipping MoveToFate cycle")
+        yield("/wait 1")
         return
     end
 
@@ -8781,7 +8791,8 @@ function FateFarming:Run()
         end
         if not (Svc.Condition[CharacterCondition.betweenAreas]
                 or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
-                or IsLifestreamBusySafe())
+                or IsLifestreamBusySafe()
+                or Svc.ClientState.LocalPlayer == nil)
         then
             State()
         end
