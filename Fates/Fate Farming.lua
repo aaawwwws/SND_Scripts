@@ -198,17 +198,6 @@ configs:
     choices: ["None",
         "Bicolor Gemstone Voucher",
         "Turali Bicolor Gemstone Voucher"]
-  Chocobo Companion Stance:
-    description: None の場合はチョコボを呼び出しません。
-    default: "Attacker"
-    is_choice: true
-    choices: ["Follow", "Free", "Defender", "Healer", "Attacker", "None"]
-  Summon Chocobo?:
-    description: 戦闘時にチョコボを召喚するかどうか。
-    default: true
-  Buy Gysahl Greens?:
-    description: 在庫が無い場合、リムサのNPCからギサールの野菜を99個自動購入します。
-    default: false
   Self repair?:
     description: ONで自分で修理を試みます。OFFならリムサの修理NPCへ移動します。
     default: true
@@ -365,10 +354,8 @@ end
 
 local AcceptNPCFateOrRejectOtherYesno
 local AcceptTeleportOfferLocation
-local ApplyChocoboStance
 local ARRetainersWaitingToBeProcessed
 local AttemptToTargetClosestFateEnemy
-local AutoBuyGysahlGreens
 local BuildFateTable
 local BuildZoneData
 local ChangeInstance
@@ -389,7 +376,6 @@ local FoodCheck
 local GetAetheryteName
 local GetAetherytesInZone
 local GetAetheryteInZoneByName
-local GetBuddyTimeRemaining
 local GetClassJobTableFromName
 local GetClosestAetheryte
 local GetClosestAetheryteInZoneToPoint
@@ -473,7 +459,6 @@ local GetLeashSafeRetargetRadius
 local ShouldSkipCollectionsFate
 local ShouldSkipOtherNpcFate
 local split
-local SummonChocobo
 local TeleportTo
 local TeleportToClosestAetheryteToFate
 local TurnOffAoes
@@ -481,7 +466,6 @@ local TurnOffCombatMods
 local TurnOffRaidBuffs
 local TurnOnAoes
 local TurnOnCombatMods
-local TryUseGysahlGreens
 local UpdateCombatModeByNearbyEnemies
 local WaitForContinuation
 local ResetMovementStuckState
@@ -528,11 +512,6 @@ local SessionStuckZoneSwitchCount
 local SessionStopReason
 local FoodAutoUseDisabled
 local PotionAutoUseDisabled
-local GysahlUseDisabled
-local GysahlShopPurchaseAttempts
-local ChocoboSummonFailureCount
-local ChocoboSummonCooldownUntil
-local ChocoboSummonLastAttemptAt
 local LifestreamBusyWarned
 local VnavReadyCheckWarned
 local NativeItemCommandDisabled
@@ -1473,10 +1452,6 @@ function GetFateMaxLevelValue(fate, fallback)
         return fallback
     end
     return fate.fateObject.MaxLevel
-end
-
-function GetBuddyTimeRemaining()
-    return Instances.Buddy.CompanionInfo.TimeLeft
 end
 
 function SetMapFlag(zoneId, position)
@@ -5110,151 +5085,6 @@ function GetClassJobTableFromName(classString)
     return nil
 end
 
-function GetChocoboStanceActionName(stanceName)
-    if stanceName == nil then
-        return nil
-    end
-
-    local raw = tostring(stanceName)
-    local normalized = string.lower(raw)
-
-    if normalized == "none" or raw == "なし" then
-        return nil
-    end
-    if normalized == "follow" or raw == "フォロー" then
-        return nil
-    end
-
-    local isJapaneseClient = GameLanguage == "Japanese"
-    if normalized == "free" or raw == "フリー" or raw == "フリーファイト" then
-        return isJapaneseClient and "フリーファイト" or "Free Stance"
-    elseif normalized == "defender" or raw == "ディフェンダー" or raw == "ディフェンダースタンス" then
-        return isJapaneseClient and "ディフェンダースタンス" or "Defender Stance"
-    elseif normalized == "healer" or raw == "ヒーラー" or raw == "ヒーラースタンス" then
-        return isJapaneseClient and "ヒーラースタンス" or "Healer Stance"
-    elseif normalized == "attacker" or raw == "アタッカー" or raw == "アタッカースタンス" then
-        return isJapaneseClient and "アタッカースタンス" or "Attacker Stance"
-    end
-
-    return raw
-end
-
-function ApplyChocoboStance()
-    local stanceActionName = GetChocoboStanceActionName(ChocoboStance)
-    if stanceActionName == nil or stanceActionName == "" then
-        return
-    end
-    yield('/cac "' .. stanceActionName .. '"')
-end
-
-function SummonChocobo()
-    if Svc.Condition[CharacterCondition.mounted] then
-        Dismount()
-        return
-    end
-
-    if SelectedZone ~= nil and Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
-        State = CharacterState.ready
-        Dalamud.Log("[FATE] State Change: Ready")
-        return
-    end
-
-    if (ChocoboSummonCooldownUntil or 0) > os.clock() then
-        State = CharacterState.ready
-        Dalamud.Log("[FATE] State Change: Ready")
-        return
-    end
-
-    local buddyTimeRemaining = GetBuddyTimeRemaining()
-    if buddyTimeRemaining > 0 then
-        ApplyChocoboStance()
-        State = CharacterState.ready
-        Dalamud.Log("[FATE] State Change: Ready")
-        return
-    end
-
-    local canUseGysahlNow = CanUseConsumableNow()
-
-    if ShouldSummonChocobo and buddyTimeRemaining <= 0 then
-        if not canUseGysahlNow then
-            return
-        end
-        if Inventory.GetItemCount(4868) > 0 then
-            if TryUseGysahlGreens() then
-                yield("/wait 3")
-                ApplyChocoboStance()
-            end
-        elseif ShouldAutoBuyGysahlGreens then
-            State = CharacterState.autoBuyGysahlGreens
-            Dalamud.Log("[FATE] State Change: AutoBuyGysahlGreens")
-            return
-        end
-    end
-    State = CharacterState.ready
-    Dalamud.Log("[FATE] State Change: Ready")
-end
-
-function AutoBuyGysahlGreens()
-    if Inventory.GetItemCount(4868) > 0 then -- dont need to buy
-        GysahlShopPurchaseAttempts = 0
-        if AddonReady("Shop") then
-            yield("/callback Shop true -1")
-        elseif Svc.ClientState.TerritoryType == SelectedZone.zoneId then
-            TryUseGysahlGreens()
-        else
-            State = CharacterState.ready
-            Dalamud.Log("State Change: ready")
-        end
-        return
-    else
-        if Svc.ClientState.TerritoryType ~= 129 then
-            yield("/vnav stop")
-            TeleportTo("Limsa Lominsa Lower Decks")
-            return
-        else
-            local gysahlGreensVendor = { position = Vector3(-62.1, 18.0, 9.4), npcName = "Bango Zango" }
-            if GetDistanceToPoint(gysahlGreensVendor.position) > 5 then
-                if not (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress()) then
-                    IPC.vnavmesh.PathfindAndMoveTo(gysahlGreensVendor.position, false)
-                end
-            elseif Svc.Targets.Target ~= nil and GetTargetName() == gysahlGreensVendor.npcName then
-                yield("/vnav stop")
-                if AddonReady("SelectYesno") then
-                    yield("/callback SelectYesno true 0")
-                elseif AddonReady("SelectIconString") then
-                    yield("/callback SelectIconString true 0")
-                    return
-                elseif AddonReady("Shop") then
-                    GysahlShopPurchaseAttempts = (GysahlShopPurchaseAttempts or 0) + 1
-                    if GysahlShopPurchaseAttempts > 10 then
-                        local msg =
-                        "[FATE] Gysahl purchase callback did not succeed after multiple tries. Disabling auto-buy for this session."
-                        Dalamud.Log(msg)
-                        yield("/echo " .. msg)
-                        ShouldAutoBuyGysahlGreens = false
-                        GysahlShopPurchaseAttempts = 0
-                        yield("/callback Shop true -1")
-                        State = CharacterState.ready
-                        Dalamud.Log("[FATE] State Change: Ready")
-                        return
-                    end
-                    yield("/callback Shop true 0 5 99")
-                    return
-                elseif not Svc.Condition[CharacterCondition.occupied] then
-                    GysahlShopPurchaseAttempts = 0
-                    yield("/interact")
-                    yield("/wait 1")
-                    return
-                end
-            else
-                GysahlShopPurchaseAttempts = 0
-                yield("/vnav stop")
-                yield("/target " .. gysahlGreensVendor.npcName)
-            end
-        end
-    end
-end
-
 function ClearTarget()
     Svc.Targets.Target = nil
 end
@@ -6693,18 +6523,6 @@ function Ready()
         return
     end
 
-    local summonCooldownPassed = (ChocoboSummonCooldownUntil or 0) <= os.clock()
-    if ShouldSummonChocobo
-        and Svc.ClientState.TerritoryType == SelectedZone.zoneId
-        and summonCooldownPassed
-        and GetBuddyTimeRemaining() <= 0
-        and (not shouldWaitForBonusBuff or Inventory.GetItemCount(4868) > 0)
-    then
-        State = CharacterState.summonChocobo
-        Dalamud.Log("[FATE] State Change: summonChocobo")
-        return
-    end
-
     if CurrentFate ~= nil and not IsFateActive(CurrentFate.fateObject) then
         CurrentFate = nil
     end
@@ -7698,77 +7516,6 @@ CanUseConsumableNow = function()
     return true
 end
 
-function TryUseGysahlGreens()
-    if GysahlUseDisabled then
-        return false
-    end
-    local now = os.clock()
-    if (ChocoboSummonCooldownUntil or 0) > os.clock() then
-        return false
-    end
-    if (now - (ChocoboSummonLastAttemptAt or 0)) < 8 then
-        return false
-    end
-    if not CanUseConsumableNow() then
-        return false
-    end
-    if Inventory.GetItemCount(4868) <= 0 then
-        return false
-    end
-    if (ChocoboSummonFailureCount or 0) >= 3 then
-        return false
-    end
-
-    ChocoboSummonLastAttemptAt = now
-
-    local function WaitForBuddySummon(timeoutSeconds)
-        local start = os.clock()
-        local timeout = tonumber(timeoutSeconds) or 3.0
-        while os.clock() - start < timeout do
-            if GetBuddyTimeRemaining() > 0 then
-                return true
-            end
-            if not CanUseConsumableNow() then
-                return false
-            end
-            yield("/wait 0.1")
-        end
-        return false
-    end
-
-    local itemCallSucceeded = false
-    if SndGameUtils ~= nil then
-        local okUseItem = pcall(function()
-            SndGameUtils.UseItem(4868, false)
-        end)
-        if okUseItem then
-            itemCallSucceeded = true
-            if WaitForBuddySummon(2.4) then
-                ChocoboSummonFailureCount = 0
-                ChocoboSummonCooldownUntil = 0
-                return true
-            end
-        end
-    end
-
-    ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
-    if ChocoboSummonFailureCount >= 3 then
-        ChocoboSummonFailureCount = 0
-        ChocoboSummonCooldownUntil = os.clock() + 45
-        local msg = itemCallSucceeded
-            and "[FATE] Chocobo summon did not start after item retries. Pausing auto summon for 45s."
-            or "[FATE] Chocobo summon item call unavailable. Pausing auto summon for 45s."
-        Dalamud.Log(msg)
-        yield("/echo " .. msg)
-        return false
-    else
-        local msg = "[FATE] Chocobo summon (item only) did not start yet. Retry " ..
-            tostring(ChocoboSummonFailureCount) .. "/3"
-        Dalamud.Log(msg)
-        return false
-    end
-end
-
 function FoodCheck()
     if FoodAutoUseDisabled then
         return
@@ -7984,9 +7731,7 @@ function FateFarming:Run()
         repair                 = Repair,
         exchangingVouchers     = ExecuteBicolorExchange,
         processRetainers       = ProcessRetainers,
-        gcTurnIn               = GrandCompanyTurnIn,
-        summonChocobo          = SummonChocobo,
-        autoBuyGysahlGreens    = AutoBuyGysahlGreens
+        gcTurnIn               = GrandCompanyTurnIn
     }
 
     --- Fate state enum mapping (values confirmed from FFXIV SND)
@@ -8010,14 +7755,6 @@ function FateFarming:Run()
     Food                      = TrimString(Config.Get("Food"))
     Potion                    = TrimString(Config.Get("Potion"))
 
-    -- Chocobo
-    ResummonChocoboTimeLeft   = 3 *
-        60                                                             --Resummons chocobo if there's less than this many seconds left on the timer, so it doesn't disappear on you in the middle of a fate.
-    ChocoboStance             = Config.Get("Chocobo Companion Stance") -- Options: Follow, Free, Defender, Healer, Attacker, None. Do not summon if None.
-    local stanceRaw           = tostring(ChocoboStance or "")
-    local stanceLower         = string.lower(stanceRaw)
-    ShouldSummonChocobo       = Config.Get("Summon Chocobo?") and not (stanceLower == "none" or stanceRaw == "なし")
-    ShouldAutoBuyGysahlGreens = Config.Get("Buy Gysahl Greens?")
     MountToUse                = "mount roulette" --The mount youd like to use when flying between fates
 
     -- Retainer
@@ -8222,11 +7959,6 @@ function FateFarming:Run()
     SessionStopReason                     = nil
     FoodAutoUseDisabled                   = false
     PotionAutoUseDisabled                 = false
-    GysahlUseDisabled                     = false
-    GysahlShopPurchaseAttempts            = 0
-    ChocoboSummonFailureCount             = 0
-    ChocoboSummonCooldownUntil            = 0
-    ChocoboSummonLastAttemptAt            = 0
     LifestreamBusyWarned                  = false
     VnavReadyCheckWarned                  = false
     NativeItemCommandDisabled             = true
@@ -8553,10 +8285,6 @@ function FateFarming:Run()
         CurrentFate = BuildFateTable(Fates.GetNearestFate())
     end
 
-    if ShouldSummonChocobo and GetBuddyTimeRemaining() > 0 then
-        ApplyChocoboStance()
-    end
-
     Dalamud.Log("[FATE] Starting fate farming script.")
 
     State = CharacterState.ready
@@ -8792,7 +8520,7 @@ function FateFarming:Run()
         if not (Svc.Condition[CharacterCondition.betweenAreas]
                 or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
                 or IsLifestreamBusySafe()
-                or Svc.ClientState.LocalPlayer == nil)
+                or not Player.Available)
         then
             State()
         end
