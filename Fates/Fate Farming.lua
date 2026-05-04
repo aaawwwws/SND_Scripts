@@ -3530,7 +3530,6 @@ function GetDistanceToPoint(vec3)
     end
     local playerPos = GetLocalPlayerPosition()
     if playerPos == nil then
-        Dalamud.Log("[FATE] Warning: GetDistanceToPoint called with no local player")
         return math.maxinteger
     end
     return DistanceBetween(playerPos, vec3)
@@ -3555,7 +3554,6 @@ end
 function GetDistanceToPointFlat(vec3)
     local playerPos = GetLocalPlayerPosition()
     if playerPos == nil then
-        Dalamud.Log("[FATE] Warning: GetDistanceToPointFlat called with no local player")
         return math.maxinteger
     end
     return DistanceBetweenFlat(playerPos, vec3)
@@ -8281,6 +8279,14 @@ function FateFarming:Run()
 
     Dalamud.Log("[FATE] Starting fate farming script.")
 
+    if Svc.ClientState.LocalPlayer == nil then
+        Dalamud.Log("[FATE] Waiting for local player to be ready...")
+        while Svc.ClientState.LocalPlayer == nil do
+            yield("/wait 1")
+        end
+        Dalamud.Log("[FATE] Local player is now ready.")
+    end
+
     State = CharacterState.ready
     CurrentFate = nil
 
@@ -8290,7 +8296,10 @@ function FateFarming:Run()
     end
 
     while not StopScript do
-        local nearestFate = Fates.GetNearestFate()
+        if Svc.ClientState.LocalPlayer == nil then
+            yield("/wait 1")
+        else
+            local nearestFate = Fates.GetNearestFate()
         if not IsVnavmeshReadySafe() then
             yield("/echo [FATE] Waiting for vnavmesh to build...")
             Dalamud.Log("[FATE] Waiting for vnavmesh to build...")
@@ -8516,6 +8525,7 @@ function FateFarming:Run()
                 or IsLifestreamBusySafe())
         then
             State()
+        end
         end
         yield("/wait " .. tostring(MainLoopWaitSeconds or 0.25))
     end
