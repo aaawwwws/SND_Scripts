@@ -1420,7 +1420,7 @@ function AddonReady(addonName)
 end
 
 function GetLocalPlayerPosition()
-    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
     if lp == nil then
         return nil
     end
@@ -4721,7 +4721,7 @@ end
 function MoveToFate()
     SuccessiveInstanceChanges = 0
 
-    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
     if lp == nil then
         return
     end
@@ -5099,7 +5099,7 @@ function GetTargetHitboxRadius()
 end
 
 function GetPlayerHitboxRadius()
-    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
     if lp ~= nil then
         return lp.HitboxRadius
     else
@@ -6627,7 +6627,7 @@ function Ready()
         return
     end
 
-    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
     if lp == nil then
         return
     end
@@ -7304,7 +7304,7 @@ function EorzeaTimeToUnixTime(eorzeaTime)
 end
 
 function HasStatusId(statusId)
-    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
     if lp == nil then
         return false
     end
@@ -7491,7 +7491,7 @@ function IsVnavmeshMovingSafe()
 end
 
 CanUseConsumableNow = function()
-    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
     if lp == nil then
         return false
     end
@@ -7719,7 +7719,7 @@ end
 function FateFarming:Run()
     Svc = Svc or Dalamud
     Dalamud.Log("[FATE-FIXED] Run() started.")
-    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
     if lp == nil then
         local msg = "ERROR: LocalPlayer not found. Please ensure you are logged in and using SomethingNeedDoing [Expanded Edition]."
         yield("/echo [FATE] " .. msg)
@@ -8320,7 +8320,7 @@ function FateFarming:Run()
 
     Dalamud.Log("[FATE-FIXED] Entering main loop...")
     while not StopScript do
-        local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+        local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
         local isPlayerAvailable = lp ~= nil
 
         if not isPlayerAvailable then
