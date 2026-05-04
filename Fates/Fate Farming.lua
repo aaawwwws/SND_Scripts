@@ -7937,17 +7937,6 @@ function IsChocoboSummoned()
     yield("/echo [FATE] IsChocoboSummoned: pcall failed")
     return false
 end
-        else
-            Dalamud.Log("[FATE] IsChocoboSummoned: Svc.Buddies not available")
-        end
-        return false
-    end)
-    if ok then
-        return result
-    end
-    Dalamud.Log("[FATE] IsChocoboSummoned: pcall failed")
-    return false
-end
 
 function ChocoboCheck()
     if not SummonChocobo then return end
