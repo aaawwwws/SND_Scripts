@@ -7914,6 +7914,8 @@ function GetChocoboTimeRemaining()
     return -1
 end
 
+IsChocoboDebugDone = false
+
 function IsChocoboSummoned()
     local ok, result = pcall(function()
         -- Method 1: Try Svc.Buddies.Companion
@@ -7936,7 +7938,6 @@ function IsChocoboSummoned()
         end
         
         -- Method 3: Check for companion entity in object table
-        -- In FFXIV, chocobo companion appears as an entity with owner = player
         if Svc and Svc.Objects then
             local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
             if playerOk and player then
@@ -7944,12 +7945,20 @@ function IsChocoboSummoned()
                 for i = 0, math.min(Svc.Objects.Length - 1, 300) do
                     local objOk, obj = pcall(function() return Svc.Objects[i] end)
                     if objOk and obj then
-                        -- Check if this is a companion (battle buddy) by checking object kind
-                        local kindOk, kind = pcall(function() return obj.ObjectKind end)
-                        if kindOk and kind == 11 then -- ObjectKind 11 = Companion/BattleBuddy
-                            local ownerOk, owner = pcall(function() return obj.OwnerId end)
-                            if ownerOk and owner == playerId then
-                                return true
+                        local ownerOk, owner = pcall(function() return obj.OwnerId end)
+                        if ownerOk and owner == playerId then
+                            local kindOk, kind = pcall(function() return obj.ObjectKind end)
+                            local nameOk, name = pcall(function() return obj.Name end)
+                            -- Debug: log first match to see what kind companions are
+                            if not IsChocoboDebugDone and kindOk and nameOk then
+                                yield("/echo [FATE] Debug: Owned entity kind=" .. tostring(kind) .. " name=" .. tostring(name))
+                                IsChocoboDebugDone = true
+                            end
+                            -- Try various companion kinds (8=BattleNpc, 11=Companion, 2=EventNpc)
+                            if kindOk and (kind == 8 or kind == 11 or kind == 2) then
+                                if nameOk and name and string.len(tostring(name)) > 0 then
+                                    return true
+                                end
                             end
                         end
                     end
