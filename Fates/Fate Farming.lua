@@ -3557,7 +3557,7 @@ function SelectNextFate()
     else
         Dalamud.Log("[FATE] Final selected fate #" .. nextFate.fateId .. " " .. nextFate.fateName)
     end
-    yield("/wait 0.211")
+    yield("/wait " .. tostring(FastCombatPacing and 0.05 or 0.211))
     return nextFate
 end
 
@@ -4970,7 +4970,7 @@ function MoveToFate()
                     end
                 end
             end
-            yield("/wait 0.5") -- give it a moment to make sure the target sticks
+            yield("/wait " .. tostring(FastCombatPacing and 0.15 or 0.5)) -- give it a moment to make sure the target sticks
             return
         end
     end
@@ -5939,7 +5939,7 @@ function DoFate()
             LevelSyncReentryAttemptPending = false
             LastLevelSyncAttemptAt = now
             yield("/lsync")
-            yield("/wait 0.5") -- give it a second to register
+            yield("/wait " .. tostring(FastCombatPacing and 0.25 or 0.5)) -- give it a moment to register
             if Player.IsLevelSynced then
                 LevelSyncFailureCount = 0
                 LevelSyncNextAttemptAt = 0
@@ -8239,7 +8239,7 @@ function FateFarming:Run()
     FatePrefetchTtlSeconds                = 30
     MainLoopWaitSeconds                   = FastCombatPacing and 0.11 or 0.25
     FastNoFateZoneSwitchCooldownSeconds   = FastCombatPacing and 0.8 or 4
-    CombatStartBoostDurationSeconds       = 12
+    CombatStartBoostDurationSeconds       = FastCombatPacing and 6 or 12
     TeleportHysteresisEnterGain           = FastCombatPacing and 52 or 70
     TeleportHysteresisExitGain            = FastCombatPacing and 16 or 25
     NoCombatRecoveryRetargetRatio         = FastCombatPacing and 0.25 or 0.35
