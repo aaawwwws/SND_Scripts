@@ -7928,19 +7928,8 @@ function ChocoboCheck()
         return
     end
 
-    local companionOut = false
-    local ok, result = pcall(function()
-        if Svc and Svc.Buddies and Svc.Buddies.Companion then
-            local companion = Svc.Buddies.Companion
-            return companion ~= nil and companion.ObjectId ~= nil and companion.ObjectId > 0
-        end
-        return false
-    end)
-    if ok and result == true then
-        companionOut = true
-    end
-
-    if companionOut then
+    local timeRemaining = GetChocoboTimeRemaining()
+    if timeRemaining > 0 then
         return
     end
 
@@ -7951,7 +7940,7 @@ function ChocoboCheck()
     ChocoboLastSummonAttemptAt = now
 
     if Inventory.GetItemCount(4868) > 0 then
-        Dalamud.Log("[FATE] Chocobo not out, summoning...")
+        Dalamud.Log("[FATE] Chocobo not out (timeRemaining=" .. tostring(timeRemaining) .. "), summoning...")
         local greens = LANG.actions["Gysahl Greens"]
         pcall(function() yield("/item \"" .. greens .. "\"") end)
         yield("/wait 3")
