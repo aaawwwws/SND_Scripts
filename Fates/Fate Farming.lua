@@ -6496,10 +6496,11 @@ function DoFate()
     local preApproachWaitInCombat = FastCombatPacing and 0.45 or 5.004
     local targetStickWait = FastCombatPacing and 0.1 or 1
 
+    local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+    local leashSafeRadius = GetLeashSafeRetargetRadius()
+
     -- pathfind closer if enemies are too far
     if not Svc.Condition[CharacterCondition.inCombat] then
-        local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
-        local leashSafeRadius = GetLeashSafeRetargetRadius()
         if HandleMovementStuck(preferredMovePos) then
             return
         end
@@ -6510,6 +6511,16 @@ function DoFate()
                 return
             end
             if GetDistanceToTargetFlat() <= (MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius()) then
+                if OptimizeClusterMovement == true and GetDistanceToPointFlat(preferredMovePos) > 4 then
+                    local distToTargetFromPreferred = DistanceBetweenFlat(preferredMovePos, Svc.Targets.Target.Position)
+                    if distToTargetFromPreferred <= (MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius()) then
+                        if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                            IPC.vnavmesh.PathfindAndMoveTo(preferredMovePos, false)
+                        end
+                        return
+                    end
+                end
+
                 if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
                     yield("/vnav stop")
                     yield("/wait " .. stopBeforeInchWait)                                                                                                           -- short pause before inching closer
@@ -6553,7 +6564,6 @@ function DoFate()
             end
         end
     else
-        local leashSafeRadius = GetLeashSafeRetargetRadius()
         if Svc.Targets.Target ~= nil and GetDistanceToTargetFlat() > (leashSafeRadius + 5) then
             ClearTarget()
             local gotNearTarget = false
@@ -6572,6 +6582,16 @@ function DoFate()
             return
         end
         if Svc.Targets.Target ~= nil and (GetDistanceToTargetFlat() <= (MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius())) then
+            if OptimizeClusterMovement == true and GetDistanceToPointFlat(preferredMovePos) > 4 then
+                local distToTargetFromPreferred = DistanceBetweenFlat(preferredMovePos, Svc.Targets.Target.Position)
+                if distToTargetFromPreferred <= (MaxDistance + GetTargetHitboxRadius() + GetPlayerHitboxRadius()) then
+                    if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                        IPC.vnavmesh.PathfindAndMoveTo(preferredMovePos, false)
+                    end
+                    return
+                end
+            end
+
             if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
                 yield("/vnav stop")
             end
