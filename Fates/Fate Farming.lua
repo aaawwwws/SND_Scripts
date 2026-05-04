@@ -8713,7 +8713,3 @@ end
 
 local app = FateFarming:new()
 app:Run()
-n Main
-
-local app = FateFarming:new()
-app:Run()
