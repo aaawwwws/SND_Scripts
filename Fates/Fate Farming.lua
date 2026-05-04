@@ -5110,11 +5110,11 @@ function GetTargetHitboxRadius()
 end
 
 function GetPlayerHitboxRadius()
-    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
-    if lp ~= nil then
+    local lp = (Svc and Svc.ClientState and Svc.ClientState.LocalPlayer) or (ClientState and ClientState.LocalPlayer)
+    if lp ~= nil and lp.HitboxRadius ~= nil then
         return lp.HitboxRadius
     else
-        return 0
+        return 0.5
     end
 end
 
