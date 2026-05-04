@@ -315,6 +315,11 @@ This Plugins are Optional and not needed unless you have it enabled in the setti
 --------------------------------------------------------------------------------------------------------------------------------------------------------------
 ]]
 
+-- Initialize global services for better reliability
+Svc = Svc or Dalamud
+ClientState = ClientState or (Svc and Svc.ClientState)
+Player = Player or (ClientState and ClientState.LocalPlayer)
+
 local FateFarming = {}
 FateFarming.__index = FateFarming
 
@@ -322,6 +327,8 @@ FateFarming.__index = FateFarming
 luanet.load_assembly("System")
 local WebClient = luanet.import_type("System.Net.WebClient")
 local Encoding = luanet.import_type("System.Text.Encoding")
+
+Dalamud.Log("[FATE-FIXED] Script initialized with resilient detection.")
 
 function FateFarming:new()
     return setmetatable({}, FateFarming)
@@ -1413,10 +1420,11 @@ function AddonReady(addonName)
 end
 
 function GetLocalPlayerPosition()
-    if Svc.ClientState.LocalPlayer == nil then
+    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    if lp == nil then
         return nil
     end
-    return Svc.ClientState.LocalPlayer.Position
+    return lp.Position
 end
 
 function GetFateProgressValue(fate, fallback)
@@ -4713,7 +4721,8 @@ end
 function MoveToFate()
     SuccessiveInstanceChanges = 0
 
-    if Svc.ClientState.LocalPlayer == nil then
+    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    if lp == nil then
         return
     end
 
@@ -5090,8 +5099,9 @@ function GetTargetHitboxRadius()
 end
 
 function GetPlayerHitboxRadius()
-    if Svc.ClientState.LocalPlayer ~= nil then
-        return Svc.ClientState.LocalPlayer.HitboxRadius
+    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    if lp ~= nil then
+        return lp.HitboxRadius
     else
         return 0
     end
@@ -6617,7 +6627,8 @@ function Ready()
         return
     end
 
-    if Svc.ClientState.LocalPlayer == nil then
+    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    if lp == nil then
         return
     end
 
@@ -7293,10 +7304,11 @@ function EorzeaTimeToUnixTime(eorzeaTime)
 end
 
 function HasStatusId(statusId)
-    if Svc.ClientState.LocalPlayer == nil then
+    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    if lp == nil then
         return false
     end
-    local statusList = Svc.ClientState.LocalPlayer.StatusList
+    local statusList = lp.StatusList
     if statusList == nil then
         return false
     end
@@ -7479,7 +7491,8 @@ function IsVnavmeshMovingSafe()
 end
 
 CanUseConsumableNow = function()
-    if Svc.ClientState.LocalPlayer == nil then
+    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    if lp == nil then
         return false
     end
     if Svc.Condition[CharacterCondition.dead]
@@ -7704,10 +7717,13 @@ end
 --#region Main
 
 function FateFarming:Run()
-    if Player == nil then
-        local msg = "ERROR: Global 'Player' object not found. Please ensure you are using SomethingNeedDoing [Expanded Edition]."
+    Svc = Svc or Dalamud
+    Dalamud.Log("[FATE-FIXED] Run() started.")
+    local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+    if lp == nil then
+        local msg = "ERROR: LocalPlayer not found. Please ensure you are logged in and using SomethingNeedDoing [Expanded Edition]."
         yield("/echo [FATE] " .. msg)
-        Dalamud.Log("[FATE] " .. msg)
+        Dalamud.Log("[FATE-FIXED] " .. msg)
         return
     end
 
@@ -8302,10 +8318,15 @@ function FateFarming:Run()
         EnableChangeInstance = false
     end
 
-    Dalamud.Log("[FATE] Entering main loop...")
+    Dalamud.Log("[FATE-FIXED] Entering main loop...")
     while not StopScript do
-        if Svc.ClientState.LocalPlayer == nil then
-            Dalamud.Log("[FATE] Local player is nil, waiting...")
+        local lp = (Player ~= nil and Player.Available and Player) or (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer)
+        local isPlayerAvailable = lp ~= nil
+
+        if not isPlayerAvailable then
+            if os.clock() % 10 < 0.3 then
+                Dalamud.Log("[FATE-FIXED] Waiting for player to be available... (Player=" .. tostring(Player) .. ", Svc=" .. tostring(Svc) .. ")")
+            end
             yield("/wait 1")
         else
             local nearestFate = Fates.GetNearestFate()
