@@ -5273,6 +5273,72 @@ function GetCombatOpenActionCandidates()
     return {}
 end
 
+function TryActivePullNearbyEnemies(now)
+    if CurrentFate == nil or CurrentFate.isCollectionsFate or CurrentFate.isOtherNpcFate then
+        return false
+    end
+    if Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.mounted]
+        or Svc.Condition[CharacterCondition.flying]
+        or Svc.Condition[CharacterCondition.occupied]
+    then
+        return false
+    end
+
+    local pullInterval = ActivePullIntervalSeconds or 3.5
+    if now - (ActivePullLastAttemptAt or 0) < pullInterval then
+        return false
+    end
+    ActivePullLastAttemptAt = now
+
+    local pullRange = ActivePullMaxRange or 19.5
+    local fateIdFilter = CurrentFate.fateId
+    local candidates = CollectFateEnemyCandidates(fateIdFilter, true, pullRange)
+    
+    if #candidates == 0 then
+        return false
+    end
+
+    -- Filter candidates that are within fate bounds
+    local validCandidates = {}
+    for _, candidate in ipairs(candidates) do
+        if IsPositionInsideCurrentFateBounds(candidate.obj.Position, GetCurrentFateMoveBoundaryBuffer()) then
+            table.insert(validCandidates, candidate)
+        end
+    end
+
+    if #validCandidates == 0 then
+        return false
+    end
+
+    local actionCandidates = GetCombatOpenActionCandidates()
+    local pullAction = nil
+    -- Prefer the first action in the candidate list as it's usually the ranged one
+    if #actionCandidates > 0 then
+        pullAction = actionCandidates[1]
+    end
+
+    if pullAction == nil then
+        return false
+    end
+
+    -- Target the furthest unengaged enemy to maximize pull efficiency
+    table.sort(validCandidates, function(a, b) return a.dist > b.dist end)
+    local targetObj = validCandidates[1].obj
+
+    local originalTarget = Svc.Targets.Target
+    Svc.Targets.Target = targetObj
+    yield("/wait 0.1")
+    local used = TryUseActionOnTarget(pullAction)
+    if used then
+        Dalamud.Log("[FATE] Active pull attempted on " .. tostring(targetObj.Name) .. " with " .. tostring(pullAction))
+        yield("/wait 0.2")
+    end
+    Svc.Targets.Target = originalTarget
+    
+    return used
+end
+
 function TryForceCombatOpenOnTarget(now, targetDistanceFlat)
     if CurrentFate == nil or Svc.Condition[CharacterCondition.inCombat] then
         return false
@@ -6164,6 +6230,9 @@ function DoFate()
 
     -- switches to targeting forlorns for bonus (if present)
     TryTargetForlorn()
+
+    local now_pull = os.clock()
+    TryActivePullNearbyEnemies(now_pull)
 
     local activeTargetName = GetTargetName()
     if IsForlornTargetName(activeTargetName) then
