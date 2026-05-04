@@ -4687,7 +4687,6 @@ function MiddleOfFateDismount()
             else
                 yield("/vnav stop")
                 yield("/wait 0.5")
-                ChocoboCheck()
                 ResetMiddleDismountState()
                 State = CharacterState.doFate
                 Dalamud.Log("[FATE] State Change: DoFate")
@@ -8001,6 +8000,11 @@ function ChocoboCheck()
 
     local itemCount = Inventory.GetItemCount(4868)
     if itemCount > 0 then
+        -- Double-check combat state right before using item
+        if Svc.Condition[CharacterCondition.inCombat] then
+            return
+        end
+        
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
         
         -- Use item by ID (4868 = Gysahl Greens)
