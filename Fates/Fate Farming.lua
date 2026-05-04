@@ -7922,48 +7922,41 @@ function ChocoboCheck()
         or Svc.Condition[CharacterCondition.inCombat]
         or Svc.Condition[CharacterCondition.casting]
         or Svc.Condition[CharacterCondition.occupied]
-        or Svc.Condition[CharacterCondition.occupiedInEvent]
-        or Svc.Condition[CharacterCondition.occupiedInQuestEvent]
         or Svc.Condition[CharacterCondition.betweenAreas]
-        or Svc.Condition[CharacterCondition.betweenAreasForDuty]
         or Svc.Condition[CharacterCondition.dead]
-        or Svc.Condition[CharacterCondition.jumping48]
-        or Svc.Condition[CharacterCondition.jumping61]
-        or Svc.Condition[CharacterCondition.beingMoved]
     then
         return
     end
 
-    local companionSummoned = false
+    local companionOut = false
     local ok, result = pcall(function()
-        return Svc and Svc.Buddies and Svc.Buddies.Companion and Svc.Buddies.Companion.ObjectId and Svc.Buddies.Companion.ObjectId > 0
+        if Svc and Svc.Buddies and Svc.Buddies.Companion then
+            local companion = Svc.Buddies.Companion
+            return companion ~= nil and companion.ObjectId ~= nil and companion.ObjectId > 0
+        end
+        return false
     end)
     if ok and result == true then
-        companionSummoned = true
+        companionOut = true
     end
 
-    if companionSummoned then
+    if companionOut then
         return
     end
 
+    local now = os.clock()
+    if now - (ChocoboLastSummonAttemptAt or 0) < 60 then
+        return
+    end
+    ChocoboLastSummonAttemptAt = now
+
     if Inventory.GetItemCount(4868) > 0 then
-        Dalamud.Log("[FATE] Summoning Chocobo (not currently summoned)")
+        Dalamud.Log("[FATE] Chocobo not out, summoning...")
         local greens = LANG.actions["Gysahl Greens"]
-        local useOk, useErr = pcall(function()
-            yield("/item \"" .. greens .. "\"")
-        end)
-        if not useOk then
-            Dalamud.Log("[FATE] /item failed, trying /gysahl: " .. tostring(useErr))
-            pcall(function() yield("/gysahl") end)
-        end
+        pcall(function() yield("/item \"" .. greens .. "\"") end)
         yield("/wait 3")
     elseif ShouldAutoBuyGysahlGreens then
-        Dalamud.Log("[FATE] No Gysahl Greens. Flagging for purchase.")
         NeedsGysahlGreens = true
-    else
-        Dalamud.Log("[FATE] Cannot summon Chocobo: No Gysahl Greens.")
-        yield("/echo [FATE] Cannot summon Chocobo: No Gysahl Greens.")
-        SummonChocobo = false
     end
 end
 
@@ -8332,6 +8325,7 @@ function FateFarming:Run()
     StopScript                            = false
     DidFate                               = false
     NeedsGysahlGreens                     = false
+    ChocoboLastSummonAttemptAt            = 0
     RsrDynamicSingleApplied               = false
     GemAnnouncementLock                   = false
     DeathAnnouncementLock                 = false
