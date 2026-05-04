@@ -88,6 +88,9 @@ configs:
   Summon Chocobo?:
     description: ギサールの野菜を使ってバディチョコボを自動で召喚します。
     default: true
+  Auto-buy Gysahl Greens?:
+    description: ギサールの野菜が切れた際、リムサ・ロミンサで購入します。
+    default: true
   Save active FATE data?:
     description: 出現中FATEの情報をJSONLに保存する
     default: true
@@ -1227,7 +1230,6 @@ FatesData = {
             },
             blacklistedFates = {
                 "When It's So Salvage", -- terrain is terrible
-                "print('I hate snakes')"
             }
         }
     },
@@ -1449,20 +1451,6 @@ function GetFateProgressValue(fate, fallback)
         return fallback
     end
     return fate.fateObject.Progress
-end
-
-function GetFateRadiusValue(fate, fallback)
-    if fate == nil or fate.fateObject == nil or fate.fateObject.Radius == nil then
-        return fallback
-    end
-    return fate.fateObject.Radius
-end
-
-function GetFateMaxLevelValue(fate, fallback)
-    if fate == nil or fate.fateObject == nil or fate.fateObject.MaxLevel == nil then
-        return fallback
-    end
-    return fate.fateObject.MaxLevel
 end
 
 function GetFateRadiusValue(fate, fallback)
@@ -2052,26 +2040,6 @@ function MoveToTargetHitbox()
     local targetPos = Svc.Targets.Target.Position
     local distance = GetDistanceToTarget()
     if distance == 0 then return end
-
-    -- 自動突進スキル (Gap Closer) の使用
-    if not Svc.Condition[CharacterCondition.mounted] and not Svc.Condition[CharacterCondition.casting] then
-        local job = Player.Job
-        local gapCloser = nil
-        if job.Id == ClassList.pld.classId then gapCloser = "Intervention" -- PLD doesn't have a direct self gap closer like others, but we use the common name
-        elseif job.Id == ClassList.war.classId then gapCloser = "Onslaught"
-        elseif job.Id == ClassList.drk.classId then gapCloser = "Plunge" -- For level 90+ check Shadowstride or Plunge
-        elseif job.Id == ClassList.gnb.classId then gapCloser = "Rough Divide" -- or Trajectory
-        elseif job.Id == ClassList.drg.classId then gapCloser = "Spineshatter Dive" -- or Winged Glide
-        elseif job.Id == ClassList.mnk.classId then gapCloser = "Thunderclap"
-        elseif job.Id == ClassList.sam.classId then gapCloser = "Hissatsu: Gyoten"
-        elseif job.Id == ClassList.rpr.classId then gapCloser = "Hell's Ingress"
-        end
-
-        -- Check for updated DT skill names if necessary, but /ac will usually handle it
-        if gapCloser and distance > 8 and distance < 20 then
-            yield("/ac \"" .. gapCloser .. "\"")
-        end
-    end
 
     local desiredRange = math.max(0.1, GetTargetHitboxRadius() + GetPlayerHitboxRadius() + MaxDistance)
     local STOP_EPS = 0.15
@@ -3478,7 +3446,7 @@ function SelectNextFate()
                             tempFate.fateId .. " " .. tempFate.fateName .. " due to boss fate with not enough progress.")
                     end
                 elseif (tempFate.isOtherNpcFate or tempFate.isCollectionsFate) and tempFate.startTime == 0 then
-                    Dalamud.Log("[FATE] Is not an npc or collections fate")
+                    Dalamud.Log("[FATE] Is an unopened npc or collections fate")
                     if nextFate == nil then -- pick this if theres nothing else
                         Dalamud.Log("[FATE] Selecting this fate because there's nothing else so far")
                         nextFate = tempFate
@@ -5242,6 +5210,38 @@ function TryForceCombatOpenOnTarget(now, targetDistanceFlat)
     return used
 end
 
+function TryGapCloserOnTarget(distance)
+    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.casting] then
+        return false
+    end
+    if distance == nil or distance < 8 or distance > 20 then
+        return false
+    end
+
+    local job = Player.Job
+    local gapCloser = nil
+    if job.Id == ClassList.pld.classId then gapCloser = "Intervene"
+    elseif job.Id == ClassList.war.classId then gapCloser = "Onslaught"
+    elseif job.Id == ClassList.drk.classId then gapCloser = "Shadowstride"
+    elseif job.Id == ClassList.gnb.classId then gapCloser = "Trajectory"
+    elseif job.Id == ClassList.drg.classId then gapCloser = "Winged Glide"
+    elseif job.Id == ClassList.mnk.classId then gapCloser = "Thunderclap"
+    elseif job.Id == ClassList.sam.classId then gapCloser = "Hissatsu: Gyoten"
+    elseif job.Id == ClassList.rpr.classId then gapCloser = "Hell's Ingress"
+    end
+
+    if gapCloser then
+        yield("/ac \"" .. gapCloser .. "\"")
+        -- Fallback for pre-90 characters or old skill names
+        if job.Id == ClassList.drk.classId then yield("/ac \"Plunge\"")
+        elseif job.Id == ClassList.gnb.classId then yield("/ac \"Rough Divide\"")
+        elseif job.Id == ClassList.drg.classId then yield("/ac \"Spineshatter Dive\"")
+        end
+        return true
+    end
+    return false
+end
+
 function NormalizePresetName(name)
     local value = tostring(name or "")
     value = value:gsub("^%s+", "")
@@ -6236,6 +6236,8 @@ function DoFate()
             end
             if TryForceCombatOpenOnTarget(now, targetDistanceFlat) then
                 CombatOpenTargetSince = now
+            else
+                TryGapCloserOnTarget(targetDistanceFlat)
             end
 
             local retargetAfter = CombatOpenRetargetSeconds or 2.2
@@ -6524,9 +6526,9 @@ function Ready()
 
     -- 修正: セルフ修理OFFのときはボーナスバフ中でも修理(リムサ移動)を止めない
     local bonusBuffBlocksRepair = shouldWaitForBonusBuff and SelfRepair and Inventory.GetItemCount(33916) <= 0
-    if RemainingDurabilityToRepair > 0 and needsRepair.Count > 0 and not bonusBuffBlocksRepair then
+    if (RemainingDurabilityToRepair > 0 and needsRepair.Count > 0 and not bonusBuffBlocksRepair) or NeedsGysahlGreens then
         State = CharacterState.repair
-        Dalamud.Log("[FATE] State Change: Repair")
+        Dalamud.Log("[FATE] State Change: Repair (due to durability or gysahl greens)")
         return
     end
 
@@ -7217,7 +7219,7 @@ function Repair()
 
     local hawkersAlleyAethernetShard = { position = Vector3(-213.95, 15.99, 49.35) }
     if SelfRepair then
-        if Inventory.GetItemCount(33916) > 0 then
+        if Inventory.GetItemCount(33916) > 0 and needsRepair.Count > 0 then
             if AddonReady("Shop") then
                 yield("/callback Shop true -1")
                 return
@@ -7237,44 +7239,50 @@ function Repair()
                 return
             end
 
-            if needsRepair.Count > 0 then
-                if not AddonReady("Repair") then
-                    Dalamud.Log("[FATE] Opening repair menu...")
-                    yield("/generalaction " .. LANG.actions["repair"])
-                end
-            else
-                State = CharacterState.ready
-                Dalamud.Log("[FATE] State Change: Ready")
+            if not AddonReady("Repair") then
+                Dalamud.Log("[FATE] Opening repair menu...")
+                yield("/generalaction " .. LANG.actions["repair"])
             end
-        elseif ShouldAutoBuyDarkMatter then
+        elseif (needsRepair.Count > 0 and ShouldAutoBuyDarkMatter) or NeedsGysahlGreens then
+            if Inventory.GetItemCount(4868) > 0 then
+                NeedsGysahlGreens = false
+            end
             if Svc.ClientState.TerritoryType ~= 129 then
                 if Echo == "all" then
-                    yield("/echo Out of Dark Matter! Purchasing more from Limsa Lominsa.")
+                    local itemType = NeedsGysahlGreens and "Gysahl Greens" or "Dark Matter"
+                    yield("/echo Out of " .. itemType .. "! Purchasing more from Limsa Lominsa.")
                 end
                 TeleportTo("Limsa Lominsa Lower Decks")
                 return
             end
 
-            local darkMatterVendor = { npcName = "Unsynrael", position = Vector3(-257.71, 16.19, 50.11), wait = 0.08 }
-            if GetDistanceToPoint(darkMatterVendor.position) > (DistanceBetween(hawkersAlleyAethernetShard.position, darkMatterVendor.position) + 10) then
+            local vendor = NeedsGysahlGreens 
+                and { npcName = "Bango Zango", position = Vector3(-242.45, 16.19, 41.69), wait = 0.08 }
+                or { npcName = "Unsynrael", position = Vector3(-257.71, 16.19, 50.11), wait = 0.08 }
+
+            if GetDistanceToPoint(vendor.position) > (DistanceBetween(hawkersAlleyAethernetShard.position, vendor.position) + 10) then
                 if not TryLocalAetheryteShortcut("Hawkers' Alley") then
                     Dalamud.Log("[FATE] Hawkers' Alley aethernet shortcut failed. Walking to vendor.")
                 end
             elseif AddonReady("TelepotTown") then
                 yield("/callback TelepotTown false -1")
-            elseif GetDistanceToPoint(darkMatterVendor.position) > 5 then
+            elseif GetDistanceToPoint(vendor.position) > 5 then
                 if not (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress()) then
-                    IPC.vnavmesh.PathfindAndMoveTo(darkMatterVendor.position, false)
+                    IPC.vnavmesh.PathfindAndMoveTo(vendor.position, false)
                 end
             else
-                if Svc.Targets.Target == nil or GetTargetName() ~= darkMatterVendor.npcName then
-                    yield("/target " .. darkMatterVendor.npcName)
+                if Svc.Targets.Target == nil or GetTargetName() ~= vendor.npcName then
+                    yield("/target " .. vendor.npcName)
                 elseif not Svc.Condition[CharacterCondition.occupiedInQuestEvent] then
                     yield("/interact")
                 elseif AddonReady("SelectYesno") then
                     yield("/callback SelectYesno true 0")
                 elseif Addons.GetAddon("Shop") then
-                    yield("/callback Shop true 0 40 99")
+                    if NeedsGysahlGreens then
+                        yield("/callback Shop true 0 0 99") -- Buying Gysahl Greens (assuming index 0)
+                    else
+                        yield("/callback Shop true 0 40 99") -- Buying Dark Matter
+                    end
                 end
             end
         else
@@ -7686,6 +7694,9 @@ function ChocoboCheck()
             Dalamud.Log("[FATE] Summoning Chocobo")
             yield("/item \"" .. greens .. "\"")
             yield("/wait 3")
+        elseif ShouldAutoBuyGysahlGreens then
+            Dalamud.Log("[FATE] No Gysahl Greens. Flagging for purchase.")
+            NeedsGysahlGreens = true
         else
             Dalamud.Log("[FATE] Cannot summon Chocobo: No Gysahl Greens.")
             yield("/echo [FATE] Cannot summon Chocobo: No Gysahl Greens.")
@@ -7908,6 +7919,8 @@ function FateFarming:Run()
     NoMovementTeleportTimeout        = Config.Get("No movement teleport timeout (secs)")
     PreferDensePulls                 = Config.Get("Prefer dense mob pulls?")
     TargetEngagedEnemies             = Config.Get("Target engaged enemies?")
+    AggressivePulling                = Config.Get("Aggressive pulling?")
+    MaxPullCount                     = Config.Get("Max pull count")
     DensePullClusterRadius           = Config.Get("Dense pull cluster radius")
     DensePullMinimumEnemies          = Config.Get("Dense pull minimum enemies")
     OptimizeClusterMovement          = Config.Get("Optimize movement to mob clusters?")
@@ -8052,6 +8065,7 @@ function FateFarming:Run()
     -- Variable initialzation
     StopScript                            = false
     DidFate                               = false
+    NeedsGysahlGreens                     = false
     RsrDynamicSingleApplied               = false
     GemAnnouncementLock                   = false
     DeathAnnouncementLock                 = false
@@ -8288,6 +8302,7 @@ function FateFarming:Run()
     CompanionScriptMode        = Config.Get("Companion Script Mode")
     DiscordWebhookUrl          = Config.Get("Discord Webhook URL")
     SummonChocobo              = Config.Get("Summon Chocobo?")
+    ShouldAutoBuyGysahlGreens   = Config.Get("Auto-buy Gysahl Greens?")
     -- 出現中FATEデータ保存
     FateDataLogEnabled         = ParseBool(Config.Get("Save active FATE data?"), true)
     FateDataLogIntervalSeconds = tonumber(Config.Get("FATE data log interval (secs)"))
