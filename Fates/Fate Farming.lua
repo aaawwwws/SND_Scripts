@@ -7917,20 +7917,44 @@ end
 
 function IsChocoboSummoned()
     local ok, result = pcall(function()
-        -- Try Svc.Buddies.Companion first
+        -- Method 1: Try Svc.Buddies.Companion
         if Svc and Svc.Buddies then
-            local companion = Svc.Buddies.Companion
-            if companion ~= nil then
-                local timeLeft = companion.TimeLeft
-                return timeLeft > 0
+            local buddyOk, hasBuddy = pcall(function() return Svc.Buddies.Companion ~= nil end)
+            if buddyOk and hasBuddy then
+                local timeLeftOk, timeLeft = pcall(function() return Svc.Buddies.Companion.TimeLeft end)
+                if timeLeftOk and type(timeLeft) == "number" and timeLeft > 0 then
+                    return true
+                end
             end
         end
         
-        -- Fallback: Try SndGameUtils
+        -- Method 2: Try SndGameUtils
         if SndGameUtils ~= nil then
             local utilsOk, time = pcall(function() return SndGameUtils.GetBuddyTimeRemaining() end)
             if utilsOk and type(time) == "number" and time > 0 then
                 return true
+            end
+        end
+        
+        -- Method 3: Check for companion entity in object table
+        -- In FFXIV, chocobo companion appears as an entity with owner = player
+        if Svc and Svc.Objects then
+            local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
+            if playerOk and player then
+                local playerId = player.EntityId
+                for i = 0, math.min(Svc.Objects.Length - 1, 300) do
+                    local objOk, obj = pcall(function() return Svc.Objects[i] end)
+                    if objOk and obj then
+                        -- Check if this is a companion (battle buddy) by checking object kind
+                        local kindOk, kind = pcall(function() return obj.ObjectKind end)
+                        if kindOk and kind == 11 then -- ObjectKind 11 = Companion/BattleBuddy
+                            local ownerOk, owner = pcall(function() return obj.OwnerId end)
+                            if ownerOk and owner == playerId then
+                                return true
+                            end
+                        end
+                    end
+                end
             end
         end
         
@@ -7958,6 +7982,7 @@ function ChocoboCheck()
 
     local isSummoned = IsChocoboSummoned()
     if isSummoned then
+        yield("/echo [FATE] ChocoboCheck: Chocobo is already summoned")
         return
     end
 
