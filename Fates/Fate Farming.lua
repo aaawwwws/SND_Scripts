@@ -7968,10 +7968,7 @@ end
 
 function ChocoboCheck()
     if not SummonChocobo then return end
-    if Svc.Condition[CharacterCondition.mounted]
-        or Svc.Condition[CharacterCondition.mounting57]
-        or Svc.Condition[CharacterCondition.mounting64]
-        or Svc.Condition[CharacterCondition.inCombat]
+    if Svc.Condition[CharacterCondition.inCombat]
         or Svc.Condition[CharacterCondition.casting]
         or Svc.Condition[CharacterCondition.occupied]
         or Svc.Condition[CharacterCondition.betweenAreas]
@@ -7982,7 +7979,6 @@ function ChocoboCheck()
 
     local isSummoned = IsChocoboSummoned()
     if isSummoned then
-        yield("/echo [FATE] ChocoboCheck: Chocobo is already summoned")
         return
     end
 
@@ -7992,15 +7988,31 @@ function ChocoboCheck()
     end
     ChocoboLastSummonAttemptAt = now
 
+    -- Dismount if mounted (items can't be used while mounted)
+    if Svc.Condition[CharacterCondition.mounted] then
+        yield("/ac dismount")
+        yield("/wait 2")
+        -- Check if dismounted successfully
+        if Svc.Condition[CharacterCondition.mounted] then
+            yield("/echo [FATE] Failed to dismount, cannot summon chocobo")
+            return
+        end
+    end
+
     local itemCount = Inventory.GetItemCount(4868)
     if itemCount > 0 then
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
-        local greens = LANG.actions["Gysahl Greens"]
         
-        local useOk, useErr = pcall(function() yield("/item \"" .. greens .. "\"") end)
+        -- Use item by ID (4868 = Gysahl Greens)
+        local useOk, useErr = pcall(function() yield("/item 4868") end)
         if not useOk then
-            yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(useErr))
-            return
+            yield("/echo [FATE] Failed to use Gysahl Greens by ID: " .. tostring(useErr))
+            -- Fallback: try by name
+            local greens = LANG.actions["Gysahl Greens"]
+            local fallbackOk, fallbackErr = pcall(function() yield("/item \"" .. greens .. "\"") end)
+            if not fallbackOk then
+                yield("/echo [FATE] Fallback also failed: " .. tostring(fallbackErr))
+            end
         end
         yield("/wait 5")
         
