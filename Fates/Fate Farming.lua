@@ -7918,15 +7918,25 @@ end
 function IsChocoboSummoned()
     local ok, result = pcall(function()
         if Svc and Svc.Buddies then
-            -- Companion オブジェクトが存在するかチェック
             local companion = Svc.Buddies.Companion
             if companion ~= nil then
                 local timeLeft = companion.TimeLeft
-                Dalamud.Log("[FATE] IsChocoboSummoned: Companion exists, TimeLeft=" .. tostring(timeLeft))
+                yield("/echo [FATE] IsChocoboSummoned: Companion exists, TimeLeft=" .. tostring(timeLeft))
                 return timeLeft > 0
             else
-                Dalamud.Log("[FATE] IsChocoboSummoned: Companion is nil")
+                yield("/echo [FATE] IsChocoboSummoned: Companion is nil")
             end
+        else
+            yield("/echo [FATE] IsChocoboSummoned: Svc.Buddies not available")
+        end
+        return false
+    end)
+    if ok then
+        return result
+    end
+    yield("/echo [FATE] IsChocoboSummoned: pcall failed")
+    return false
+end
         else
             Dalamud.Log("[FATE] IsChocoboSummoned: Svc.Buddies not available")
         end
@@ -7955,7 +7965,7 @@ function ChocoboCheck()
 
     local isSummoned = IsChocoboSummoned()
     if isSummoned then
-        Dalamud.Log("[FATE] ChocoboCheck: Chocobo is already summoned, skipping")
+        yield("/echo [FATE] ChocoboCheck: Chocobo is already summoned, skipping")
         return
     end
 
@@ -7966,18 +7976,17 @@ function ChocoboCheck()
     ChocoboLastSummonAttemptAt = now
 
     if Inventory.GetItemCount(4868) > 0 then
-        Dalamud.Log("[FATE] Chocobo not summoned, attempting to summon...")
+        yield("/echo [FATE] Chocobo not summoned, attempting to summon...")
         local greens = LANG.actions["Gysahl Greens"]
         
-        -- 使用前に再度チョコボの状態を確認
         if IsChocoboSummoned() then
-            Dalamud.Log("[FATE] Chocobo summoned detected before using item, aborting")
+            yield("/echo [FATE] Chocobo summoned detected before using item, aborting")
             return
         end
         
         local useOk, useErr = pcall(function() yield("/item \"" .. greens .. "\"") end)
         if not useOk then
-            Dalamud.Log("[FATE] Failed to use Gysahl Greens: " .. tostring(useErr))
+            yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(useErr))
         end
         yield("/wait 3")
     elseif ShouldAutoBuyGysahlGreens then
