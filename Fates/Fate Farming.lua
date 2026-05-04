@@ -4686,6 +4686,7 @@ function MiddleOfFateDismount()
                 Dismount(true)
             else
                 yield("/vnav stop")
+                ChocoboCheck()
                 ResetMiddleDismountState()
                 State = CharacterState.doFate
                 Dalamud.Log("[FATE] State Change: DoFate")
@@ -5345,25 +5346,20 @@ function TryActivePullNearbyEnemies(now)
     table.sort(validCandidates, function(a, b) return a.dist < b.dist end)
 
     local pullCount = math.min(maxTargets, #validCandidates)
-    local originalTarget = Svc.Targets.Target
     local pulledAny = false
 
     for i = 1, pullCount do
         local targetObj = validCandidates[i].obj
         if targetObj ~= nil and not targetObj.IsDead and targetObj.IsTargetable then
             Svc.Targets.Target = targetObj
-            yield("/wait 0.1")
+            yield("/wait 0.2")
             local used = TryUseActionOnTarget(pullAction)
             if used then
                 Dalamud.Log("[FATE] Active pull " .. i .. "/" .. pullCount .. " on " .. tostring(targetObj.Name:GetText()) .. " with " .. tostring(pullAction))
                 pulledAny = true
-                yield("/wait 0.15")
+                yield("/wait 0.3")
             end
         end
-    end
-
-    if originalTarget ~= nil and not originalTarget.IsDead then
-        Svc.Targets.Target = originalTarget
     end
 
     return pulledAny
@@ -6308,7 +6304,13 @@ function DoFate()
         and not Svc.Condition[CharacterCondition.casting]
     then
         local currentTargetName = GetTargetName()
-        if not IsForlornTargetName(currentTargetName) then
+        local pullCooldownActive = (ActivePullLastAttemptAt or 0) > 0
+            and (os.clock() - ActivePullLastAttemptAt) < 1.5
+        local hasValidPullTarget = Svc.Targets.Target ~= nil
+            and not Svc.Targets.Target.IsDead
+            and IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer())
+
+        if not IsForlornTargetName(currentTargetName) and not (pullCooldownActive and hasValidPullTarget) then
             local leashSafeRadius = GetLeashSafeRetargetRadius()
             local farPullRadius = math.max((DynamicAoeCheckRadius or 30), (ClusterMoveRadius or 40),
                 fateRadiusForAcquire + 15, boostAcquireRadius or 0)
