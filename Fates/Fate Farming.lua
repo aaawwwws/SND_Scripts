@@ -7916,7 +7916,23 @@ end
 
 function ChocoboCheck()
     if not SummonChocobo then return end
-    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] or Svc.Condition[CharacterCondition.inCombat] or Svc.Condition[CharacterCondition.casting] then return end
+    if Svc.Condition[CharacterCondition.mounted]
+        or Svc.Condition[CharacterCondition.mounting57]
+        or Svc.Condition[CharacterCondition.mounting64]
+        or Svc.Condition[CharacterCondition.inCombat]
+        or Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.occupied]
+        or Svc.Condition[CharacterCondition.occupiedInEvent]
+        or Svc.Condition[CharacterCondition.occupiedInQuestEvent]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or Svc.Condition[CharacterCondition.betweenAreasForDuty]
+        or Svc.Condition[CharacterCondition.dead]
+        or Svc.Condition[CharacterCondition.jumping48]
+        or Svc.Condition[CharacterCondition.jumping61]
+        or Svc.Condition[CharacterCondition.beingMoved]
+    then
+        return
+    end
 
     local companionSummoned = false
     local ok, result = pcall(function()
@@ -7930,10 +7946,16 @@ function ChocoboCheck()
         return
     end
 
-    local greens = LANG.actions["Gysahl Greens"]
     if Inventory.GetItemCount(4868) > 0 then
         Dalamud.Log("[FATE] Summoning Chocobo (not currently summoned)")
-        yield("/item \"" .. greens .. "\"")
+        local greens = LANG.actions["Gysahl Greens"]
+        local useOk, useErr = pcall(function()
+            yield("/item \"" .. greens .. "\"")
+        end)
+        if not useOk then
+            Dalamud.Log("[FATE] /item failed, trying /gysahl: " .. tostring(useErr))
+            pcall(function() yield("/gysahl") end)
+        end
         yield("/wait 3")
     elseif ShouldAutoBuyGysahlGreens then
         Dalamud.Log("[FATE] No Gysahl Greens. Flagging for purchase.")
