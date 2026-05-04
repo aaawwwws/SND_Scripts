@@ -131,6 +131,24 @@ configs:
     default: 1
     min: 1
     max: 20
+  Active pull enabled?:
+    description: 戦闘中に未戦闘の敵へ遠距離攻撃でpullし、複数の敵を引き寄せます。
+    default: true
+  Active pull interval (secs):
+    description: pullを試行する間隔です。短いほど多くの敵を引き寄せます。
+    default: 2.0
+    min: 0.5
+    max: 10
+  Active pull max targets:
+    description: 1サイクルでpullする最大敵数です。
+    default: 3
+    min: 1
+    max: 10
+  Active pull max range:
+    description: pull対象の最大距離です。
+    default: 25
+    min: 5
+    max: 30
   Optimize movement to mob clusters?:
     description: FATE移動中に敵の密集地点を優先して経由し、範囲狩りしやすい位置取りを行います。
     default: true
@@ -5274,6 +5292,9 @@ function GetCombatOpenActionCandidates()
 end
 
 function TryActivePullNearbyEnemies(now)
+    if ActivePullEnabled == false then
+        return false
+    end
     if CurrentFate == nil or CurrentFate.isCollectionsFate or CurrentFate.isOtherNpcFate then
         return false
     end
@@ -5285,21 +5306,21 @@ function TryActivePullNearbyEnemies(now)
         return false
     end
 
-    local pullInterval = ActivePullIntervalSeconds or 3.5
+    local pullInterval = ActivePullIntervalSeconds or 2.0
     if now - (ActivePullLastAttemptAt or 0) < pullInterval then
         return false
     end
     ActivePullLastAttemptAt = now
 
-    local pullRange = ActivePullMaxRange or 19.5
+    local pullRange = ActivePullMaxRange or 25
+    local maxTargets = ActivePullMaxTargets or 3
     local fateIdFilter = CurrentFate.fateId
     local candidates = CollectFateEnemyCandidates(fateIdFilter, true, pullRange)
-    
+
     if #candidates == 0 then
         return false
     end
 
-    -- Filter candidates that are within fate bounds
     local validCandidates = {}
     for _, candidate in ipairs(candidates) do
         if IsPositionInsideCurrentFateBounds(candidate.obj.Position, GetCurrentFateMoveBoundaryBuffer()) then
@@ -5313,7 +5334,6 @@ function TryActivePullNearbyEnemies(now)
 
     local actionCandidates = GetCombatOpenActionCandidates()
     local pullAction = nil
-    -- Prefer the first action in the candidate list as it's usually the ranged one
     if #actionCandidates > 0 then
         pullAction = actionCandidates[1]
     end
@@ -5322,21 +5342,31 @@ function TryActivePullNearbyEnemies(now)
         return false
     end
 
-    -- Target the furthest unengaged enemy to maximize pull efficiency
-    table.sort(validCandidates, function(a, b) return a.dist > b.dist end)
-    local targetObj = validCandidates[1].obj
+    table.sort(validCandidates, function(a, b) return a.dist < b.dist end)
 
+    local pullCount = math.min(maxTargets, #validCandidates)
     local originalTarget = Svc.Targets.Target
-    Svc.Targets.Target = targetObj
-    yield("/wait 0.1")
-    local used = TryUseActionOnTarget(pullAction)
-    if used then
-        Dalamud.Log("[FATE] Active pull attempted on " .. tostring(targetObj.Name) .. " with " .. tostring(pullAction))
-        yield("/wait 0.2")
+    local pulledAny = false
+
+    for i = 1, pullCount do
+        local targetObj = validCandidates[i].obj
+        if targetObj ~= nil and not targetObj.IsDead and targetObj.IsTargetable then
+            Svc.Targets.Target = targetObj
+            yield("/wait 0.1")
+            local used = TryUseActionOnTarget(pullAction)
+            if used then
+                Dalamud.Log("[FATE] Active pull " .. i .. "/" .. pullCount .. " on " .. tostring(targetObj.Name:GetText()) .. " with " .. tostring(pullAction))
+                pulledAny = true
+                yield("/wait 0.15")
+            end
+        end
     end
-    Svc.Targets.Target = originalTarget
-    
-    return used
+
+    if originalTarget ~= nil and not originalTarget.IsDead then
+        Svc.Targets.Target = originalTarget
+    end
+
+    return pulledAny
 end
 
 function TryForceCombatOpenOnTarget(now, targetDistanceFlat)
@@ -8121,6 +8151,10 @@ function FateFarming:Run()
     MaxPullCount                     = Config.Get("Max pull count")
     DensePullClusterRadius           = Config.Get("Dense pull cluster radius")
     DensePullMinimumEnemies          = Config.Get("Dense pull minimum enemies")
+    ActivePullEnabled                = Config.Get("Active pull enabled?")
+    ActivePullIntervalSeconds        = Config.Get("Active pull interval (secs)")
+    ActivePullMaxTargets             = Config.Get("Active pull max targets")
+    ActivePullMaxRange               = Config.Get("Active pull max range")
     OptimizeClusterMovement          = Config.Get("Optimize movement to mob clusters?")
     ClusterMoveRadius                = Config.Get("Cluster movement radius")
     ClusterMoveMinimumEnemies        = Config.Get("Cluster movement minimum enemies")
