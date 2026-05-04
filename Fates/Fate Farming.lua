@@ -145,10 +145,10 @@ configs:
     min: 1
     max: 10
   Active pull max range:
-    description: pull対象の最大距離です。
-    default: 25
+    description: pull対象の最大距離です。spawn地点から離れすぎるとリセットされるので控えめに。
+    default: 15
     min: 5
-    max: 30
+    max: 25
   Optimize movement to mob clusters?:
     description: FATE移動中に敵の密集地点を優先して経由し、範囲狩りしやすい位置取りを行います。
     default: true
@@ -7918,22 +7918,30 @@ function ChocoboCheck()
     if not SummonChocobo then return end
     if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] or Svc.Condition[CharacterCondition.inCombat] or Svc.Condition[CharacterCondition.casting] then return end
 
-    local timeRemaining = GetChocoboTimeRemaining()
-    local needsSummon = timeRemaining < 0 or (timeRemaining >= 0 and timeRemaining < 300)
-    if needsSummon then
-        local greens = LANG.actions["Gysahl Greens"]
-        if Inventory.GetItemCount(4868) > 0 then
-            Dalamud.Log("[FATE] Summoning Chocobo (timeRemaining=" .. tostring(timeRemaining) .. ")")
-            yield("/ac \"" .. greens .. "\"")
-            yield("/wait 3")
-        elseif ShouldAutoBuyGysahlGreens then
-            Dalamud.Log("[FATE] No Gysahl Greens. Flagging for purchase.")
-            NeedsGysahlGreens = true
-        else
-            Dalamud.Log("[FATE] Cannot summon Chocobo: No Gysahl Greens.")
-            yield("/echo [FATE] Cannot summon Chocobo: No Gysahl Greens.")
-            SummonChocobo = false
-        end
+    local companionSummoned = false
+    local ok, result = pcall(function()
+        return Svc and Svc.Buddies and Svc.Buddies.Companion and Svc.Buddies.Companion.ObjectId and Svc.Buddies.Companion.ObjectId > 0
+    end)
+    if ok and result == true then
+        companionSummoned = true
+    end
+
+    if companionSummoned then
+        return
+    end
+
+    local greens = LANG.actions["Gysahl Greens"]
+    if Inventory.GetItemCount(4868) > 0 then
+        Dalamud.Log("[FATE] Summoning Chocobo (not currently summoned)")
+        yield("/item \"" .. greens .. "\"")
+        yield("/wait 3")
+    elseif ShouldAutoBuyGysahlGreens then
+        Dalamud.Log("[FATE] No Gysahl Greens. Flagging for purchase.")
+        NeedsGysahlGreens = true
+    else
+        Dalamud.Log("[FATE] Cannot summon Chocobo: No Gysahl Greens.")
+        yield("/echo [FATE] Cannot summon Chocobo: No Gysahl Greens.")
+        SummonChocobo = false
     end
 end
 
