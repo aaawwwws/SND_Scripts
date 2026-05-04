@@ -1427,7 +1427,13 @@ function GetLocalPlayerPosition()
         return ClientState.LocalPlayer.Position
     end
     if Player and Player.Available then
-        return Player.Position or Vector3(Player.X, Player.Y, Player.Z)
+        if Player.Position then
+            return Player.Position
+        end
+        local obj = Player.Object or Player.Entity
+        if obj and obj.Position then
+            return obj.Position
+        end
     end
     return nil
 end
