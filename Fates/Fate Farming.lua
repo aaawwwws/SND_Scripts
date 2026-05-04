@@ -4713,7 +4713,7 @@ end
 function MoveToFate()
     SuccessiveInstanceChanges = 0
 
-    if not Player.Available then
+    if Svc.ClientState.LocalPlayer == nil then
         return
     end
 
@@ -6617,7 +6617,7 @@ function Ready()
         return
     end
 
-    if not Player.Available then
+    if Svc.ClientState.LocalPlayer == nil then
         return
     end
 
@@ -7704,7 +7704,14 @@ end
 --#region Main
 
 function FateFarming:Run()
-    CharacterState            = {
+    if Player == nil then
+        local msg = "ERROR: Global 'Player' object not found. Please ensure you are using SomethingNeedDoing [Expanded Edition]."
+        yield("/echo [FATE] " .. msg)
+        Dalamud.Log("[FATE] " .. msg)
+        return
+    end
+
+    CharacterState = {
         ready                  = Ready,
         dead                   = HandleDeath,
         unexpectedCombat       = HandleUnexpectedCombat,
@@ -7727,7 +7734,7 @@ function FateFarming:Run()
     }
 
     --- Fate state enum mapping (values confirmed from FFXIV SND)
-    FateState                 = {
+    FateState      = {
         None      = 0, -- no state / unknown
         Preparing = 1, -- fate is setting up
         Waiting   = 2, -- waiting before spawn
@@ -7739,15 +7746,15 @@ function FateFarming:Run()
     }
 
     -- 言語設定の初期化
-    GameLanguage              = Svc.ClientState.ClientLanguage:ToString()
-    LANG                      = GetLangTable(GameLanguage)
+    GameLanguage   = Svc.ClientState.ClientLanguage:ToString()
+    LANG           = GetLangTable(GameLanguage)
 
     -- Settings Area
     -- Buffs
-    Food                      = TrimString(Config.Get("Food"))
-    Potion                    = TrimString(Config.Get("Potion"))
+    Food           = TrimString(Config.Get("Food"))
+    Potion         = TrimString(Config.Get("Potion"))
 
-    MountToUse                = "mount roulette" --The mount youd like to use when flying between fates
+    MountToUse     = "mount roulette" --The mount youd like to use when flying between fates
 
     -- Retainer
 
@@ -8218,7 +8225,14 @@ function FateFarming:Run()
     SetMaxDistance()
 
     --Set selected zone
-    SelectedZone = SelectNextZone()
+    while SelectedZone == nil or SelectedZone.zoneId == nil or SelectedZone.zoneId == 0 do
+        SelectedZone = SelectNextZone()
+        if SelectedZone == nil or SelectedZone.zoneId == nil or SelectedZone.zoneId == 0 then
+            Dalamud.Log("[FATE] Waiting for valid zone ID...")
+            yield("/wait 1")
+        end
+    end
+
     if SelectedZone.zoneName ~= "" and Echo == "all" then
         yield("/echo [FATE] Farming " .. SelectedZone.zoneName)
     end
@@ -8278,14 +8292,7 @@ function FateFarming:Run()
     end
 
     Dalamud.Log("[FATE] Starting fate farming script.")
-
-    if Svc.ClientState.LocalPlayer == nil then
-        Dalamud.Log("[FATE] Waiting for local player to be ready...")
-        while Svc.ClientState.LocalPlayer == nil do
-            yield("/wait 1")
-        end
-        Dalamud.Log("[FATE] Local player is now ready.")
-    end
+    Dalamud.Log("[FATE] Initializing character state...")
 
     State = CharacterState.ready
     CurrentFate = nil
@@ -8295,237 +8302,249 @@ function FateFarming:Run()
         EnableChangeInstance = false
     end
 
+    Dalamud.Log("[FATE] Entering main loop...")
     while not StopScript do
         if Svc.ClientState.LocalPlayer == nil then
+            Dalamud.Log("[FATE] Local player is nil, waiting...")
             yield("/wait 1")
         else
             local nearestFate = Fates.GetNearestFate()
-        if not IsVnavmeshReadySafe() then
-            yield("/echo [FATE] Waiting for vnavmesh to build...")
-            Dalamud.Log("[FATE] Waiting for vnavmesh to build...")
-            repeat
-                yield("/wait 1")
-            until IsVnavmeshReadySafe()
-        end
-        if NoMovementTeleportTimeout > 0 then
-            local currentPos = GetLocalPlayerPosition()
-            if currentPos == nil then
-                LastMovePosition = nil
-                LastMoveTimestamp = os.clock()
-            else
-                if LastMovePosition == nil then
-                    LastMovePosition = currentPos
+            if not IsVnavmeshReadySafe() then
+                yield("/echo [FATE] Waiting for vnavmesh to build...")
+                Dalamud.Log("[FATE] Waiting for vnavmesh to build...")
+                local vnavWaitStart = os.clock()
+                repeat
+                    yield("/wait 2")
+                    if os.clock() - vnavWaitStart > 10 then
+                        Dalamud.Log("[FATE] Still waiting for vnavmesh to build (elapsed: " .. math.floor(os.clock() - vnavWaitStart) .. "s)")
+                        vnavWaitStart = os.clock()
+                    end
+                until IsVnavmeshReadySafe()
+                Dalamud.Log("[FATE] vnavmesh is now ready.")
+            end
+            if NoMovementTeleportTimeout > 0 then
+                local currentPos = GetLocalPlayerPosition()
+                if currentPos == nil then
+                    LastMovePosition = nil
                     LastMoveTimestamp = os.clock()
                 else
-                    local moveDist = DistanceBetween(currentPos, LastMovePosition)
-                    if moveDist > 1 then
+                    if LastMovePosition == nil then
                         LastMovePosition = currentPos
                         LastMoveTimestamp = os.clock()
                     else
-                        local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
-                        local stateBlocksIdleRecovery = State == CharacterState.dead
-                            or State == CharacterState.waitForContinuation
-                            or State == CharacterState.collectionsFateTurnIn
-                            or State == CharacterState.processRetainers
-                            or State == CharacterState.repair
-                            or State == CharacterState.exchangingVouchers
-                            or State == CharacterState.gcTurnIn
-                            or State == CharacterState.extractMateria
-                            or State == CharacterState.changingInstances
-                            or State == CharacterState.changeInstanceDismount
-                        local shouldCheckIdle = not Svc.Condition[CharacterCondition.inCombat]
-                            and not Svc.Condition[CharacterCondition.betweenAreas]
-                            and not Svc.Condition[CharacterCondition.betweenAreasForDuty]
-                            and not Svc.Condition[CharacterCondition.casting]
-                            and not Svc.Condition[CharacterCondition.occupied]
-                            and not Svc.Condition[CharacterCondition.occupiedInEvent]
-                            and not Svc.Condition[CharacterCondition.occupiedInQuestEvent]
-                            and not Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
-                            and not Svc.Condition[CharacterCondition.occupiedSummoningBell]
-                            and not stateBlocksIdleRecovery
-                            and not IsLifestreamBusySafe()
-                            and not navBusy
-                        if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
-                            local shouldPreserveBonusBuff = ShouldPreserveBonusBuffForZoneSwitch(true)
-                            local timeoutZoneName = (SelectedZone and SelectedZone.zoneName) or "Unknown Zone"
-                            local timeoutMsg = string.format(
-                                "[FATE] No-movement timeout triggered in zone: %s",
-                                tostring(timeoutZoneName)
-                            )
-                            local currentFateStillInProgress = false
-                            if CurrentFate ~= nil and IsFateActive(CurrentFate.fateObject) then
-                                local currentProgress = GetFateProgressValue(CurrentFate, nil)
-                                currentFateStillInProgress = currentProgress ~= nil and currentProgress < 100
-                            end
-                            Dalamud.Log(timeoutMsg)
-                            SendDiscordMessage(timeoutMsg)
-                            if currentFateStillInProgress then
-                                Dalamud.Log(
-                                    "[FATE] No movement detected, but current fate is still active. Repathing to fate instead of switching."
+                        local moveDist = DistanceBetween(currentPos, LastMovePosition)
+                        if moveDist > 1 then
+                            LastMovePosition = currentPos
+                            LastMoveTimestamp = os.clock()
+                        else
+                            local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
+                            local stateBlocksIdleRecovery = State == CharacterState.dead
+                                or State == CharacterState.waitForContinuation
+                                or State == CharacterState.collectionsFateTurnIn
+                                or State == CharacterState.processRetainers
+                                or State == CharacterState.repair
+                                or State == CharacterState.exchangingVouchers
+                                or State == CharacterState.gcTurnIn
+                                or State == CharacterState.extractMateria
+                                or State == CharacterState.changingInstances
+                                or State == CharacterState.changeInstanceDismount
+                            local shouldCheckIdle = not Svc.Condition[CharacterCondition.inCombat]
+                                and not Svc.Condition[CharacterCondition.betweenAreas]
+                                and not Svc.Condition[CharacterCondition.betweenAreasForDuty]
+                                and not Svc.Condition[CharacterCondition.casting]
+                                and not Svc.Condition[CharacterCondition.occupied]
+                                and not Svc.Condition[CharacterCondition.occupiedInEvent]
+                                and not Svc.Condition[CharacterCondition.occupiedInQuestEvent]
+                                and not Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
+                                and not Svc.Condition[CharacterCondition.occupiedSummoningBell]
+                                and not stateBlocksIdleRecovery
+                                and not IsLifestreamBusySafe()
+                                and not navBusy
+                            if shouldCheckIdle and os.clock() - LastMoveTimestamp >= NoMovementTeleportTimeout then
+                                local shouldPreserveBonusBuff = ShouldPreserveBonusBuffForZoneSwitch(true)
+                                local timeoutZoneName = (SelectedZone and SelectedZone.zoneName) or "Unknown Zone"
+                                local timeoutMsg = string.format(
+                                    "[FATE] No-movement timeout triggered in zone: %s",
+                                    tostring(timeoutZoneName)
                                 )
-                                LastMoveTimestamp = os.clock()
-                                LastMovePosition = currentPos
-                                yield("/vnav stop")
-                                local recoveryPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
-                                if recoveryPos ~= nil then
-                                    IPC.vnavmesh.PathfindAndMoveTo(recoveryPos, Player.CanFly and SelectedZone.flying)
-                                    State = CharacterState.moveToFate
+                                local currentFateStillInProgress = false
+                                if CurrentFate ~= nil and IsFateActive(CurrentFate.fateObject) then
+                                    local currentProgress = GetFateProgressValue(CurrentFate, nil)
+                                    currentFateStillInProgress = currentProgress ~= nil and currentProgress < 100
+                                end
+                                Dalamud.Log(timeoutMsg)
+                                SendDiscordMessage(timeoutMsg)
+                                if currentFateStillInProgress then
+                                    Dalamud.Log(
+                                        "[FATE] No movement detected, but current fate is still active. Repathing to fate instead of switching."
+                                    )
+                                    LastMoveTimestamp = os.clock()
+                                    LastMovePosition = currentPos
+                                    yield("/vnav stop")
+                                    local recoveryPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate
+                                        .position
+                                    if recoveryPos ~= nil then
+                                        IPC.vnavmesh.PathfindAndMoveTo(recoveryPos, Player.CanFly and SelectedZone
+                                            .flying)
+                                        State = CharacterState.moveToFate
+                                    else
+                                        State = CharacterState.ready
+                                    end
                                 else
+                                    if StayOnCurrentMapOnly then
+                                        Dalamud.Log(
+                                            "[FATE] No movement detected. Staying in current map due to setting.")
+                                    else
+                                        Dalamud.Log("[FATE] No movement detected. Switching zones.")
+                                    end
+                                    LastMoveTimestamp = os.clock()
+                                    LastMovePosition = currentPos
+                                    yield("/vnav stop")
+                                    if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
+                                        if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
+                                            Dalamud.Log(
+                                                "[FATE] Preserving Twist of Fate buff: skip zone switch for no-movement timeout.")
+                                        end
+                                        CurrentFate = nil
+                                        NextFate = nil
+                                    else
+                                        SelectNextDawntrailZone()
+                                    end
                                     State = CharacterState.ready
                                 end
-                            else
-                                if StayOnCurrentMapOnly then
-                                    Dalamud.Log("[FATE] No movement detected. Staying in current map due to setting.")
-                                else
-                                    Dalamud.Log("[FATE] No movement detected. Switching zones.")
-                                end
-                                LastMoveTimestamp = os.clock()
-                                LastMovePosition = currentPos
-                                yield("/vnav stop")
-                                if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
-                                    if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
-                                        Dalamud.Log(
-                                            "[FATE] Preserving Twist of Fate buff: skip zone switch for no-movement timeout.")
-                                    end
-                                    CurrentFate = nil
-                                    NextFate = nil
-                                else
-                                    SelectNextDawntrailZone()
-                                end
-                                State = CharacterState.ready
                             end
                         end
                     end
                 end
             end
-        end
 
-        if NoCombatTeleportTimeout > 0
-            and State ~= CharacterState.doFate
-            and CurrentFate ~= nil
-            and not CurrentFate.isCollectionsFate
-            and not CurrentFate.isOtherNpcFate
-        then
-            local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
-            local progress = GetFateProgressValue(CurrentFate, nil)
-            local radius = GetFateRadiusValue(CurrentFate, nil)
-            local inRange = IsFateActive(CurrentFate.fateObject)
-                and progress ~= nil
-                and progress < 100
-                and radius ~= nil
-                and (GetDistanceToPoint(CurrentFate.position) <= radius + 12)
-            local shouldTrackNoCombat = inRange
-                and not Svc.Condition[CharacterCondition.inCombat]
-                and not Svc.Condition[CharacterCondition.betweenAreas]
-                and not Svc.Condition[CharacterCondition.betweenAreasForDuty]
-                and not Svc.Condition[CharacterCondition.casting]
-                and not Svc.Condition[CharacterCondition.occupied]
-                and not IsLifestreamBusySafe()
-                and not navBusy
-            if shouldTrackNoCombat then
-                if NoCombatStartTime == nil then
-                    NoCombatStartTime = os.clock()
-                elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
-                    local shouldPreserveBonusBuff = ShouldPreserveBonusBuffForZoneSwitch(true)
-                    local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
-                    local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
-                    local timeoutMsg = string.format(
-                        "[FATE] Global no-combat timeout triggered on FATE #%s: %s",
-                        tostring(timedOutFateId),
-                        tostring(timedOutFateName)
-                    )
-                    Dalamud.Log(timeoutMsg)
-                    SendDiscordMessage(timeoutMsg)
-                    RecordZoneUnresponsiveSkip(Svc.ClientState.TerritoryType, "global_no_combat_timeout")
-                    if StayOnCurrentMapOnly then
-                        Dalamud.Log("[FATE] No combat started within timeout. Staying in current map due to setting.")
-                    else
-                        Dalamud.Log("[FATE] No combat started within timeout. Switching zones.")
-                    end
-                    ResetNoCombatRecoveryState()
-                    LastMoveTimestamp = os.clock()
-                    LastMovePosition = GetLocalPlayerPosition()
-                    yield("/vnav stop")
-                    if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
-                        if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
-                            Dalamud.Log(
-                                "[FATE] Preserving Twist of Fate buff: skip zone switch for global no-combat timeout.")
-                        end
-                        CurrentFate = nil
-                        NextFate = nil
-                    else
-                        SelectNextDawntrailZone()
-                    end
-                    State = CharacterState.ready
-                end
-            elseif not inRange then
-                ResetNoCombatRecoveryState()
-            end
-        end
-
-        if State ~= CharacterState.dead and Svc.Condition[CharacterCondition.dead] then
-            State = CharacterState.dead
-            Dalamud.Log("[FATE] State Change: Dead")
-        elseif not Player.IsMoving then
-            if State ~= CharacterState.unexpectedCombat
+            if NoCombatTeleportTimeout > 0
                 and State ~= CharacterState.doFate
-                and State ~= CharacterState.waitForContinuation
-                and State ~= CharacterState.collectionsFateTurnIn
-                and Svc.Condition[CharacterCondition.inCombat]
-                and (
-                    not InActiveFate()
-                    or (InActiveFate() and nearestFate ~= nil and IsCollectionsFate(nearestFate.Name) and nearestFate.Progress == 100)
-                )
+                and CurrentFate ~= nil
+                and not CurrentFate.isCollectionsFate
+                and not CurrentFate.isOtherNpcFate
             then
-                State = CharacterState.unexpectedCombat
-                Dalamud.Log("[FATE] State Change: UnexpectedCombat")
+                local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
+                local progress = GetFateProgressValue(CurrentFate, nil)
+                local radius = GetFateRadiusValue(CurrentFate, nil)
+                local inRange = IsFateActive(CurrentFate.fateObject)
+                    and progress ~= nil
+                    and progress < 100
+                    and radius ~= nil
+                    and (GetDistanceToPoint(CurrentFate.position) <= radius + 12)
+                local shouldTrackNoCombat = inRange
+                    and not Svc.Condition[CharacterCondition.inCombat]
+                    and not Svc.Condition[CharacterCondition.betweenAreas]
+                    and not Svc.Condition[CharacterCondition.betweenAreasForDuty]
+                    and not Svc.Condition[CharacterCondition.casting]
+                    and not Svc.Condition[CharacterCondition.occupied]
+                    and not IsLifestreamBusySafe()
+                    and not navBusy
+                if shouldTrackNoCombat then
+                    if NoCombatStartTime == nil then
+                        NoCombatStartTime = os.clock()
+                    elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
+                        local shouldPreserveBonusBuff = ShouldPreserveBonusBuffForZoneSwitch(true)
+                        local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
+                        local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
+                        local timeoutMsg = string.format(
+                            "[FATE] Global no-combat timeout triggered on FATE #%s: %s",
+                            tostring(timedOutFateId),
+                            tostring(timedOutFateName)
+                        )
+                        Dalamud.Log(timeoutMsg)
+                        SendDiscordMessage(timeoutMsg)
+                        RecordZoneUnresponsiveSkip(Svc.ClientState.TerritoryType, "global_no_combat_timeout")
+                        if StayOnCurrentMapOnly then
+                            Dalamud.Log(
+                                "[FATE] No combat started within timeout. Staying in current map due to setting.")
+                        else
+                            Dalamud.Log("[FATE] No combat started within timeout. Switching zones.")
+                        end
+                        ResetNoCombatRecoveryState()
+                        LastMoveTimestamp = os.clock()
+                        LastMovePosition = GetLocalPlayerPosition()
+                        yield("/vnav stop")
+                        if StayOnCurrentMapOnly or shouldPreserveBonusBuff then
+                            if shouldPreserveBonusBuff and not StayOnCurrentMapOnly then
+                                Dalamud.Log(
+                                    "[FATE] Preserving Twist of Fate buff: skip zone switch for global no-combat timeout.")
+                            end
+                            CurrentFate = nil
+                            NextFate = nil
+                        else
+                            SelectNextDawntrailZone()
+                        end
+                        State = CharacterState.ready
+                    end
+                elseif not inRange then
+                    ResetNoCombatRecoveryState()
+                end
             end
-        end
 
-        BicolorGemCount = Inventory.GetItemCount(26807)
-        MaybeLogActiveFates()
-        WriteFateResultSummaryCsv(false)
+            if State ~= CharacterState.dead and Svc.Condition[CharacterCondition.dead] then
+                State = CharacterState.dead
+                Dalamud.Log("[FATE] State Change: Dead")
+            elseif not Player.IsMoving then
+                if State ~= CharacterState.unexpectedCombat
+                    and State ~= CharacterState.doFate
+                    and State ~= CharacterState.waitForContinuation
+                    and State ~= CharacterState.collectionsFateTurnIn
+                    and Svc.Condition[CharacterCondition.inCombat]
+                    and (
+                        not InActiveFate()
+                        or (InActiveFate() and nearestFate ~= nil and IsCollectionsFate(nearestFate.Name) and nearestFate.Progress == 100)
+                    )
+                then
+                    State = CharacterState.unexpectedCombat
+                    Dalamud.Log("[FATE] State Change: UnexpectedCombat")
+                end
+            end
 
-        if WaitingForFateRewards ~= nil then
-            NoteFateCombatStart(WaitingForFateRewards)
-            local state = WaitingForFateRewards.fateObject and WaitingForFateRewards.fateObject.State or nil
-            if WaitingForFateRewards.fateObject == nil
-                or state == nil
-                or state == FateState.Ended
-                or state == FateState.Failed
+            BicolorGemCount = Inventory.GetItemCount(26807)
+            MaybeLogActiveFates()
+            WriteFateResultSummaryCsv(false)
+
+            if WaitingForFateRewards ~= nil then
+                NoteFateCombatStart(WaitingForFateRewards)
+                local state = WaitingForFateRewards.fateObject and WaitingForFateRewards.fateObject.State or nil
+                if WaitingForFateRewards.fateObject == nil
+                    or state == nil
+                    or state == FateState.Ended
+                    or state == FateState.Failed
+                then
+                    if state == FateState.Ended then
+                        SessionFatesCompleted = SessionFatesCompleted + 1
+                    elseif state == FateState.Failed then
+                        SessionFatesFailed = SessionFatesFailed + 1
+                    end
+                    FinalizeFateTimingLog(WaitingForFateRewards, state)
+                    local msg = "[FATE] WaitingForFateRewards.fateObject is nil or fate state (" ..
+                        tostring(state) ..
+                        ") indicates fate is finished for fateId: " ..
+                        tostring(WaitingForFateRewards.fateId) .. ". Clearing it."
+                    Dalamud.Log(msg)
+                    if Echo == "all" then
+                        yield("/echo " .. msg)
+                    end
+                    WaitingForFateRewards = nil
+                else
+                    local msg = "[FATE] Not clearing WaitingForFateRewards: fate state=" ..
+                        tostring(state) ..
+                        ", expected one of [Ended: " ..
+                        tostring(FateState.Ended) .. ", Failed: " .. tostring(FateState.Failed) .. "] or nil."
+                    Dalamud.Log(msg)
+                    if Echo == "all" then
+                        yield("/echo " .. msg)
+                    end
+                end
+            end
+            if not (Svc.Condition[CharacterCondition.betweenAreas]
+                    or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
+                    or IsLifestreamBusySafe())
             then
-                if state == FateState.Ended then
-                    SessionFatesCompleted = SessionFatesCompleted + 1
-                elseif state == FateState.Failed then
-                    SessionFatesFailed = SessionFatesFailed + 1
-                end
-                FinalizeFateTimingLog(WaitingForFateRewards, state)
-                local msg = "[FATE] WaitingForFateRewards.fateObject is nil or fate state (" ..
-                    tostring(state) ..
-                    ") indicates fate is finished for fateId: " ..
-                    tostring(WaitingForFateRewards.fateId) .. ". Clearing it."
-                Dalamud.Log(msg)
-                if Echo == "all" then
-                    yield("/echo " .. msg)
-                end
-                WaitingForFateRewards = nil
-            else
-                local msg = "[FATE] Not clearing WaitingForFateRewards: fate state=" ..
-                    tostring(state) ..
-                    ", expected one of [Ended: " ..
-                    tostring(FateState.Ended) .. ", Failed: " .. tostring(FateState.Failed) .. "] or nil."
-                Dalamud.Log(msg)
-                if Echo == "all" then
-                    yield("/echo " .. msg)
-                end
+                State()
             end
-        end
-        if not (Svc.Condition[CharacterCondition.betweenAreas]
-                or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
-                or IsLifestreamBusySafe())
-        then
-            State()
-        end
         end
         yield("/wait " .. tostring(MainLoopWaitSeconds or 0.25))
     end

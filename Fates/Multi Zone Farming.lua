@@ -182,6 +182,13 @@ SessionGemDelta = 0
 ZoneStats = {}
 
 while true do
+    if Player == nil then
+        local msg = "ERROR: Global 'Player' object not found. Please ensure you are using SomethingNeedDoing [Expanded Edition]."
+        yield("/echo [MultiZone] " .. msg)
+        Dalamud.Log("[MultiZone] " .. msg)
+        break
+    end
+
     if not Player.IsBusy and not FateMacroRunning then
         if Svc.Condition[CharacterCondition.dead] or Svc.Condition[CharacterCondition.inCombat] or Svc.ClientState.TerritoryType == ZonesToFarm[FarmingZoneIndex].zoneId then
             local loopStartTime = os.time()

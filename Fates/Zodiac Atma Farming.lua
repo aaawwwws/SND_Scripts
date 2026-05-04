@@ -135,8 +135,8 @@ while NextAtmaTable ~= nil do
 
         if Inventory.GetItemCount(NextAtmaTable.itemId) >= NumberToFarm then
             NextAtmaTable = GetNextAtmaTable()
-        elseif not Svc.ClientState.LocalPlayer.TerritoryType == (NextAtmaTable.zoneId) then
-            TeleportTo(GetAetheryteName(NextAtmaTable.zoneId)[0])
+        elseif Svc.ClientState.TerritoryType ~= NextAtmaTable.zoneId then
+            TeleportTo(GetAetheryteName(NextAtmaTable.zoneId))
         else
             yield("/snd run "..FateMacro)
         end
