@@ -85,6 +85,9 @@ configs:
   Do other NPC FATEs?:
     description: OFFにすると、NPCへの会話が必要なFATEを無視します 。
     default: false
+  Summon Chocobo?:
+    description: ギサールの野菜を使ってバディチョコボを自動で召喚します。
+    default: true
   Save active FATE data?:
     description: 出現中FATEの情報をJSONLに保存する
     default: true
@@ -111,6 +114,9 @@ configs:
     max: 600
   Prefer dense mob pulls?:
     description: 範囲攻撃効率を上げるため、周囲に敵が多い対象を優先して狙います。
+    default: true
+  Target engaged enemies?:
+    description: 他のプレイヤーが既に戦っている敵もターゲットにします。
     default: true
   Dense pull cluster radius:
     description: 密集対象を選ぶ際に「近くの敵」を数える半径です。
@@ -220,7 +226,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -2037,13 +2043,36 @@ function MoveToTargetHitbox()
         ClearTarget()
         return
     end
+
     local playerPos = GetLocalPlayerPosition()
     if playerPos == nil then
         return
     end
+
     local targetPos = Svc.Targets.Target.Position
     local distance = GetDistanceToTarget()
     if distance == 0 then return end
+
+    -- 自動突進スキル (Gap Closer) の使用
+    if not Svc.Condition[CharacterCondition.mounted] and not Svc.Condition[CharacterCondition.casting] then
+        local job = Player.Job
+        local gapCloser = nil
+        if job.Id == ClassList.pld.classId then gapCloser = "Intervention" -- PLD doesn't have a direct self gap closer like others, but we use the common name
+        elseif job.Id == ClassList.war.classId then gapCloser = "Onslaught"
+        elseif job.Id == ClassList.drk.classId then gapCloser = "Plunge" -- For level 90+ check Shadowstride or Plunge
+        elseif job.Id == ClassList.gnb.classId then gapCloser = "Rough Divide" -- or Trajectory
+        elseif job.Id == ClassList.drg.classId then gapCloser = "Spineshatter Dive" -- or Winged Glide
+        elseif job.Id == ClassList.mnk.classId then gapCloser = "Thunderclap"
+        elseif job.Id == ClassList.sam.classId then gapCloser = "Hissatsu: Gyoten"
+        elseif job.Id == ClassList.rpr.classId then gapCloser = "Hell's Ingress"
+        end
+
+        -- Check for updated DT skill names if necessary, but /ac will usually handle it
+        if gapCloser and distance > 8 and distance < 20 then
+            yield("/ac \"" .. gapCloser .. "\"")
+        end
+    end
+
     local desiredRange = math.max(0.1, GetTargetHitboxRadius() + GetPlayerHitboxRadius() + MaxDistance)
     local STOP_EPS = 0.15
     if distance <= (desiredRange + STOP_EPS) then return end
@@ -4732,7 +4761,9 @@ end
 function MoveToFate()
     SuccessiveInstanceChanges = 0
 
-    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
+        (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
+        (Player ~= nil and Player.Available and Player)
     if lp == nil then
         return
     end
@@ -4763,15 +4794,17 @@ function MoveToFate()
             local nextProgress = GetFateProgressValue(NextFate, 0) or 0
             local currentStarted = (CurrentFate.startTime or 0) > 0
             local currentInProgress = currentProgress > 0 and currentProgress < 100
+            local currentDist = GetDistanceToPoint(CurrentFate.position)
             local lockCurrentFate = InActiveFate()
                 or Svc.Condition[CharacterCondition.inCombat]
                 or currentStarted
                 or currentInProgress
+                or (currentDist < 60)
             if lockCurrentFate then
                 shouldSwitchFate = false
                 NextFate = CurrentFate
                 Dalamud.Log(string.format(
-                    "[FATE] Keeping current target fate #%s; active/in-progress fate switch blocked.",
+                    "[FATE] Keeping current target fate #%s; active/in-progress or proximity switch blocked.",
                     tostring(CurrentFate.fateId or 0)
                 ))
             else
@@ -4782,8 +4815,8 @@ function MoveToFate()
                 local progressGain = nextProgress - currentProgress
                 local distanceGain = currentDist - nextDist
                 local switchForBonus = nextBonus and not currentBonus
-                local switchForProgress = progressGain >= 15
-                local switchForDistance = distanceGain >= 35
+                local switchForProgress = progressGain >= 20
+                local switchForDistance = distanceGain >= 65
                 shouldSwitchFate = switchForBonus or switchForProgress or switchForDistance
                 if not shouldSwitchFate then
                     Dalamud.Log(string.format(
@@ -4846,9 +4879,9 @@ function MoveToFate()
             PreAcquireLastAttemptAt = now
             local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
             local preAcquireRadius = math.max(
-                (DynamicAoeCheckRadius or 30) + 10,
-                (ClusterMoveRadius or 40),
-                fateRadius + 20
+                (DynamicAoeCheckRadius or 30) + 30,
+                (ClusterMoveRadius or 40) + 20,
+                fateRadius + 40
             )
             local gotPreTarget = AttemptToTargetClosestFateEnemy(true, preAcquireRadius, true)
             if gotPreTarget then
@@ -5261,9 +5294,9 @@ function TurnOnAoes()
                 yield("/rotation settings aoetype 1")
             elseif RSRAoeType == "Full" then
                 yield("/rotation settings aoetype 2")
-       end
+            end
         elseif RotationPlugin == "BMR" then
-                 ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "aoe")
+            ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "aoe")
         elseif RotationPlugin == "VBM" then
             ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "aoe")
         end
@@ -6466,6 +6499,8 @@ function Ready()
 
     FoodCheck()
     PotionCheck()
+    ChocoboCheck()
+    SprintCheck()
 
     CombatModsOn = false
 
@@ -6557,7 +6592,13 @@ function Ready()
     if keepCurrentFate then
         NextFate = CurrentFate
     else
-        NextFate = GetBestAvailableNextFate(true)
+        local currentDistToFate = (CurrentFate ~= nil and CurrentFate.position ~= nil) and GetDistanceToPointFlat(CurrentFate.position) or math.maxinteger
+        if currentDistToFate < 60 then
+            keepCurrentFate = true
+            NextFate = CurrentFate
+        else
+            NextFate = GetBestAvailableNextFate(true)
+        end
     end
 
     if NextFate ~= nil then
@@ -6642,7 +6683,9 @@ function Ready()
         return
     end
 
-    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
+        (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
+        (Player ~= nil and Player.Available and Player)
     if lp == nil then
         return
     end
@@ -7319,7 +7362,9 @@ function EorzeaTimeToUnixTime(eorzeaTime)
 end
 
 function HasStatusId(statusId)
-    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
+        (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
+        (Player ~= nil and Player.Available and Player)
     if lp == nil then
         return false
     end
@@ -7506,7 +7551,9 @@ function IsVnavmeshMovingSafe()
 end
 
 CanUseConsumableNow = function()
-    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
+        (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
+        (Player ~= nil and Player.Available and Player)
     if lp == nil then
         return false
     end
@@ -7605,6 +7652,60 @@ function PotionCheck()
             errorText
         Dalamud.Log(msg)
         yield("/echo " .. msg)
+    end
+end
+
+function GetChocoboTimeRemaining()
+    local ok, time = pcall(function()
+        if Svc and Svc.Buddies and Svc.Buddies.Companion then
+            return Svc.Buddies.Companion.TimeLeft
+        end
+        return nil
+    end)
+    if ok and type(time) == "number" then
+        return time
+    end
+
+    if SndGameUtils ~= nil then
+        local ok, time = pcall(function() return SndGameUtils.GetBuddyTimeRemaining() end)
+        if ok and type(time) == "number" then
+            return time
+        end
+    end
+    return -1
+end
+
+function ChocoboCheck()
+    if not SummonChocobo then return end
+    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] or Svc.Condition[CharacterCondition.inCombat] or Svc.Condition[CharacterCondition.casting] then return end
+
+    local timeRemaining = GetChocoboTimeRemaining()
+    if timeRemaining >= 0 and timeRemaining < 300 then
+        local greens = LANG.actions["Gysahl Greens"]
+        if Inventory.GetItemCount(4868) > 0 then
+            Dalamud.Log("[FATE] Summoning Chocobo")
+            yield("/item \"" .. greens .. "\"")
+            yield("/wait 3")
+        else
+            Dalamud.Log("[FATE] Cannot summon Chocobo: No Gysahl Greens.")
+            yield("/echo [FATE] Cannot summon Chocobo: No Gysahl Greens.")
+            SummonChocobo = false
+        end
+    end
+end
+
+function SprintCheck()
+    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] or Svc.Condition[CharacterCondition.inCombat] or Svc.Condition[CharacterCondition.casting] then return end
+    if HasStatusId(50) then return end
+    
+    local isMoving = false
+    if IPC.vnavmesh and (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress()) then
+        isMoving = true
+    end
+
+    if isMoving then
+        local sprint = LANG.actions["sprint"] or "Sprint"
+        yield("/ac \"" .. sprint .. "\"")
     end
 end
 
@@ -7734,9 +7835,12 @@ end
 function FateFarming:Run()
     Svc = Svc or Dalamud
     Dalamud.Log("[FATE-FIXED] Run() started.")
-    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
+        (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
+        (Player ~= nil and Player.Available and Player)
     if lp == nil then
-        local msg = "ERROR: LocalPlayer not found. Please ensure you are logged in and using SomethingNeedDoing [Expanded Edition]."
+        local msg =
+        "ERROR: LocalPlayer not found. Please ensure you are logged in and using SomethingNeedDoing [Expanded Edition]."
         yield("/echo [FATE] " .. msg)
         Dalamud.Log("[FATE-FIXED] " .. msg)
         return
@@ -7803,6 +7907,7 @@ function FateFarming:Run()
     NoCombatTeleportTimeout          = Config.Get("No combat teleport timeout (secs)")
     NoMovementTeleportTimeout        = Config.Get("No movement teleport timeout (secs)")
     PreferDensePulls                 = Config.Get("Prefer dense mob pulls?")
+    TargetEngagedEnemies             = Config.Get("Target engaged enemies?")
     DensePullClusterRadius           = Config.Get("Dense pull cluster radius")
     DensePullMinimumEnemies          = Config.Get("Dense pull minimum enemies")
     OptimizeClusterMovement          = Config.Get("Optimize movement to mob clusters?")
@@ -7928,7 +8033,7 @@ function FateFarming:Run()
     DynamicAoeEnableStableSamples         = 2
     DynamicAoeDisableStableSamples        = 3
     DynamicAoeMixedPackMinimumEnemies     = 2
-    PreferUnengagedFateTargets            = true
+    PreferUnengagedFateTargets            = not TargetEngagedEnemies
     TargetAcquireRetrySeconds             = FastCombatPacing and 0.4 or 0.9
     TargetAcquireStopNavSeconds           = FastCombatPacing and 1.2 or 2.4
     CombatOpenNoCombatGraceSeconds        = FastCombatPacing and 0.35 or 0.8
@@ -8182,6 +8287,7 @@ function FateFarming:Run()
     Echo                       = string.lower(Config.Get("Echo logs"))
     CompanionScriptMode        = Config.Get("Companion Script Mode")
     DiscordWebhookUrl          = Config.Get("Discord Webhook URL")
+    SummonChocobo              = Config.Get("Summon Chocobo?")
     -- 出現中FATEデータ保存
     FateDataLogEnabled         = ParseBool(Config.Get("Save active FATE data?"), true)
     FateDataLogIntervalSeconds = tonumber(Config.Get("FATE data log interval (secs)"))
@@ -8335,15 +8441,19 @@ function FateFarming:Run()
 
     Dalamud.Log("[FATE-FIXED] Entering main loop...")
     while not StopScript do
-        local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
+        local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
+            (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
+            (Player ~= nil and Player.Available and Player)
         local isPlayerAvailable = lp ~= nil
 
         if not isPlayerAvailable then
             if os.clock() % 10 < 0.3 then
-                Dalamud.Log("[FATE-FIXED] Waiting for player to be available... (Player=" .. tostring(Player) .. ", Svc=" .. tostring(Svc) .. ")")
+                Dalamud.Log("[FATE-FIXED] Waiting for player to be available... (Player=" ..
+                    tostring(Player) .. ", Svc=" .. tostring(Svc) .. ")")
             end
             yield("/wait 1")
         else
+            SprintCheck()
             local nearestFate = Fates.GetNearestFate()
             if not IsVnavmeshReadySafe() then
                 yield("/echo [FATE] Waiting for vnavmesh to build...")
@@ -8352,7 +8462,8 @@ function FateFarming:Run()
                 repeat
                     yield("/wait 2")
                     if os.clock() - vnavWaitStart > 10 then
-                        Dalamud.Log("[FATE] Still waiting for vnavmesh to build (elapsed: " .. math.floor(os.clock() - vnavWaitStart) .. "s)")
+                        Dalamud.Log("[FATE] Still waiting for vnavmesh to build (elapsed: " ..
+                            math.floor(os.clock() - vnavWaitStart) .. "s)")
                         vnavWaitStart = os.clock()
                     end
                 until IsVnavmeshReadySafe()
@@ -8599,6 +8710,10 @@ function FateFarming:Run()
 end
 
 --#endregion Main
+
+local app = FateFarming:new()
+app:Run()
+n Main
 
 local app = FateFarming:new()
 app:Run()
