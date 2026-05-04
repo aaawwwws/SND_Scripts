@@ -7915,6 +7915,20 @@ function GetChocoboTimeRemaining()
     return -1
 end
 
+function IsChocoboSummoned()
+    local ok, result = pcall(function()
+        if Svc and Svc.Buddies and Svc.Buddies.Companion then
+            local companion = Svc.Buddies.Companion
+            return companion.TimeLeft > 0
+        end
+        return false
+    end)
+    if ok then
+        return result
+    end
+    return false
+end
+
 function ChocoboCheck()
     if not SummonChocobo then return end
     if Svc.Condition[CharacterCondition.mounted]
@@ -7929,8 +7943,7 @@ function ChocoboCheck()
         return
     end
 
-    local timeRemaining = GetChocoboTimeRemaining()
-    if timeRemaining > 0 then
+    if IsChocoboSummoned() then
         return
     end
 
@@ -7941,7 +7954,7 @@ function ChocoboCheck()
     ChocoboLastSummonAttemptAt = now
 
     if Inventory.GetItemCount(4868) > 0 then
-        Dalamud.Log("[FATE] Chocobo not out (timeRemaining=" .. tostring(timeRemaining) .. "), summoning...")
+        Dalamud.Log("[FATE] Chocobo not summoned, attempting to summon...")
         local greens = LANG.actions["Gysahl Greens"]
         pcall(function() yield("/item \"" .. greens .. "\"") end)
         yield("/wait 3")
