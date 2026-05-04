@@ -7917,15 +7917,25 @@ end
 
 function IsChocoboSummoned()
     local ok, result = pcall(function()
-        if Svc and Svc.Buddies and Svc.Buddies.Companion then
+        if Svc and Svc.Buddies then
+            -- Companion オブジェクトが存在するかチェック
             local companion = Svc.Buddies.Companion
-            return companion.TimeLeft > 0
+            if companion ~= nil then
+                local timeLeft = companion.TimeLeft
+                Dalamud.Log("[FATE] IsChocoboSummoned: Companion exists, TimeLeft=" .. tostring(timeLeft))
+                return timeLeft > 0
+            else
+                Dalamud.Log("[FATE] IsChocoboSummoned: Companion is nil")
+            end
+        else
+            Dalamud.Log("[FATE] IsChocoboSummoned: Svc.Buddies not available")
         end
         return false
     end)
     if ok then
         return result
     end
+    Dalamud.Log("[FATE] IsChocoboSummoned: pcall failed")
     return false
 end
 
@@ -7943,7 +7953,9 @@ function ChocoboCheck()
         return
     end
 
-    if IsChocoboSummoned() then
+    local isSummoned = IsChocoboSummoned()
+    if isSummoned then
+        Dalamud.Log("[FATE] ChocoboCheck: Chocobo is already summoned, skipping")
         return
     end
 
@@ -7956,7 +7968,17 @@ function ChocoboCheck()
     if Inventory.GetItemCount(4868) > 0 then
         Dalamud.Log("[FATE] Chocobo not summoned, attempting to summon...")
         local greens = LANG.actions["Gysahl Greens"]
-        pcall(function() yield("/item \"" .. greens .. "\"") end)
+        
+        -- 使用前に再度チョコボの状態を確認
+        if IsChocoboSummoned() then
+            Dalamud.Log("[FATE] Chocobo summoned detected before using item, aborting")
+            return
+        end
+        
+        local useOk, useErr = pcall(function() yield("/item \"" .. greens .. "\"") end)
+        if not useOk then
+            Dalamud.Log("[FATE] Failed to use Gysahl Greens: " .. tostring(useErr))
+        end
         yield("/wait 3")
     elseif ShouldAutoBuyGysahlGreens then
         NeedsGysahlGreens = true
