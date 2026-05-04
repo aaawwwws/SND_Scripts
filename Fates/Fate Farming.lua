@@ -1420,11 +1420,16 @@ function AddonReady(addonName)
 end
 
 function GetLocalPlayerPosition()
-    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or (Player ~= nil and Player.Available and Player)
-    if lp == nil then
-        return nil
+    if Svc and Svc.ClientState and Svc.ClientState.LocalPlayer then
+        return Svc.ClientState.LocalPlayer.Position
     end
-    return lp.Position
+    if ClientState and ClientState.LocalPlayer then
+        return ClientState.LocalPlayer.Position
+    end
+    if Player and Player.Available then
+        return Player.Position or Vector3(Player.X, Player.Y, Player.Z)
+    end
+    return nil
 end
 
 function GetFateProgressValue(fate, fallback)
@@ -1990,7 +1995,7 @@ function UpdateCombatModeByNearbyEnemies()
 
     if RotationPlugin == "RSR" then
         if not RsrDynamicSingleApplied then
-            yield("/rotation auto on")
+            yield("/rotation on")
             yield("/rotation settings aoetype 1")
             RsrDynamicSingleApplied = true
             DynamicAoeLastSwitchAt = now
@@ -4900,7 +4905,7 @@ function MoveToFate()
                 end
                 if Svc.Targets.Target == nil and OptimizeClusterMovement == true then
                     local center = GetPreferredFateMovePosition(CurrentFate)
-                    if center ~= nil and GetDistanceToPoint(center) > 8 then
+                    if center ~= nil and GetDistanceToPointFlat(center) > 15 then
                         IPC.vnavmesh.PathfindAndMoveTo(center,
                             Player.CanFly and SelectedZone.flying)
                     end
@@ -5241,7 +5246,7 @@ function TurnOnAoes()
     if not AoesOn then
         if RotationPlugin == "RSR" then
             yield("/rotation off")
-            yield("/rotation auto on")
+            yield("/rotation on")
             Dalamud.Log("[FATE] TurnOnAoes /rotation auto on")
 
             if RSRAoeType == "Off" then
@@ -5250,9 +5255,9 @@ function TurnOnAoes()
                 yield("/rotation settings aoetype 1")
             elseif RSRAoeType == "Full" then
                 yield("/rotation settings aoetype 2")
-            end
+       end
         elseif RotationPlugin == "BMR" then
-            ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "aoe")
+                 ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "aoe")
         elseif RotationPlugin == "VBM" then
             ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "aoe")
         end
@@ -5266,8 +5271,8 @@ function TurnOffAoes()
         if RotationPlugin == "RSR" then
             -- Keep RSR auto casting active while forcing single-target behavior.
             yield("/rotation settings aoetype 1")
-            yield("/rotation auto on")
-            Dalamud.Log("[FATE] TurnOffAoes /rotation auto on")
+            yield("/rotation on")
+            Dalamud.Log("[FATE] TurnOffAoes /rotation on")
         elseif RotationPlugin == "BMR" then
             ActivateBossModPreset(RotationSingleTargetPreset, RotationAoePreset, RotationHoldBuffPreset, "single")
         elseif RotationPlugin == "VBM" then
@@ -5401,7 +5406,7 @@ function TurnOnCombatMods(rotationMode)
                 Dalamud.Log("[FATE] TurnOnCombatMods /rotation manual")
             else
                 yield("/rotation off")
-                yield("/rotation auto on")
+                yield("/rotation on")
                 Dalamud.Log("[FATE] TurnOnCombatMods /rotation auto on")
             end
         elseif RotationPlugin == "BMR" then
@@ -6390,7 +6395,11 @@ function DoFate()
             end
             yield("/wait " .. targetStickWait) -- short wait in case target doesnt stick
             if (Svc.Targets.Target == nil) and not Svc.Condition[CharacterCondition.casting] then
-                IPC.vnavmesh.PathfindAndMoveTo(preferredMovePos, false)
+                if GetDistanceToPointFlat(preferredMovePos) > 10 then
+                    if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                        IPC.vnavmesh.PathfindAndMoveTo(preferredMovePos, false)
+                    end
+                end
             end
         end
     else
