@@ -6889,7 +6889,7 @@ function Ready()
         end
         if MoveToRandomSpot then
             MoveToRandomNearbySpot(50, 75)
-            yield("/wait 10")
+            yield("/wait " .. tostring(FastCombatPacing and 3 or 10))
         end
         return
     end
@@ -6900,7 +6900,7 @@ function Ready()
             State = CharacterState.flyBackToAetheryte
             Dalamud.Log("[FATE] State Change: FlyBackToAetheryte")
         else
-            yield("/wait 10")
+            yield("/wait " .. tostring(FastCombatPacing and 3 or 10))
         end
         return
     end
