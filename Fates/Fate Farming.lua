@@ -7917,24 +7917,28 @@ end
 
 function IsChocoboSummoned()
     local ok, result = pcall(function()
+        -- Try Svc.Buddies.Companion first
         if Svc and Svc.Buddies then
             local companion = Svc.Buddies.Companion
             if companion ~= nil then
                 local timeLeft = companion.TimeLeft
-                yield("/echo [FATE] IsChocoboSummoned: Companion exists, TimeLeft=" .. tostring(timeLeft))
                 return timeLeft > 0
-            else
-                yield("/echo [FATE] IsChocoboSummoned: Companion is nil")
             end
-        else
-            yield("/echo [FATE] IsChocoboSummoned: Svc.Buddies not available")
         end
+        
+        -- Fallback: Try SndGameUtils
+        if SndGameUtils ~= nil then
+            local utilsOk, time = pcall(function() return SndGameUtils.GetBuddyTimeRemaining() end)
+            if utilsOk and type(time) == "number" and time > 0 then
+                return true
+            end
+        end
+        
         return false
     end)
     if ok then
         return result
     end
-    yield("/echo [FATE] IsChocoboSummoned: pcall failed")
     return false
 end
 
@@ -7954,7 +7958,6 @@ function ChocoboCheck()
 
     local isSummoned = IsChocoboSummoned()
     if isSummoned then
-        yield("/echo [FATE] ChocoboCheck: Chocobo is already summoned, skipping")
         return
     end
 
@@ -7964,20 +7967,24 @@ function ChocoboCheck()
     end
     ChocoboLastSummonAttemptAt = now
 
-    if Inventory.GetItemCount(4868) > 0 then
-        yield("/echo [FATE] Chocobo not summoned, attempting to summon...")
+    local itemCount = Inventory.GetItemCount(4868)
+    if itemCount > 0 then
+        yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
         local greens = LANG.actions["Gysahl Greens"]
-        
-        if IsChocoboSummoned() then
-            yield("/echo [FATE] Chocobo summoned detected before using item, aborting")
-            return
-        end
         
         local useOk, useErr = pcall(function() yield("/item \"" .. greens .. "\"") end)
         if not useOk then
             yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(useErr))
+            return
         end
-        yield("/wait 3")
+        yield("/wait 5")
+        
+        -- Check if summoning worked
+        if IsChocoboSummoned() then
+            yield("/echo [FATE] Chocobo summoned successfully")
+        else
+            yield("/echo [FATE] Chocobo still not detected after using greens")
+        end
     elseif ShouldAutoBuyGysahlGreens then
         NeedsGysahlGreens = true
     end
