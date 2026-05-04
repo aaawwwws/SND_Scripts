@@ -6258,14 +6258,18 @@ function DoFate()
     -- switches to targeting forlorns for bonus (if present)
     TryTargetForlorn()
 
-    local now_pull = os.clock()
-    TryActivePullNearbyEnemies(now_pull)
-
     local activeTargetName = GetTargetName()
-    if IsForlornTargetName(activeTargetName) then
+    local isForlornActive = IsForlornTargetName(activeTargetName) and not Svc.Targets.Target.IsDead
+
+    if not isForlornActive then
+        local now_pull = os.clock()
+        TryActivePullNearbyEnemies(now_pull)
+    end
+
+    if isForlornActive then
         if IgnoreForlorns or (IgnoreBigForlornOnly and IsBigForlornTargetName(activeTargetName)) then
             ClearTarget()
-        elseif not Svc.Targets.Target.IsDead then
+        else
             if not ForlornMarked then
                 yield("/mk attack1 <t>")
                 if Echo == "all" then
@@ -6274,9 +6278,6 @@ function DoFate()
                 TurnOffAoes()
                 ForlornMarked = true
             end
-        else
-            ClearTarget()
-            TurnOnAoes()
         end
     else
         UpdateCombatModeByNearbyEnemies()
