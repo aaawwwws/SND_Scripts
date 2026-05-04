@@ -4686,6 +4686,7 @@ function MiddleOfFateDismount()
                 Dismount(true)
             else
                 yield("/vnav stop")
+                yield("/wait 0.5")
                 ChocoboCheck()
                 ResetMiddleDismountState()
                 State = CharacterState.doFate
@@ -7923,7 +7924,7 @@ function ChocoboCheck()
         local greens = LANG.actions["Gysahl Greens"]
         if Inventory.GetItemCount(4868) > 0 then
             Dalamud.Log("[FATE] Summoning Chocobo (timeRemaining=" .. tostring(timeRemaining) .. ")")
-            yield("/item \"" .. greens .. "\"")
+            yield("/ac \"" .. greens .. "\"")
             yield("/wait 3")
         elseif ShouldAutoBuyGysahlGreens then
             Dalamud.Log("[FATE] No Gysahl Greens. Flagging for purchase.")
