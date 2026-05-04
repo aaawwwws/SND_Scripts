@@ -1312,7 +1312,24 @@ function GetLangTable(lang)
                 ["Fast Blade"] = "ファストブレード",
                 ["Heavy Swing"] = "ヘヴィスウィング",
                 ["Hard Slash"] = "ハードスラッシュ",
-                ["Keen Edge"] = "キーンエッジ"
+                ["Keen Edge"] = "キーンエッジ",
+                ["Flying Sardine"] = "フライングサーディン",
+                ["Heavy Shot"] = "ヘヴィショット",
+                ["Split Shot"] = "スプリットショット",
+                ["Cascade"] = "カスケード",
+                ["Piercing Talon"] = "ピアシングタロン",
+                ["Throwing Dagger"] = "投刃",
+                ["Enpi"] = "燕飛",
+                ["Harpe"] = "ハルパー",
+                ["Ruin"] = "ルイン",
+                ["Blizzard"] = "ブリザド",
+                ["Jolt"] = "ジョル",
+                ["Wrath's Sting"] = "飛蛇の尾",
+                ["Fire in Red"] = "レッドファイア",
+                ["Dosis"] = "ドシス",
+                ["Stone"] = "ストーン",
+                ["Glare"] = "グレア",
+                ["Malefic"] = "マレフィク"
             },
             bitColorExchangeData = {
                 {
@@ -1355,7 +1372,24 @@ function GetLangTable(lang)
                 ["Fast Blade"] = "Fast Blade",
                 ["Heavy Swing"] = "Heavy Swing",
                 ["Hard Slash"] = "Hard Slash",
-                ["Keen Edge"] = "Keen Edge"
+                ["Keen Edge"] = "Keen Edge",
+                ["Flying Sardine"] = "Flying Sardine",
+                ["Heavy Shot"] = "Heavy Shot",
+                ["Split Shot"] = "Split Shot",
+                ["Cascade"] = "Cascade",
+                ["Piercing Talon"] = "Piercing Talon",
+                ["Throwing Dagger"] = "Throwing Dagger",
+                ["Enpi"] = "Enpi",
+                ["Harpe"] = "Harpe",
+                ["Ruin"] = "Ruin",
+                ["Blizzard"] = "Blizzard",
+                ["Jolt"] = "Jolt",
+                ["Wrath's Sting"] = "Wrath's Sting",
+                ["Fire in Red"] = "Fire in Red",
+                ["Dosis"] = "Dosis",
+                ["Stone"] = "Stone",
+                ["Glare"] = "Glare",
+                ["Malefic"] = "Malefic"
             },
             bitColorExchangeData = {
                 {
@@ -5158,6 +5192,81 @@ function GetCombatOpenActionCandidates()
         return {
             LANG.actions["Lightning Shot"] or "Lightning Shot",
             LANG.actions["Keen Edge"] or "Keen Edge"
+        }
+    elseif jobId == ClassList.blu.classId then
+        return {
+            LANG.actions["Flying Sardine"] or "Flying Sardine"
+        }
+    elseif jobId == ClassList.brd.classId or jobId == ClassList.arc.classId then
+        return {
+            LANG.actions["Heavy Shot"] or "Heavy Shot"
+        }
+    elseif jobId == ClassList.mch.classId then
+        return {
+            LANG.actions["Split Shot"] or "Split Shot"
+        }
+    elseif jobId == ClassList.dnc.classId then
+        return {
+            LANG.actions["Cascade"] or "Cascade"
+        }
+    elseif jobId == ClassList.drg.classId or jobId == ClassList.lnc.classId then
+        return {
+            LANG.actions["Piercing Talon"] or "Piercing Talon"
+        }
+    elseif jobId == ClassList.nin.classId or jobId == ClassList.rog.classId then
+        return {
+            LANG.actions["Throwing Dagger"] or "Throwing Dagger"
+        }
+    elseif jobId == ClassList.sam.classId then
+        return {
+            LANG.actions["Enpi"] or "Enpi"
+        }
+    elseif jobId == ClassList.rpr.classId then
+        return {
+            LANG.actions["Harpe"] or "Harpe"
+        }
+    elseif jobId == ClassList.smn.classId or jobId == ClassList.acn.classId then
+        return {
+            LANG.actions["Ruin"] or "Ruin"
+        }
+    elseif jobId == ClassList.blm.classId or jobId == ClassList.thm.classId then
+        return {
+            LANG.actions["Blizzard"] or "Blizzard"
+        }
+    elseif jobId == ClassList.rdm.classId then
+        return {
+            LANG.actions["Jolt"] or "Jolt"
+        }
+    elseif jobId == ClassList.vpr.classId then
+        return {
+            LANG.actions["Wrath's Sting"] or "Wrath's Sting"
+        }
+    elseif jobId == ClassList.pct.classId then
+        return {
+            LANG.actions["Fire in Red"] or "Fire in Red"
+        }
+    elseif Player.Job.IsHealer then
+        local healerId = Player.Job.Id
+        if healerId == ClassList.whm.classId or healerId == ClassList.cnj.classId then
+            return {
+                LANG.actions["Glare"] or "Glare",
+                LANG.actions["Stone"] or "Stone"
+            }
+        elseif healerId == ClassList.sch.classId then
+            return {
+                LANG.actions["Ruin"] or "Ruin"
+            }
+        elseif healerId == ClassList.ast.classId then
+            return {
+                LANG.actions["Malefic"] or "Malefic"
+            }
+        elseif healerId == ClassList.sge.classId then
+            return {
+                LANG.actions["Dosis"] or "Dosis"
+            }
+        end
+        return {
+            "Ruin", "Malefic", "Diagnosis", "Eurekan Ruin" -- general fallbacks
         }
     end
 
