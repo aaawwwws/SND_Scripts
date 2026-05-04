@@ -3264,7 +3264,7 @@ local function EnsureFateSelectionMetrics(fate)
     local progressScore = progress * 2.1
     local urgencyBonus = progress >= 70 and ((progress - 70) * 1.6) or 0
     local remainingTimeScore = (Clamp(timeLeft, 0, 900) / 900) * 60
-    local travelPenalty = travelDistance * 0.08
+    local travelPenalty = travelDistance * 0.5
     local missPenalty = arrivalSlackSeconds < 0 and (math.abs(arrivalSlackSeconds) * 1.2) or 0
 
     fate.selectionTravelDistance = travelDistance
@@ -7916,10 +7916,11 @@ function ChocoboCheck()
     if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] or Svc.Condition[CharacterCondition.inCombat] or Svc.Condition[CharacterCondition.casting] then return end
 
     local timeRemaining = GetChocoboTimeRemaining()
-    if timeRemaining >= 0 and timeRemaining < 300 then
+    local needsSummon = timeRemaining < 0 or (timeRemaining >= 0 and timeRemaining < 300)
+    if needsSummon then
         local greens = LANG.actions["Gysahl Greens"]
         if Inventory.GetItemCount(4868) > 0 then
-            Dalamud.Log("[FATE] Summoning Chocobo")
+            Dalamud.Log("[FATE] Summoning Chocobo (timeRemaining=" .. tostring(timeRemaining) .. ")")
             yield("/item \"" .. greens .. "\"")
             yield("/wait 3")
         elseif ShouldAutoBuyGysahlGreens then
@@ -8171,9 +8172,9 @@ function FateFarming:Run()
     HighLevelFatePriorityEnabled     = true
     HighLevelFatePriorityMinLevel    = 96
     if HighLevelFatePriorityEnabled then
-        FatePriority = { "HighLevel", "DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
+        FatePriority = { "HighLevel", "Distance", "DistanceTeleport", "Progress", "Bonus", "TimeLeft" }
     else
-        FatePriority = { "DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
+        FatePriority = { "Distance", "DistanceTeleport", "Progress", "Bonus", "TimeLeft" }
     end
     MeleeDist    = Config.Get("Max melee distance")
     RangedDist   = Config.Get("Max ranged distance")
