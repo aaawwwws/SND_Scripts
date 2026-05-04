@@ -8016,16 +8016,11 @@ function ChocoboCheck()
         
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
         
-        -- Use item by ID (4868 = Gysahl Greens)
-        local useOk, useErr = pcall(function() yield("/item 4868") end)
+        -- Use item by name
+        local greens = LANG.actions["Gysahl Greens"]
+        local useOk, useErr = pcall(function() yield("/item \"" .. greens .. "\"") end)
         if not useOk then
-            yield("/echo [FATE] Failed to use Gysahl Greens by ID: " .. tostring(useErr))
-            -- Fallback: try by name
-            local greens = LANG.actions["Gysahl Greens"]
-            local fallbackOk, fallbackErr = pcall(function() yield("/item \"" .. greens .. "\"") end)
-            if not fallbackOk then
-                yield("/echo [FATE] Fallback also failed: " .. tostring(fallbackErr))
-            end
+            yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(useErr))
         end
         yield("/wait 5")
         
