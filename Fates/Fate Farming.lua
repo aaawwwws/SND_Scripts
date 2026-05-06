@@ -552,6 +552,9 @@ local ExchangeMoveStuckCount
 local ExchangeMoveLastDistanceToShop
 local ExchangeMoveGraceUntil
 
+-- PTチャット座標追従用
+local PartyChatFlagTarget
+
 -- 通常移動時のスタック検知用
 local MoveStuckLastCheckTime
 local MoveStuckLastPosition
@@ -6817,6 +6820,31 @@ function Ready()
     end
     if StopScript then return end --Early exit before running ready checks.
 
+    -- Party Play: auto-accept teleport offers from party leader/members
+    if GetPartyPlayActive() then
+        AcceptTeleportOfferLocation("")
+    end
+
+    -- Party Play: follow coordinates shared in party chat
+    if PartyChatFlagTarget ~= nil then
+        local elapsed = os.clock() - PartyChatFlagTarget.setAt
+        if elapsed < 120 then
+            if not Svc.Condition[CharacterCondition.inCombat]
+                and not Svc.Condition[CharacterCondition.casting]
+                and not Svc.Condition[CharacterCondition.betweenAreas]
+            then
+                if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                    Dalamud.Log("[FATE] Moving to party chat flag: " .. PartyChatFlagTarget.x .. ", " .. PartyChatFlagTarget.y)
+                    yield("/coord " .. PartyChatFlagTarget.x .. " " .. PartyChatFlagTarget.y)
+                    yield("/wait 0.5")
+                    yield("/vnav moveflag")
+                end
+            end
+        else
+            PartyChatFlagTarget = nil
+        end
+    end
+
     FoodCheck()
     PotionCheck()
     ChocoboCheck()
@@ -8223,6 +8251,43 @@ function GetPartyPlayActive()
         return count > 0
     end
     return false
+end
+
+function OnChatMessage()
+    if not GetPartyPlayActive() then return end
+    local message = TriggerData and TriggerData.message
+    if not message then return end
+
+    -- Only react to party/alliance/echo chat to avoid random noise
+    local senderType = TriggerData.senderType or ""
+    local validTypes = { Party = true, Alliance = true, Echo = true, Tell = true }
+    if not validTypes[senderType] then
+        -- Also allow if message contains a party member name
+        local hasPartyMember = false
+        local partyNames = GetPartyMemberNames()
+        for _, name in ipairs(partyNames) do
+            if message:find(name, 1, true) then
+                hasPartyMember = true
+                break
+            end
+        end
+        if not hasPartyMember then return end
+    end
+
+    -- Extract coordinates like ( 23.4  , 17.8 ) or 23.4, 17.8
+    local xStr, yStr = message:match("%(%s*(-?%d+%.?%d*)%s*[,，]%s*(-?%d+%.?%d*)%s*%)")
+    if not xStr then
+        xStr, yStr = message:match("(-?%d+%.?%d*)%s*[,，]%s*(-?%d+%.?%d*)")
+    end
+
+    if xStr and yStr then
+        local x = tonumber(xStr)
+        local y = tonumber(yStr)
+        if x and y then
+            PartyChatFlagTarget = { x = x, y = y, setAt = os.clock() }
+            Dalamud.Log("[FATE] Party chat coordinate detected: map X=" .. x .. ", Y=" .. y)
+        end
+    end
 end
 
 -- ============================================================
