@@ -103,6 +103,9 @@ configs:
   Disable Chocobo in Party:
     description: PTに参加している場合にチョコボ召喚を自動で無効にします。
     default: true
+  Follow Party Members:
+    description: PTプレイ時、PTメンバーが60y以上離れている場合に自動で追従します。
+    default: true
   Auto-buy Gysahl Greens?:
     description: ギサールの野菜が切れた際、リムサ・ロミンサで購入します。
     default: true
@@ -552,9 +555,6 @@ local ExchangeMoveStuckCount
 local ExchangeMoveLastDistanceToShop
 local ExchangeMoveGraceUntil
 
--- PTチャット座標追従用
-local PartyChatFlagTarget
-
 -- 通常移動時のスタック検知用
 local MoveStuckLastCheckTime
 local MoveStuckLastPosition
@@ -573,6 +573,7 @@ local SessionStuckZoneSwitchCount
 local SessionStopReason
 local FoodAutoUseDisabled
 local PotionAutoUseDisabled
+local TankStanceLastAttemptAt
 local LifestreamBusyWarned
 local VnavReadyCheckWarned
 local NativeItemCommandDisabled
@@ -1379,6 +1380,10 @@ function GetLangTable(lang)
                 ["Onslaught"] = "オンスロート",
                 ["Shadowstride"] = "シャドウストライド",
                 ["Trajectory"] = "トラジェクトリー",
+                ["Iron Will"] = "アイアンウィル",
+                ["Defiance"] = "ディフェアンス",
+                ["Grit"] = "グリット",
+                ["Royal Guard"] = "ロイヤルガード",
                 ["Winged Glide"] = "ウィンググライド",
                 ["Thunderclap"] = "抜重歩法",
                 ["Hissatsu: Gyoten"] = "必殺剣・暁天",
@@ -1450,6 +1455,10 @@ function GetLangTable(lang)
                 ["Onslaught"] = "Onslaught",
                 ["Shadowstride"] = "Shadowstride",
                 ["Trajectory"] = "Trajectory",
+                ["Iron Will"] = "Iron Will",
+                ["Defiance"] = "Defiance",
+                ["Grit"] = "Grit",
+                ["Royal Guard"] = "Royal Guard",
                 ["Winged Glide"] = "Winged Glide",
                 ["Thunderclap"] = "Thunderclap",
                 ["Hissatsu: Gyoten"] = "Hissatsu: Gyoten",
@@ -3994,8 +4003,14 @@ function AcceptTeleportOfferLocation(destinationAetheryte)
 
     if AddonReady("SelectYesno") then
         local teleportOfferMessage = GetNodeText("SelectYesno", 1, 2)
+        Dalamud.Log("[FATE] Teleport offer message: " .. tostring(teleportOfferMessage))
         if type(teleportOfferMessage) == "string" then
+            -- English pattern
             local teleportOfferLocation = teleportOfferMessage:match("Accept Teleport to (.+)%?")
+            -- Japanese pattern: 「レイノード・ウィンド」へのテレポ勧誘を受けますか？
+            if not teleportOfferLocation then
+                teleportOfferLocation = teleportOfferMessage:match("「(.+)」へのテレポ")
+            end
             local shouldAccept = false
             if destinationText ~= "" then
                 local destinationCompact = compact(destinationText)
@@ -4011,8 +4026,10 @@ function AcceptTeleportOfferLocation(destinationAetheryte)
                 local lowerMsg = string.lower(teleportOfferMessage)
                 shouldAccept = lowerMsg:find("teleport", 1, true) ~= nil
                     or teleportOfferMessage:find("テレポ", 1, true) ~= nil
+                    or teleportOfferMessage:find("勧誘", 1, true) ~= nil
             end
 
+            Dalamud.Log("[FATE] Teleport offer shouldAccept=" .. tostring(shouldAccept) .. " location=" .. tostring(teleportOfferLocation))
             if shouldAccept then
                 yield("/callback SelectYesno true 0") -- accept teleport
                 return
@@ -5782,6 +5799,9 @@ function TurnOnCombatMods(rotationMode)
             end
             AiDodgingOn = true
         end
+
+        -- Tank stance check when combat starts
+        TankStanceCheck()
     end
 end
 
@@ -6825,23 +6845,19 @@ function Ready()
         AcceptTeleportOfferLocation("")
     end
 
-    -- Party Play: follow coordinates shared in party chat
-    if PartyChatFlagTarget ~= nil then
-        local elapsed = os.clock() - PartyChatFlagTarget.setAt
-        if elapsed < 120 then
+    -- Party Play: follow closest party member if far away
+    if FollowPartyMembers == true and GetPartyPlayActive() then
+        local ptPos, ptDist = GetClosestPartyMemberPosition()
+        if ptPos ~= nil and ptDist > 60 then
             if not Svc.Condition[CharacterCondition.inCombat]
                 and not Svc.Condition[CharacterCondition.casting]
                 and not Svc.Condition[CharacterCondition.betweenAreas]
             then
                 if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                    Dalamud.Log("[FATE] Moving to party chat flag: " .. PartyChatFlagTarget.x .. ", " .. PartyChatFlagTarget.y)
-                    yield("/coord " .. PartyChatFlagTarget.x .. " " .. PartyChatFlagTarget.y)
-                    yield("/wait 0.5")
-                    yield("/vnav moveflag")
+                    Dalamud.Log("[FATE] Party member is " .. math.floor(ptDist) .. "y away. Moving to follow.")
+                    IPC.vnavmesh.PathfindAndMoveTo(ptPos, false)
                 end
             end
-        else
-            PartyChatFlagTarget = nil
         end
     end
 
@@ -7741,6 +7757,55 @@ function HasTwistOfFateBuff()
     return HasStatusId(1288) or HasStatusId(1289)
 end
 
+function TankStanceCheck()
+    local now = os.clock()
+    if TankStanceLastAttemptAt ~= nil and (now - TankStanceLastAttemptAt) < 5 then
+        return
+    end
+
+    local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
+        (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
+        (Player ~= nil and Player.Available and Player)
+    if lp == nil then return end
+
+    local jobOk, job = pcall(function() return lp.ClassJob end)
+    if not jobOk or job == nil then return end
+    local jobId = job.Id
+
+    local isTank = false
+    for _, classData in pairs(ClassList) do
+        if classData.classId == jobId and classData.isTank then
+            isTank = true
+            break
+        end
+    end
+    if not isTank then return end
+
+    local stanceSkill = nil
+    local stanceStatusId = nil
+    if jobId == ClassList.pld.classId then
+        stanceSkill = LANG.actions["Iron Will"]
+        stanceStatusId = 79
+    elseif jobId == ClassList.war.classId then
+        stanceSkill = LANG.actions["Defiance"]
+        stanceStatusId = 91
+    elseif jobId == ClassList.drk.classId then
+        stanceSkill = LANG.actions["Grit"]
+        stanceStatusId = 743
+    elseif jobId == ClassList.gnb.classId then
+        stanceSkill = LANG.actions["Royal Guard"]
+        stanceStatusId = 1833
+    end
+
+    if stanceSkill == nil or stanceStatusId == nil then return end
+
+    if not HasStatusId(stanceStatusId) then
+        Dalamud.Log("[FATE] Tank stance missing (" .. stanceSkill .. "), attempting to activate.")
+        yield("/ac \"" .. stanceSkill .. "\"")
+        TankStanceLastAttemptAt = now
+    end
+end
+
 function ResetBonusBuffHoldWindow()
     BonusBuffNoEligibleSince = 0
     BonusBuffHoldWindowExpiredAnnounced = false
@@ -8253,41 +8318,49 @@ function GetPartyPlayActive()
     return false
 end
 
-function OnChatMessage()
-    if not GetPartyPlayActive() then return end
-    local message = TriggerData and TriggerData.message
-    if not message then return end
-
-    -- Only react to party/alliance/echo chat to avoid random noise
-    local senderType = TriggerData.senderType or ""
-    local validTypes = { Party = true, Alliance = true, Echo = true, Tell = true }
-    if not validTypes[senderType] then
-        -- Also allow if message contains a party member name
-        local hasPartyMember = false
-        local partyNames = GetPartyMemberNames()
-        for _, name in ipairs(partyNames) do
-            if message:find(name, 1, true) then
-                hasPartyMember = true
-                break
+function GetPartyMemberPositions()
+    local positions = {}
+    local ok, party = pcall(function()
+        if Svc and Svc.Party then return Svc.Party end
+        if Svc and Svc.ClientState and Svc.ClientState.Party then return Svc.ClientState.Party end
+        return nil
+    end)
+    if not ok or party == nil then return positions end
+    local lenOk, len = pcall(function() return party.Length end)
+    if not lenOk or len == nil then
+        lenOk, len = pcall(function() return party.Count end)
+    end
+    if not lenOk or len == nil then return positions end
+    for i = 0, len - 1 do
+        local memberOk, member = pcall(function() return party[i] end)
+        if memberOk and member ~= nil then
+            local gameObjOk, gameObj = pcall(function() return member.GameObject end)
+            if gameObjOk and gameObj ~= nil then
+                local posOk, pos = pcall(function() return gameObj.Position end)
+                if posOk and pos ~= nil then
+                    table.insert(positions, pos)
+                end
             end
         end
-        if not hasPartyMember then return end
     end
+    return positions
+end
 
-    -- Extract coordinates like ( 23.4  , 17.8 ) or 23.4, 17.8
-    local xStr, yStr = message:match("%(%s*(-?%d+%.?%d*)%s*[,，]%s*(-?%d+%.?%d*)%s*%)")
-    if not xStr then
-        xStr, yStr = message:match("(-?%d+%.?%d*)%s*[,，]%s*(-?%d+%.?%d*)")
-    end
-
-    if xStr and yStr then
-        local x = tonumber(xStr)
-        local y = tonumber(yStr)
-        if x and y then
-            PartyChatFlagTarget = { x = x, y = y, setAt = os.clock() }
-            Dalamud.Log("[FATE] Party chat coordinate detected: map X=" .. x .. ", Y=" .. y)
+function GetClosestPartyMemberPosition()
+    local playerPos = GetPlayerPosition()
+    if playerPos == nil then return nil end
+    local partyPositions = GetPartyMemberPositions()
+    if #partyPositions == 0 then return nil end
+    local closest = nil
+    local closestDist = math.maxinteger
+    for _, pos in ipairs(partyPositions) do
+        local dist = DistanceBetween(playerPos, pos)
+        if dist < closestDist then
+            closestDist = dist
+            closest = pos
         end
     end
+    return closest, closestDist
 end
 
 -- ============================================================
@@ -8966,6 +9039,7 @@ function FateFarming:Run()
     PrioritizePartyMemberTargets    = Config.Get("Prioritize Party Member Targets")
     PrioritizeFatesWithPartyMembers = Config.Get("Prioritize FATEs with Party Members")
     DisableChocoboInParty           = Config.Get("Disable Chocobo in Party")
+    FollowPartyMembers              = Config.Get("Follow Party Members")
 
     -- 出現中FATEデータ保存
     FateDataLogEnabled         = ParseBool(Config.Get("Save active FATE data?"), true)
