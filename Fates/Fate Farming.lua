@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.7
+version: 3.1.8
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -87,6 +87,21 @@ configs:
     default: false
   Summon Chocobo?:
     description: ギサールの野菜を使ってバディチョコボを自動で召喚します。
+    default: true
+  Party Play Mode:
+    description: PTプレイ時の動作を有効にします。PTメンバーがいる場合に自動で切り替えることもできます。
+    default: false
+  Auto Detect Party Members:
+    description: PTメンバーがいる場合に自動でPTプレイモードに切り替えます（Party Play Mode OFF時も有効）。
+    default: true
+  Prioritize Party Member Targets:
+    description: PTプレイ時、PTメンバーが戦っている敵を優先的にターゲットします。
+    default: true
+  Prioritize FATEs with Party Members:
+    description: PTプレイ時、PTメンバーが参加中のFATEを優先的に選択します。
+    default: true
+  Disable Chocobo in Party:
+    description: PTに参加している場合にチョコボ召喚を自動で無効にします。
     default: true
   Auto-buy Gysahl Greens?:
     description: ギサールの野菜が切れた際、リムサ・ロミンサで購入します。
@@ -258,6 +273,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.8    追加: PTプレイモード（Party Play Mode）。PTメンバー検知・ターゲット優先・FATE優先・チョコボ自動抑制。
     -> 3.1.7    追加: 出現中FATEの名前とNPC名をJSONLに保存
     -> 3.1.6    修正: セルフ修理OFF時でもボーナスバフ中に修理移動するように変更
     -> 3.1.5    Added HW fate definitions
@@ -510,6 +526,14 @@ local IsLifestreamBusySafe
 local ValidateRequiredIpc
 local IsVnavmeshReadySafe
 local IsVnavmeshMovingSafe
+
+-- Party Play related locals
+local GetPartyMemberCount
+local GetPartyMemberNames
+local GetPartyMemberTargetObjects
+local IsPartyMemberInFate
+local GetPartyPlayActive
+local IsPartyMemberObject
 
 -- 出現中FATEデータ保存用の設定/状態
 local FateDataLogEnabled
@@ -1347,7 +1371,18 @@ function GetLangTable(lang)
                 ["Dosis"] = "ドシス",
                 ["Stone"] = "ストーン",
                 ["Glare"] = "グレア",
-                ["Malefic"] = "マレフィク"
+                ["Malefic"] = "マレフィク",
+                ["Intervene"] = "インターヴィーン",
+                ["Onslaught"] = "オンスロート",
+                ["Shadowstride"] = "シャドウストライド",
+                ["Trajectory"] = "トラジェクトリー",
+                ["Winged Glide"] = "ウィンググライド",
+                ["Thunderclap"] = "抜重歩法",
+                ["Hissatsu: Gyoten"] = "必殺剣・暁天",
+                ["Hell's Ingress"] = "ヘルズイングレス",
+                ["Plunge"] = "プランジカット",
+                ["Rough Divide"] = "ラフディバイド",
+                ["Spineshatter Dive"] = "スパインダイブ"
             },
             bitColorExchangeData = {
                 {
@@ -1407,7 +1442,18 @@ function GetLangTable(lang)
                 ["Dosis"] = "Dosis",
                 ["Stone"] = "Stone",
                 ["Glare"] = "Glare",
-                ["Malefic"] = "Malefic"
+                ["Malefic"] = "Malefic",
+                ["Intervene"] = "Intervene",
+                ["Onslaught"] = "Onslaught",
+                ["Shadowstride"] = "Shadowstride",
+                ["Trajectory"] = "Trajectory",
+                ["Winged Glide"] = "Winged Glide",
+                ["Thunderclap"] = "Thunderclap",
+                ["Hissatsu: Gyoten"] = "Hissatsu: Gyoten",
+                ["Hell's Ingress"] = "Hell's Ingress",
+                ["Plunge"] = "Plunge",
+                ["Rough Divide"] = "Rough Divide",
+                ["Spineshatter Dive"] = "Spineshatter Dive"
             },
             bitColorExchangeData = {
                 {
@@ -1799,6 +1845,33 @@ function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallba
     local unengagedOnly = (onlyUnengaged == true) and (PreferUnengagedFateTargets == true)
     if allowFallbackToAny == nil then
         allowFallbackToAny = true
+    end
+
+    -- Party Play: prioritize targets that party members are fighting
+    if PrioritizePartyMemberTargets == true and GetPartyPlayActive() then
+        local partyTargets = GetPartyMemberTargetObjects()
+        for _, ptTarget in ipairs(partyTargets) do
+            if ptTarget ~= nil and not ptTarget.IsDead then
+                local validFate = true
+                if fateIdFilter ~= 0 then
+                    local wrappedOk, wrapped = pcall(function() return EntityWrapper(ptTarget) end)
+                    if wrappedOk and wrapped ~= nil then
+                        validFate = (wrapped.FateId == fateIdFilter)
+                    end
+                end
+                local validDist = true
+                if maxDistance ~= nil then
+                    local playerPos = GetPlayerPosition()
+                    if playerPos ~= nil then
+                        validDist = DistanceBetween(playerPos, ptTarget.Position) <= maxDistance
+                    end
+                end
+                if validFate and validDist then
+                    Svc.Targets.Target = ptTarget
+                    return true
+                end
+            end
+        end
     end
 
     local candidates = CollectFateEnemyCandidates(fateIdFilter, unengagedOnly, maxDistance)
@@ -3368,6 +3441,20 @@ function SelectNextFateHelper(tempFate, nextFate)
             return nil
         end
         -- if both are bonus fates, go through the regular fate selection process
+    end
+
+    -- Party Play: prioritize FATEs where party members are present
+    if PrioritizeFatesWithPartyMembers == true and GetPartyPlayActive() then
+        local tempHasParty = IsPartyMemberInFate(tempFate)
+        local nextHasParty = IsPartyMemberInFate(nextFate)
+        if tempHasParty and not nextHasParty then
+            Dalamud.Log("[FATE] Prioritizing fate #" .. tempFate.fateId .. " because party member is present.")
+            return tempFate
+        elseif nextHasParty and not tempHasParty then
+            Dalamud.Log("[FATE] Prioritizing fate #" .. nextFate.fateId .. " because party member is present.")
+            return nextFate
+        end
+        -- if both have party members (or neither), continue with normal selection
     end
 
     local tempProgress = GetFateProgressValue(tempFate, 0)
@@ -5421,22 +5508,22 @@ function TryGapCloserOnTarget(distance)
 
     local job = Player.Job
     local gapCloser = nil
-    if job.Id == ClassList.pld.classId then gapCloser = "Intervene"
-    elseif job.Id == ClassList.war.classId then gapCloser = "Onslaught"
-    elseif job.Id == ClassList.drk.classId then gapCloser = "Shadowstride"
-    elseif job.Id == ClassList.gnb.classId then gapCloser = "Trajectory"
-    elseif job.Id == ClassList.drg.classId then gapCloser = "Winged Glide"
-    elseif job.Id == ClassList.mnk.classId then gapCloser = "Thunderclap"
-    elseif job.Id == ClassList.sam.classId then gapCloser = "Hissatsu: Gyoten"
-    elseif job.Id == ClassList.rpr.classId then gapCloser = "Hell's Ingress"
+    if job.Id == ClassList.pld.classId then gapCloser = LANG.actions["Intervene"] or "Intervene"
+    elseif job.Id == ClassList.war.classId then gapCloser = LANG.actions["Onslaught"] or "Onslaught"
+    elseif job.Id == ClassList.drk.classId then gapCloser = LANG.actions["Shadowstride"] or "Shadowstride"
+    elseif job.Id == ClassList.gnb.classId then gapCloser = LANG.actions["Trajectory"] or "Trajectory"
+    elseif job.Id == ClassList.drg.classId then gapCloser = LANG.actions["Winged Glide"] or "Winged Glide"
+    elseif job.Id == ClassList.mnk.classId then gapCloser = LANG.actions["Thunderclap"] or "Thunderclap"
+    elseif job.Id == ClassList.sam.classId then gapCloser = LANG.actions["Hissatsu: Gyoten"] or "Hissatsu: Gyoten"
+    elseif job.Id == ClassList.rpr.classId then gapCloser = LANG.actions["Hell's Ingress"] or "Hell's Ingress"
     end
 
     if gapCloser then
         yield("/ac \"" .. gapCloser .. "\"")
         -- Fallback for pre-90 characters or old skill names
-        if job.Id == ClassList.drk.classId then yield("/ac \"Plunge\"")
-        elseif job.Id == ClassList.gnb.classId then yield("/ac \"Rough Divide\"")
-        elseif job.Id == ClassList.drg.classId then yield("/ac \"Spineshatter Dive\"")
+        if job.Id == ClassList.drk.classId then yield("/ac \"" .. (LANG.actions["Plunge"] or "Plunge") .. "\"")
+        elseif job.Id == ClassList.gnb.classId then yield("/ac \"" .. (LANG.actions["Rough Divide"] or "Rough Divide") .. "\"")
+        elseif job.Id == ClassList.drg.classId then yield("/ac \"" .. (LANG.actions["Spineshatter Dive"] or "Spineshatter Dive") .. "\"")
         end
         return true
     end
@@ -7173,11 +7260,11 @@ function HandleExchangeMovementStuck()
     local isSolutionNineRoute = SelectedBicolorExchangeData ~= nil
         and SelectedBicolorExchangeData.zoneId == 1186
         and Svc.ClientState.TerritoryType == 1186
-    local stuckCheckInterval = isSolutionNineRoute and 6 or 3
+    local stuckCheckInterval = isSolutionNineRoute and 4 or 3
     local stuckMoveThreshold = isSolutionNineRoute and 0.7 or 1.5
     local shopProgressThreshold = isSolutionNineRoute and 0.4 or 0.8
-    local repathSpread = isSolutionNineRoute and 6 or 3
-    local maxRepathAttempts = isSolutionNineRoute and 7 or 5
+    local repathSpread = isSolutionNineRoute and 10 or 3
+    local maxRepathAttempts = isSolutionNineRoute and 3 or 5
 
     local now = os.clock()
     if now - ExchangeMoveLastCheckTime < stuckCheckInterval then
@@ -7213,7 +7300,12 @@ function HandleExchangeMovementStuck()
         yield("/vnav stop")
         yield("/wait 0.3")
 
-        local retryTarget = RandomAdjustCoordinates(SelectedBicolorExchangeData.position, repathSpread)
+        local retryTarget
+        if isSolutionNineRoute then
+            retryTarget = SelectedBicolorExchangeData.position
+        else
+            retryTarget = RandomAdjustCoordinates(SelectedBicolorExchangeData.position, repathSpread)
+        end
         local nearestFloor = IPC.vnavmesh.PointOnFloor(retryTarget, true, 30)
         if nearestFloor ~= nil then
             retryTarget = nearestFloor
@@ -7300,12 +7392,10 @@ function ExecuteBicolorExchange()
         elseif GetDistanceToPoint(SelectedBicolorExchangeData.position) > 5 then
             Dalamud.Log("Distance to shopkeep is too far. Calculating route from current position.")
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                SetMapFlag(SelectedBicolorExchangeData.zoneId, SelectedBicolorExchangeData.position)
-                if Player.CanFly and SelectedZone.flying then
-                    yield("/vnav flyflag")
-                else
-                    yield("/vnav moveflag")
-                end
+                local flyOk, canFly = pcall(function()
+                    return Player.CanFly and SelectedZone ~= nil and SelectedZone.flying
+                end)
+                IPC.vnavmesh.PathfindAndMoveTo(SelectedBicolorExchangeData.position, flyOk and canFly)
             end
             HandleExchangeMovementStuck()
         else
@@ -7966,16 +8056,182 @@ function IsChocoboSummoned()
             end
         end
         
-        return false
-    end)
+    return false
+end)
     if ok then
         return result
     end
     return false
 end
 
+-- ============================================================
+-- Party Play Helper Functions
+-- ============================================================
+
+function GetPartyMemberCount()
+    local ok, party = pcall(function()
+        if Svc and Svc.Party then
+            return Svc.Party
+        end
+        if Svc and Svc.ClientState and Svc.ClientState.Party then
+            return Svc.ClientState.Party
+        end
+        return nil
+    end)
+    if not ok or party == nil then
+        return 0
+    end
+    local count = 0
+    local lenOk, len = pcall(function() return party.Length end)
+    if not lenOk or len == nil then
+        lenOk, len = pcall(function() return party.Count end)
+    end
+    if not lenOk or len == nil then
+        return 0
+    end
+    for i = 0, len - 1 do
+        local memberOk, member = pcall(function() return party[i] end)
+        if memberOk and member ~= nil then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function GetPartyMemberNames()
+    local names = {}
+    local ok, party = pcall(function()
+        if Svc and Svc.Party then
+            return Svc.Party
+        end
+        if Svc and Svc.ClientState and Svc.ClientState.Party then
+            return Svc.ClientState.Party
+        end
+        return nil
+    end)
+    if not ok or party == nil then
+        return names
+    end
+    local lenOk, len = pcall(function() return party.Length end)
+    if not lenOk or len == nil then
+        lenOk, len = pcall(function() return party.Count end)
+    end
+    if not lenOk or len == nil then
+        return names
+    end
+    for i = 0, len - 1 do
+        local memberOk, member = pcall(function() return party[i] end)
+        if memberOk and member ~= nil then
+            local nameOk, nameObj = pcall(function() return member.Name end)
+            if nameOk and nameObj ~= nil then
+                local textOk, text = pcall(function() return nameObj:GetText() end)
+                if textOk and text ~= nil and text ~= "" then
+                    table.insert(names, text)
+                end
+            end
+        end
+    end
+    return names
+end
+
+function IsPartyMemberObject(obj)
+    if obj == nil then return false end
+    local partyNames = GetPartyMemberNames()
+    if #partyNames == 0 then return false end
+    local nameOk, name = pcall(function() return obj.Name end)
+    if not nameOk or name == nil then return false end
+    local textOk, text = pcall(function() return name:GetText() end)
+    if not textOk or text == nil then return false end
+    for _, partyName in ipairs(partyNames) do
+        if text == partyName then
+            return true
+        end
+    end
+    return false
+end
+
+function GetPartyMemberTargetObjects()
+    local targets = {}
+    local partyNames = GetPartyMemberNames()
+    if #partyNames == 0 then return targets end
+    local nameSet = {}
+    for _, n in ipairs(partyNames) do
+        nameSet[n] = true
+    end
+    if Svc == nil or Svc.Objects == nil then return targets end
+    local lenOk, len = pcall(function() return Svc.Objects.Length end)
+    if not lenOk or len == nil then return targets end
+    for i = 0, len - 1 do
+        local objOk, obj = pcall(function() return Svc.Objects[i] end)
+        if objOk and obj ~= nil then
+            local nameOk, name = pcall(function() return obj.Name end)
+            if nameOk and name ~= nil then
+                local textOk, text = pcall(function() return name:GetText() end)
+                if textOk and text ~= nil and nameSet[text] then
+                    local targetOk, target = pcall(function() return obj.TargetObject end)
+                    if targetOk and target ~= nil and target:IsHostile() and not target.IsDead then
+                        table.insert(targets, target)
+                    end
+                end
+            end
+        end
+    end
+    return targets
+end
+
+function IsPartyMemberInFate(fate)
+    if fate == nil or fate.position == nil then return false end
+    local fateRadius = GetFateRadiusValue(fate, nil)
+    if fateRadius == nil or fateRadius <= 0 then
+        fateRadius = 50
+    end
+    local partyNames = GetPartyMemberNames()
+    if #partyNames == 0 then return false end
+    local nameSet = {}
+    for _, n in ipairs(partyNames) do
+        nameSet[n] = true
+    end
+    if Svc == nil or Svc.Objects == nil then return false end
+    local lenOk, len = pcall(function() return Svc.Objects.Length end)
+    if not lenOk or len == nil then return false end
+    for i = 0, len - 1 do
+        local objOk, obj = pcall(function() return Svc.Objects[i] end)
+        if objOk and obj ~= nil then
+            local nameOk, name = pcall(function() return obj.Name end)
+            if nameOk and name ~= nil then
+                local textOk, text = pcall(function() return name:GetText() end)
+                if textOk and text ~= nil and nameSet[text] then
+                    local posOk, pos = pcall(function() return obj.Position end)
+                    if posOk and pos ~= nil then
+                        if DistanceBetweenFlat(fate.position, pos) <= fateRadius then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+function GetPartyPlayActive()
+    if PartyPlayMode == true then
+        return true
+    end
+    if AutoDetectPartyMembers == true then
+        local count = GetPartyMemberCount()
+        return count > 0
+    end
+    return false
+end
+
+-- ============================================================
+
 function ChocoboCheck()
     if not SummonChocobo then return end
+    if DisableChocoboInParty and GetPartyPlayActive() then
+        return
+    end
     if Svc.Condition[CharacterCondition.inCombat]
         or Svc.Condition[CharacterCondition.casting]
         or Svc.Condition[CharacterCondition.occupied]
@@ -8638,6 +8894,14 @@ function FateFarming:Run()
     DiscordWebhookUrl          = Config.Get("Discord Webhook URL")
     SummonChocobo              = Config.Get("Summon Chocobo?")
     ShouldAutoBuyGysahlGreens   = Config.Get("Auto-buy Gysahl Greens?")
+
+    -- Party Play settings
+    PartyPlayMode                   = Config.Get("Party Play Mode")
+    AutoDetectPartyMembers          = Config.Get("Auto Detect Party Members")
+    PrioritizePartyMemberTargets    = Config.Get("Prioritize Party Member Targets")
+    PrioritizeFatesWithPartyMembers = Config.Get("Prioritize FATEs with Party Members")
+    DisableChocoboInParty           = Config.Get("Disable Chocobo in Party")
+
     -- 出現中FATEデータ保存
     FateDataLogEnabled         = ParseBool(Config.Get("Save active FATE data?"), true)
     FateDataLogIntervalSeconds = tonumber(Config.Get("FATE data log interval (secs)"))
