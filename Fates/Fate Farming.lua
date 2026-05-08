@@ -5799,9 +5799,6 @@ function TurnOnCombatMods(rotationMode)
             end
             AiDodgingOn = true
         end
-
-        -- Tank stance check when combat starts
-        TankStanceCheck()
     end
 end
 
@@ -6318,6 +6315,7 @@ function DoFate()
     end
 
     TurnOnCombatMods("auto")
+    TankStanceCheck()
 
     GemAnnouncementLock = false
     local fateRadiusForAcquire = GetFateRadiusValue(CurrentFate, nil) or 0
@@ -7759,7 +7757,7 @@ end
 
 function TankStanceCheck()
     local now = os.clock()
-    if TankStanceLastAttemptAt ~= nil and (now - TankStanceLastAttemptAt) < 5 then
+    if TankStanceLastAttemptAt ~= nil and (now - TankStanceLastAttemptAt) < 3 then
         return
     end
 
@@ -7768,9 +7766,18 @@ function TankStanceCheck()
         (Player ~= nil and Player.Available and Player)
     if lp == nil then return end
 
+    local jobId = nil
     local jobOk, job = pcall(function() return lp.ClassJob end)
-    if not jobOk or job == nil then return end
-    local jobId = job.Id
+    if jobOk and job ~= nil then
+        local idOk, id = pcall(function() return job.Id end)
+        if idOk then jobId = id end
+    end
+    if jobId == nil and Player ~= nil then
+        local pOk, pId = pcall(function() return Player.Job end)
+        if pOk then jobId = pId end
+    end
+    Dalamud.Log("[FATE] TankStanceCheck jobId=" .. tostring(jobId))
+    if jobId == nil then return end
 
     local isTank = false
     for _, classData in pairs(ClassList) do
@@ -7779,7 +7786,10 @@ function TankStanceCheck()
             break
         end
     end
-    if not isTank then return end
+    if not isTank then
+        Dalamud.Log("[FATE] Not a tank job (jobId=" .. tostring(jobId) .. "). Skipping stance check.")
+        return
+    end
 
     local stanceSkill = nil
     local stanceStatusId = nil
@@ -7800,9 +7810,15 @@ function TankStanceCheck()
     if stanceSkill == nil or stanceStatusId == nil then return end
 
     if not HasStatusId(stanceStatusId) then
-        Dalamud.Log("[FATE] Tank stance missing (" .. stanceSkill .. "), attempting to activate.")
+        Dalamud.Log("[FATE] Tank stance missing (" .. stanceSkill .. " | statusId=" .. stanceStatusId .. "), attempting to activate.")
         yield("/ac \"" .. stanceSkill .. "\"")
+        yield("/wait 0.5")
         TankStanceLastAttemptAt = now
+        if HasStatusId(stanceStatusId) then
+            Dalamud.Log("[FATE] Tank stance activated successfully.")
+        else
+            Dalamud.Log("[FATE] Tank stance still missing after attempt.")
+        end
     end
 end
 
