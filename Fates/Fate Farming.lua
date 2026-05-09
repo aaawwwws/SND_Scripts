@@ -7767,21 +7767,11 @@ function TankStanceCheck()
     if lp == nil then return end
 
     local jobId = nil
-    -- Player.Job is a ClassJob wrapper; .Id gives the numeric RowId
-    if Player ~= nil then
-        local pOk, pId = pcall(function() return Player.Job.Id end)
-        if pOk and pId ~= nil then
-            jobId = pId
-        end
+    -- Use direct access (same pattern as GetCombatOpenActionCandidates in this script)
+    if Player ~= nil and Player.Job ~= nil then
+        jobId = Player.Job.Id
     end
-    -- Fallback: try Player.ClassJob.Id
-    if jobId == nil and Player ~= nil then
-        local pOk, pId = pcall(function() return Player.ClassJob.Id end)
-        if pOk and pId ~= nil then
-            jobId = pId
-        end
-    end
-    -- Fallback: lp.ClassJob.RowId
+    -- Fallback: try Svc.ClientState.LocalPlayer.ClassJob.RowId
     if jobId == nil then
         local jobOk, job = pcall(function() return lp.ClassJob end)
         if jobOk and job ~= nil then
