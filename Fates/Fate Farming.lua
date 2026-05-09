@@ -7767,28 +7767,26 @@ function TankStanceCheck()
     if lp == nil then return end
 
     local jobId = nil
-    -- Player.Job usually returns a plain number, which is what we need.
+    -- Player.Job is a ClassJob wrapper; .Id gives the numeric RowId
     if Player ~= nil then
-        local pOk, pId = pcall(function() return Player.Job end)
-        if pOk and pId ~= nil then jobId = pId end
+        local pOk, pId = pcall(function() return Player.Job.Id end)
+        if pOk and pId ~= nil then
+            jobId = pId
+        end
     end
-    -- Fallback: try lp.ClassJob.RowId (wrapper object may expose the numeric id here)
+    -- Fallback: try Player.ClassJob.Id
+    if jobId == nil and Player ~= nil then
+        local pOk, pId = pcall(function() return Player.ClassJob.Id end)
+        if pOk and pId ~= nil then
+            jobId = pId
+        end
+    end
+    -- Fallback: lp.ClassJob.RowId
     if jobId == nil then
         local jobOk, job = pcall(function() return lp.ClassJob end)
         if jobOk and job ~= nil then
             local rowOk, rowId = pcall(function() return job.RowId end)
             if rowOk and rowId ~= nil then jobId = rowId end
-        end
-    end
-    -- Last resort: try tostring + tonumber in case it's a wrapper with a numeric representation
-    if jobId == nil then
-        local jobOk, job = pcall(function() return lp.ClassJob end)
-        if jobOk and job ~= nil then
-            local idOk, rawId = pcall(function() return job.Id end)
-            if idOk and rawId ~= nil then
-                local numId = tonumber(tostring(rawId):match("%d+"))
-                if numId ~= nil then jobId = numId end
-            end
         end
     end
     Dalamud.Log("[FATE] TankStanceCheck jobId=" .. tostring(jobId))
