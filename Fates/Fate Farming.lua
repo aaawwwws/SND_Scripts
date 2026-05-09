@@ -2186,7 +2186,7 @@ function MoveToTargetHitbox()
     local ideal = targetPos + (dir * desiredRange)
     local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, GetCurrentFateMoveBoundaryBuffer())
     local newPos = IPC.vnavmesh.PointOnFloor(boundedIdeal, false, 1.5) or boundedIdeal
-    IPC.vnavmesh.PathfindAndMoveTo(newPos, Player.CanFly and SelectedZone.flying)
+    IPC.vnavmesh.PathfindAndMoveTo(newPos, false)
 end
 
 function HasPlugin(name)
@@ -4774,13 +4774,19 @@ function MiddleOfFateDismount()
 
     if Svc.Targets.Target ~= nil then
         MiddleDismountNoTargetSince = 0
+        -- Dismount immediately when a target is found so we don't circle on mount
+        if Svc.Condition[CharacterCondition.mounted] then
+            Dalamud.Log("[FATE] Target found while mounted. Dismounting immediately.")
+            Dismount(true)
+            return
+        end
         if GetDistanceToTarget() > (MaxDistance + GetTargetHitboxRadius() + 5) then
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
                 if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
                     ClearTarget()
                     local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
                     if fallbackPos ~= nil then
-                        IPC.vnavmesh.PathfindAndMoveTo(fallbackPos, Player.CanFly and SelectedZone.flying)
+                        IPC.vnavmesh.PathfindAndMoveTo(fallbackPos, false)
                     end
                 else
                     Dalamud.Log("[FATE] MiddleOfFateDismount IPC.vnavmesh.PathfindAndMoveTo")
@@ -4788,16 +4794,11 @@ function MiddleOfFateDismount()
                 end
             end
         else
-            if Svc.Condition[CharacterCondition.mounted] then
-                Dalamud.Log("[FATE] MiddleOfFateDismount Dismount(force)")
-                Dismount(true)
-            else
-                yield("/vnav stop")
-                yield("/wait 0.5")
-                ResetMiddleDismountState()
-                State = CharacterState.doFate
-                Dalamud.Log("[FATE] State Change: DoFate")
-            end
+            yield("/vnav stop")
+            yield("/wait 0.5")
+            ResetMiddleDismountState()
+            State = CharacterState.doFate
+            Dalamud.Log("[FATE] State Change: DoFate")
         end
     else
         if MiddleDismountNoTargetSince == nil or MiddleDismountNoTargetSince <= 0 then
@@ -6390,7 +6391,11 @@ function DoFate()
         UpdateCombatModeByNearbyEnemies()
     end
 
+    -- Tanks pull enemies toward themselves; use a tighter boundary so we don't get dragged out.
     local hardBoundaryBuffer = GetCurrentFateHardBoundaryBuffer()
+    if GetPartyPlayActive() and PrioritizePartyMemberTargets then
+        hardBoundaryBuffer = math.min(hardBoundaryBuffer, 8)
+    end
     if IsFateActive(CurrentFate.fateObject)
         and fateRadiusForAcquire > 0
         and GetDistanceToPoint(CurrentFate.position) > (fateRadiusForAcquire + hardBoundaryBuffer)
