@@ -573,7 +573,7 @@ local SessionStuckZoneSwitchCount
 local SessionStopReason
 local FoodAutoUseDisabled
 local PotionAutoUseDisabled
-local TankStanceLastAttemptAt
+local TankStanceAppliedForFate
 local LifestreamBusyWarned
 local VnavReadyCheckWarned
 local NativeItemCommandDisabled
@@ -7756,8 +7756,9 @@ function HasTwistOfFateBuff()
 end
 
 function TankStanceCheck()
-    local now = os.clock()
-    if TankStanceLastAttemptAt ~= nil and (now - TankStanceLastAttemptAt) < 3 then
+    -- Only apply once per FATE to avoid toggle flickering
+    if CurrentFate ~= nil and TankStanceAppliedForFate ~= nil
+        and TankStanceAppliedForFate == CurrentFate.fateId then
         return
     end
 
@@ -7779,7 +7780,6 @@ function TankStanceCheck()
             if rowOk and rowId ~= nil then jobId = rowId end
         end
     end
-    Dalamud.Log("[FATE] TankStanceCheck jobId=" .. tostring(jobId))
     if jobId == nil then return end
 
     local isTank = false
@@ -7789,10 +7789,7 @@ function TankStanceCheck()
             break
         end
     end
-    if not isTank then
-        Dalamud.Log("[FATE] Not a tank job (jobId=" .. tostring(jobId) .. "). Skipping stance check.")
-        return
-    end
+    if not isTank then return end
 
     local stanceSkill = nil
     local stanceStatusId = nil
@@ -7813,14 +7810,19 @@ function TankStanceCheck()
     if stanceSkill == nil or stanceStatusId == nil then return end
 
     if not HasStatusId(stanceStatusId) then
-        Dalamud.Log("[FATE] Tank stance missing (" .. stanceSkill .. " | statusId=" .. stanceStatusId .. "), attempting to activate.")
+        Dalamud.Log("[FATE] Tank stance missing (" .. stanceSkill .. "), activating.")
         yield("/ac \"" .. stanceSkill .. "\"")
-        yield("/wait 0.5")
-        TankStanceLastAttemptAt = now
+        yield("/wait 2")
+        if CurrentFate ~= nil then
+            TankStanceAppliedForFate = CurrentFate.fateId
+        end
         if HasStatusId(stanceStatusId) then
-            Dalamud.Log("[FATE] Tank stance activated successfully.")
-        else
-            Dalamud.Log("[FATE] Tank stance still missing after attempt.")
+            Dalamud.Log("[FATE] Tank stance activated for fate #" .. tostring(TankStanceAppliedForFate) .. ".")
+        end
+    else
+        -- Already has stance, mark this FATE as done
+        if CurrentFate ~= nil then
+            TankStanceAppliedForFate = CurrentFate.fateId
         end
     end
 end
