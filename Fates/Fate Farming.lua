@@ -5416,39 +5416,13 @@ function TryActivePullNearbyEnemies(now)
         return false
     end
 
-    -- Skip active pull if current target alone is likely enough to finish the FATE
-    if Svc.Targets.Target ~= nil and not Svc.Targets.Target.IsDead then
-        local fateProgress = GetFateProgressValue(CurrentFate, nil)
-        if fateProgress ~= nil and fateProgress < 100 then
-            local remainingProgress = 100 - fateProgress
-            local wrappedTarget = nil
-            local targetMaxHp = nil
-            local targetCurrentHp = nil
-            local pcallOk, wrapped = pcall(function() return EntityWrapper(Svc.Targets.Target) end)
-            if pcallOk and wrapped ~= nil then
-                wrappedTarget = wrapped
-                local maxHpOk, maxHp = pcall(function() return wrapped.MaxHp end)
-                local curHpOk, curHp = pcall(function() return wrapped.CurrentHp end)
-                if maxHpOk then targetMaxHp = maxHp end
-                if curHpOk then targetCurrentHp = curHp end
-            end
-            if targetMaxHp ~= nil and targetMaxHp > 0 and targetCurrentHp ~= nil then
-                -- Estimate progress this single target gives based on HP ratio
-                local hpRatio = targetCurrentHp / targetMaxHp
-                local estimatedKillProgress = FinisherEstimatedSingleKillGain
-                if estimatedKillProgress == nil then
-                    -- Fallback: rough estimate based on current FATE progress and HP
-                    estimatedKillProgress = math.max(1, remainingProgress * 0.3)
-                end
-                local progressFromThisTarget = estimatedKillProgress * hpRatio
-                if progressFromThisTarget >= remainingProgress then
-                    Dalamud.Log("[FATE] Active pull skipped: current target alone is enough to finish (" ..
-                        string.format("%.1f", progressFromThisTarget) .. " >= " ..
-                        string.format("%.1f", remainingProgress) .. " remaining).")
-                    return false
-                end
-            end
-        end
+    -- Skip active pull if FATE is nearly finished (95%+).
+    -- The current target(s) alone are likely enough; pulling more is wasteful.
+    local fateProgress = GetFateProgressValue(CurrentFate, nil)
+    if fateProgress ~= nil and fateProgress >= 95 then
+        Dalamud.Log("[FATE] Active pull skipped: FATE progress at " ..
+            string.format("%.1f", fateProgress) .. "%, no need to pull more enemies.")
+        return false
     end
 
     local pullInterval = ActivePullIntervalSeconds or 2.0
