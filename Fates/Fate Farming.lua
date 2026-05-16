@@ -4029,7 +4029,8 @@ function AcceptTeleportOfferLocation(destinationAetheryte)
                     or teleportOfferMessage:find("勧誘", 1, true) ~= nil
             end
 
-            Dalamud.Log("[FATE] Teleport offer shouldAccept=" .. tostring(shouldAccept) .. " location=" .. tostring(teleportOfferLocation))
+            Dalamud.Log("[FATE] Teleport offer shouldAccept=" ..
+                tostring(shouldAccept) .. " location=" .. tostring(teleportOfferLocation))
             if shouldAccept then
                 yield("/callback SelectYesno true 0") -- accept teleport
                 return
@@ -5415,6 +5416,41 @@ function TryActivePullNearbyEnemies(now)
         return false
     end
 
+    -- Skip active pull if current target alone is likely enough to finish the FATE
+    if Svc.Targets.Target ~= nil and not Svc.Targets.Target.IsDead then
+        local fateProgress = GetFateProgressValue(CurrentFate, nil)
+        if fateProgress ~= nil and fateProgress < 100 then
+            local remainingProgress = 100 - fateProgress
+            local wrappedTarget = nil
+            local targetMaxHp = nil
+            local targetCurrentHp = nil
+            local pcallOk, wrapped = pcall(function() return EntityWrapper(Svc.Targets.Target) end)
+            if pcallOk and wrapped ~= nil then
+                wrappedTarget = wrapped
+                local maxHpOk, maxHp = pcall(function() return wrapped.MaxHp end)
+                local curHpOk, curHp = pcall(function() return wrapped.CurrentHp end)
+                if maxHpOk then targetMaxHp = maxHp end
+                if curHpOk then targetCurrentHp = curHp end
+            end
+            if targetMaxHp ~= nil and targetMaxHp > 0 and targetCurrentHp ~= nil then
+                -- Estimate progress this single target gives based on HP ratio
+                local hpRatio = targetCurrentHp / targetMaxHp
+                local estimatedKillProgress = FinisherEstimatedSingleKillGain
+                if estimatedKillProgress == nil then
+                    -- Fallback: rough estimate based on current FATE progress and HP
+                    estimatedKillProgress = math.max(1, remainingProgress * 0.3)
+                end
+                local progressFromThisTarget = estimatedKillProgress * hpRatio
+                if progressFromThisTarget >= remainingProgress then
+                    Dalamud.Log("[FATE] Active pull skipped: current target alone is enough to finish (" ..
+                        string.format("%.1f", progressFromThisTarget) .. " >= " ..
+                        string.format("%.1f", remainingProgress) .. " remaining).")
+                    return false
+                end
+            end
+        end
+    end
+
     local pullInterval = ActivePullIntervalSeconds or 2.0
     if now - (ActivePullLastAttemptAt or 0) < pullInterval then
         return false
@@ -5463,7 +5499,9 @@ function TryActivePullNearbyEnemies(now)
             yield("/wait 0.2")
             local used = TryUseActionOnTarget(pullAction)
             if used then
-                Dalamud.Log("[FATE] Active pull " .. i .. "/" .. pullCount .. " on " .. tostring(targetObj.Name:GetText()) .. " with " .. tostring(pullAction))
+                Dalamud.Log("[FATE] Active pull " ..
+                    i ..
+                    "/" .. pullCount .. " on " .. tostring(targetObj.Name:GetText()) .. " with " .. tostring(pullAction))
                 pulledAny = true
                 yield("/wait 0.3")
             end
@@ -5529,22 +5567,33 @@ function TryGapCloserOnTarget(distance)
 
     local job = Player.Job
     local gapCloser = nil
-    if job.Id == ClassList.pld.classId then gapCloser = LANG.actions["Intervene"] or "Intervene"
-    elseif job.Id == ClassList.war.classId then gapCloser = LANG.actions["Onslaught"] or "Onslaught"
-    elseif job.Id == ClassList.drk.classId then gapCloser = LANG.actions["Shadowstride"] or "Shadowstride"
-    elseif job.Id == ClassList.gnb.classId then gapCloser = LANG.actions["Trajectory"] or "Trajectory"
-    elseif job.Id == ClassList.drg.classId then gapCloser = LANG.actions["Winged Glide"] or "Winged Glide"
-    elseif job.Id == ClassList.mnk.classId then gapCloser = LANG.actions["Thunderclap"] or "Thunderclap"
-    elseif job.Id == ClassList.sam.classId then gapCloser = LANG.actions["Hissatsu: Gyoten"] or "Hissatsu: Gyoten"
-    elseif job.Id == ClassList.rpr.classId then gapCloser = LANG.actions["Hell's Ingress"] or "Hell's Ingress"
+    if job.Id == ClassList.pld.classId then
+        gapCloser = LANG.actions["Intervene"] or "Intervene"
+    elseif job.Id == ClassList.war.classId then
+        gapCloser = LANG.actions["Onslaught"] or "Onslaught"
+    elseif job.Id == ClassList.drk.classId then
+        gapCloser = LANG.actions["Shadowstride"] or "Shadowstride"
+    elseif job.Id == ClassList.gnb.classId then
+        gapCloser = LANG.actions["Trajectory"] or "Trajectory"
+    elseif job.Id == ClassList.drg.classId then
+        gapCloser = LANG.actions["Winged Glide"] or "Winged Glide"
+    elseif job.Id == ClassList.mnk.classId then
+        gapCloser = LANG.actions["Thunderclap"] or "Thunderclap"
+    elseif job.Id == ClassList.sam.classId then
+        gapCloser = LANG.actions["Hissatsu: Gyoten"] or "Hissatsu: Gyoten"
+    elseif job.Id == ClassList.rpr.classId then
+        gapCloser = LANG.actions["Hell's Ingress"] or "Hell's Ingress"
     end
 
     if gapCloser then
         yield("/ac \"" .. gapCloser .. "\"")
         -- Fallback for pre-90 characters or old skill names
-        if job.Id == ClassList.drk.classId then yield("/ac \"" .. (LANG.actions["Plunge"] or "Plunge") .. "\"")
-        elseif job.Id == ClassList.gnb.classId then yield("/ac \"" .. (LANG.actions["Rough Divide"] or "Rough Divide") .. "\"")
-        elseif job.Id == ClassList.drg.classId then yield("/ac \"" .. (LANG.actions["Spineshatter Dive"] or "Spineshatter Dive") .. "\"")
+        if job.Id == ClassList.drk.classId then
+            yield("/ac \"" .. (LANG.actions["Plunge"] or "Plunge") .. "\"")
+        elseif job.Id == ClassList.gnb.classId then
+            yield("/ac \"" .. (LANG.actions["Rough Divide"] or "Rough Divide") .. "\"")
+        elseif job.Id == ClassList.drg.classId then
+            yield("/ac \"" .. (LANG.actions["Spineshatter Dive"] or "Spineshatter Dive") .. "\"")
         end
         return true
     end
@@ -6959,7 +7008,8 @@ function Ready()
     if keepCurrentFate then
         NextFate = CurrentFate
     else
-        local currentDistToFate = (CurrentFate ~= nil and CurrentFate.position ~= nil) and GetDistanceToPointFlat(CurrentFate.position) or math.maxinteger
+        local currentDistToFate = (CurrentFate ~= nil and CurrentFate.position ~= nil) and
+            GetDistanceToPointFlat(CurrentFate.position) or math.maxinteger
         if currentDistToFate < 60 then
             keepCurrentFate = true
             NextFate = CurrentFate
@@ -7624,7 +7674,7 @@ function Repair()
                 return
             end
 
-            local vendor = NeedsGysahlGreens 
+            local vendor = NeedsGysahlGreens
                 and { npcName = "Bango Zango", position = Vector3(-242.45, 16.19, 41.69), wait = 0.08 }
                 or { npcName = "Unsynrael", position = Vector3(-257.71, 16.19, 50.11), wait = 0.08 }
 
@@ -7647,7 +7697,7 @@ function Repair()
                     yield("/callback SelectYesno true 0")
                 elseif Addons.GetAddon("Shop") then
                     if NeedsGysahlGreens then
-                        yield("/callback Shop true 0 0 99") -- Buying Gysahl Greens (assuming index 0)
+                        yield("/callback Shop true 0 0 99")  -- Buying Gysahl Greens (assuming index 0)
                     else
                         yield("/callback Shop true 0 40 99") -- Buying Dark Matter
                     end
@@ -8137,7 +8187,7 @@ function IsChocoboSummoned()
                 end
             end
         end
-        
+
         -- Method 2: Try SndGameUtils
         if SndGameUtils ~= nil then
             local utilsOk, time = pcall(function() return SndGameUtils.GetBuddyTimeRemaining() end)
@@ -8145,7 +8195,7 @@ function IsChocoboSummoned()
                 return true
             end
         end
-        
+
         -- Method 3: Check for companion entity in object table
         if Svc and Svc.Objects then
             local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
@@ -8160,7 +8210,8 @@ function IsChocoboSummoned()
                             local nameOk, name = pcall(function() return obj.Name end)
                             -- Debug: log first match to see what kind companions are
                             if not IsChocoboDebugDone and kindOk and nameOk then
-                                yield("/echo [FATE] Debug: Owned entity kind=" .. tostring(kind) .. " name=" .. tostring(name))
+                                yield("/echo [FATE] Debug: Owned entity kind=" ..
+                                    tostring(kind) .. " name=" .. tostring(name))
                                 IsChocoboDebugDone = true
                             end
                             -- Try various companion kinds (8=BattleNpc, 11=Companion, 2=EventNpc)
@@ -8174,9 +8225,9 @@ function IsChocoboSummoned()
                 end
             end
         end
-        
-    return false
-end)
+
+        return false
+    end)
     if ok then
         return result
     end
@@ -8433,9 +8484,9 @@ function ChocoboCheck()
         if Svc.Condition[CharacterCondition.inCombat] then
             return
         end
-        
+
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
-        
+
         -- Use item by name
         local greens = LANG.actions["Gysahl Greens"]
         local useOk, useErr = pcall(function() yield("/item \"" .. greens .. "\"") end)
@@ -8443,7 +8494,7 @@ function ChocoboCheck()
             yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(useErr))
         end
         yield("/wait 5")
-        
+
         -- Check if summoning worked
         if IsChocoboSummoned() then
             yield("/echo [FATE] Chocobo summoned successfully")
@@ -8458,7 +8509,7 @@ end
 function SprintCheck()
     if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] or Svc.Condition[CharacterCondition.inCombat] or Svc.Condition[CharacterCondition.casting] then return end
     if HasStatusId(50) then return end
-    
+
     local isMoving = false
     if IPC.vnavmesh and (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress()) then
         isMoving = true
@@ -9049,15 +9100,15 @@ function FateFarming:Run()
     if ItemToPurchase == "None" then
         ShouldExchangeBicolorGemstones = false
     end
-    ReturnOnDeath              = Config.Get("Return on death?")
-    SelfRepair                 = Config.Get("Self repair?")
-    Retainers                  = Config.Get("Pause for retainers?")
-    ShouldGrandCompanyTurnIn   = Config.Get("Dump extra gear at GC?")
-    Echo                       = string.lower(Config.Get("Echo logs"))
-    CompanionScriptMode        = Config.Get("Companion Script Mode")
-    DiscordWebhookUrl          = Config.Get("Discord Webhook URL")
-    SummonChocobo              = Config.Get("Summon Chocobo?")
-    ShouldAutoBuyGysahlGreens   = Config.Get("Auto-buy Gysahl Greens?")
+    ReturnOnDeath                   = Config.Get("Return on death?")
+    SelfRepair                      = Config.Get("Self repair?")
+    Retainers                       = Config.Get("Pause for retainers?")
+    ShouldGrandCompanyTurnIn        = Config.Get("Dump extra gear at GC?")
+    Echo                            = string.lower(Config.Get("Echo logs"))
+    CompanionScriptMode             = Config.Get("Companion Script Mode")
+    DiscordWebhookUrl               = Config.Get("Discord Webhook URL")
+    SummonChocobo                   = Config.Get("Summon Chocobo?")
+    ShouldAutoBuyGysahlGreens       = Config.Get("Auto-buy Gysahl Greens?")
 
     -- Party Play settings
     PartyPlayMode                   = Config.Get("Party Play Mode")
@@ -9068,9 +9119,9 @@ function FateFarming:Run()
     FollowPartyMembers              = Config.Get("Follow Party Members")
 
     -- 出現中FATEデータ保存
-    FateDataLogEnabled         = ParseBool(Config.Get("Save active FATE data?"), true)
-    FateDataLogIntervalSeconds = tonumber(Config.Get("FATE data log interval (secs)"))
-    FateDataLogPath            = NormalizeFateLogValue(Config.Get("FATE data log path"))
+    FateDataLogEnabled              = ParseBool(Config.Get("Save active FATE data?"), true)
+    FateDataLogIntervalSeconds      = tonumber(Config.Get("FATE data log interval (secs)"))
+    FateDataLogPath                 = NormalizeFateLogValue(Config.Get("FATE data log path"))
     if FateDataLogIntervalSeconds == nil or FateDataLogIntervalSeconds < 1 then
         FateDataLogIntervalSeconds = 30
     else
