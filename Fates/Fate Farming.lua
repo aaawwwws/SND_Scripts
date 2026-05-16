@@ -5111,11 +5111,14 @@ function MoveToFate()
     if nearestFloor == nil then
         nearestFloor = CurrentFate.position
     elseif not (CurrentFate.isCollectionsFate or CurrentFate.isOtherNpcFate) and OptimizeClusterMovement ~= true then
-        nearestFloor = RandomAdjustCoordinates(nearestFloor, 10)
+        nearestFloor = RandomAdjustCoordinates(nearestFloor, 3)
     end
 
+    -- Use the original fate position (not the randomized offset) for dismount distance check
+    -- so we don't dismount too far from the actual flag/destination.
+    local distanceToOriginalTarget = GetDistanceToPoint(CurrentFate.position)
     local distanceToMoveTarget = GetDistanceToPoint(nearestFloor)
-    if distanceToMoveTarget > 5 then
+    if distanceToOriginalTarget > 12 then
         local mountDistanceThreshold = MountTravelMinDistance or 24
         local shouldMountForTravel = distanceToMoveTarget >= mountDistanceThreshold
         if not Svc.Condition[CharacterCondition.mounted] then
