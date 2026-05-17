@@ -4818,7 +4818,7 @@ function MoveToFate()
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
         (Player ~= nil and Player.Available == true and Player)
-    if lp == nil then
+    if lp == nil or type(lp) ~= "table" then
         return
     end
 
@@ -4946,6 +4946,16 @@ function MoveToFate()
 
     -- upon approaching fate, pick a target and switch to pathing towards target
     if distanceToPreferredMovePos < 60 then
+        -- Do not dismount until we are close to the FLAG position.
+        local distanceToFlag = GetDistanceToPoint(CurrentFate.position)
+        if distanceToFlag > 15 then
+            if Svc.Condition[CharacterCondition.mounted]
+                and not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, Player.CanFly and SelectedZone.flying)
+            end
+            return
+        end
+
         if levelSyncPending then
             if Svc.Targets.Target ~= nil then
                 ClearTarget()
@@ -5206,7 +5216,7 @@ end
 
 function GetPlayerHitboxRadius()
     local lp = (Svc and Svc.ClientState and Svc.ClientState.LocalPlayer) or (ClientState and ClientState.LocalPlayer)
-    if lp ~= nil and lp.HitboxRadius ~= nil then
+    if lp ~= nil and type(lp) == "table" and lp.HitboxRadius ~= nil then
         return lp.HitboxRadius
     else
         return 0.5
@@ -7029,7 +7039,7 @@ function Ready()
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
         (Player ~= nil and Player.Available == true and Player)
-    if lp == nil then
+    if lp == nil or type(lp) ~= "table" then
         return
     end
 
@@ -7743,7 +7753,7 @@ function HasStatusId(statusId)
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
         (Player ~= nil and Player.Available == true and Player)
-    if lp == nil then
+    if lp == nil or type(lp) ~= "table" then
         return false
     end
     local statusList = lp.StatusList
@@ -7766,7 +7776,7 @@ function TankStanceCheck()
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
         (Player ~= nil and Player.Available == true and Player)
-    if lp == nil then return end
+    if lp == nil or type(lp) ~= "table" then return end
 
     local jobId = nil
     -- Use direct access (same pattern as GetCombatOpenActionCandidates in this script)
@@ -8008,7 +8018,7 @@ CanUseConsumableNow = function()
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
         (Player ~= nil and Player.Available == true and Player)
-    if lp == nil then
+    if lp == nil or type(lp) ~= "table" then
         return false
     end
     if Svc.Condition[CharacterCondition.dead]
@@ -8606,7 +8616,7 @@ function FateFarming:Run()
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
         (Player ~= nil and Player.Available == true and Player)
-    if lp == nil then
+    if lp == nil or type(lp) ~= "table" then
         local msg =
         "ERROR: LocalPlayer not found. Please ensure you are logged in and using SomethingNeedDoing [Expanded Edition]."
         yield("/echo [FATE] " .. msg)
@@ -9230,7 +9240,7 @@ function FateFarming:Run()
         local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
             (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
             (Player ~= nil and Player.Available == true and Player)
-        local isPlayerAvailable = lp ~= nil
+        local isPlayerAvailable = lp ~= nil and type(lp) == "table"
 
         if not isPlayerAvailable then
             if os.clock() % 10 < 0.3 then
