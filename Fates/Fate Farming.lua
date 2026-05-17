@@ -2037,11 +2037,11 @@ function GetPreferredFateMovePosition(fate)
     end
 
     if fate.isCollectionsFate or fate.isOtherNpcFate then
-        return fate.position
+        return ClampPositionToCurrentFateBounds(fate.position, 0)
     end
 
     if OptimizeClusterMovement ~= true then
-        return fate.position
+        return ClampPositionToCurrentFateBounds(fate.position, 0)
     end
 
     local now = os.clock()
@@ -2050,7 +2050,7 @@ function GetPreferredFateMovePosition(fate)
         and ClusterMoveLastRefresh ~= nil
         and now - ClusterMoveLastRefresh < ClusterMoveRefreshSeconds
     then
-        return ClusterMoveCachedPosition
+        return ClampPositionToCurrentFateBounds(ClusterMoveCachedPosition, 0)
     end
 
     local center = GetDenseFateClusterCenter(
@@ -2062,12 +2062,12 @@ function GetPreferredFateMovePosition(fate)
     ClusterMoveLastRefresh = now
     ClusterMoveCachedFateId = fate.fateId
     if center ~= nil then
-        ClusterMoveCachedPosition = center
-        return center
+        ClusterMoveCachedPosition = ClampPositionToCurrentFateBounds(center, 0)
+        return ClusterMoveCachedPosition
     end
 
-    ClusterMoveCachedPosition = fate.position
-    return fate.position
+    ClusterMoveCachedPosition = ClampPositionToCurrentFateBounds(fate.position, 0)
+    return ClusterMoveCachedPosition
 end
 
 function UpdateCombatModeByNearbyEnemies()
@@ -4078,6 +4078,7 @@ local function BuildTeleportNameCandidates(name)
     addCandidate(original:gsub(" ", ""))
     addCandidate(original:gsub("　", ""))
     local aliasGroups = {
+        { "Limsa Lominsa Lower Decks", "リムサ・ロミンサ下甲板層", "リムサロミンサ下甲板層" },
         { "Old Sharlayan", "オールド・シャーレアン", "オールドシャーレアン" },
         { "Solution Nine", "ソリューション・ナイン", "ソリューションナイン" },
         { "Tuliyollal", "トライヨラ" },
@@ -5112,6 +5113,7 @@ function MoveToFate()
         nearestFloor = CurrentFate.position
     elseif not (CurrentFate.isCollectionsFate or CurrentFate.isOtherNpcFate) and OptimizeClusterMovement ~= true then
         nearestFloor = RandomAdjustCoordinates(nearestFloor, 3)
+        nearestFloor = ClampPositionToCurrentFateBounds(nearestFloor, 0)
     end
 
     -- Use the original fate position (not the randomized offset) for dismount distance check
@@ -7581,6 +7583,11 @@ end
 
 function Repair()
     local needsRepair = Inventory.GetItemsInNeedOfRepairs(RemainingDurabilityToRepair)
+    local needsRepairCount = 0
+    if type(needsRepair) == "table" then
+        needsRepairCount = tonumber(needsRepair.Count) or #needsRepair or 0
+    end
+
     if AddonReady("SelectYesno") then
         yield("/callback SelectYesno true 0")
         return
@@ -7597,7 +7604,7 @@ function Repair()
     end
 
     if AddonReady("Repair") then
-        if needsRepair.Count == nil or needsRepair.Count == 0 then
+        if needsRepairCount == 0 then
             yield("/callback Repair true -1") -- if you dont need repair anymore, close the menu
         else
             yield("/callback Repair true 0")  -- select repair
@@ -7614,20 +7621,13 @@ function Repair()
 
     local hawkersAlleyAethernetShard = { position = Vector3(-213.95, 15.99, 49.35) }
     if SelfRepair then
-        if Inventory.GetItemCount(33916) > 0 and needsRepair.Count > 0 then
+        if Inventory.GetItemCount(33916) > 0 and needsRepairCount > 0 then
             if AddonReady("Shop") then
                 yield("/callback Shop true -1")
                 return
             end
 
-            if Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
-                local teleSuccess = TeleportToSelectedZoneAetheryte()
-                if teleSuccess ~= true then
-                    yield("/wait 3")
-                end
-                return
-            end
-
+            -- Self-repair can be done anywhere; no need to teleport back to farming zone
             if Svc.Condition[CharacterCondition.mounted] then
                 Dismount()
                 Dalamud.Log("[FATE] State Change: Dismounting")
@@ -7638,7 +7638,7 @@ function Repair()
                 Dalamud.Log("[FATE] Opening repair menu...")
                 yield("/generalaction " .. LANG.actions["repair"])
             end
-        elseif (needsRepair.Count > 0 and ShouldAutoBuyDarkMatter) or NeedsGysahlGreens then
+        elseif (needsRepairCount > 0 and ShouldAutoBuyDarkMatter) or NeedsGysahlGreens then
             if Inventory.GetItemCount(4868) > 0 then
                 NeedsGysahlGreens = false
             end
@@ -7682,12 +7682,40 @@ function Repair()
             end
         else
             if Echo == "all" then
-                yield("/echo Out of Dark Matter and ShouldAutoBuyDarkMatter is false. Switching to Limsa mender.")
+                yield("/echo [FATE] Self-repair unavailable (no dark matter or no items to repair). Falling back to Limsa mender.")
             end
-            SelfRepair = false
+            -- Do NOT overwrite SelfRepair globally; just fall back to NPC mender for this cycle
+            if needsRepairCount > 0 then
+                if Svc.ClientState.TerritoryType ~= 129 then
+                    TeleportTo("Limsa Lominsa Lower Decks")
+                    return
+                end
+
+                local mender = { npcName = "Alistair", position = Vector3(-246.87, 16.19, 49.83) }
+                if GetDistanceToPoint(mender.position) > (DistanceBetween(hawkersAlleyAethernetShard.position, mender.position) + 10) then
+                    if not TryLocalAetheryteShortcut("Hawkers' Alley") then
+                        Dalamud.Log("[FATE] Hawkers' Alley aethernet shortcut failed. Walking to mender.")
+                    end
+                elseif AddonReady("TelepotTown") then
+                    yield("/callback TelepotTown false -1")
+                elseif GetDistanceToPoint(mender.position) > 5 then
+                    if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                        IPC.vnavmesh.PathfindAndMoveTo(mender.position, false)
+                    end
+                else
+                    if Svc.Targets.Target == nil or GetTargetName() ~= mender.npcName then
+                        yield("/target " .. mender.npcName)
+                    elseif not Svc.Condition[CharacterCondition.occupiedInQuestEvent] then
+                        yield("/interact")
+                    end
+                end
+            else
+                State = CharacterState.ready
+                Dalamud.Log("[FATE] State Change: Ready")
+            end
         end
     else
-        if needsRepair.Count > 0 then
+        if needsRepairCount > 0 then
             if Svc.ClientState.TerritoryType ~= 129 then
                 TeleportTo("Limsa Lominsa Lower Decks")
                 return
@@ -8810,7 +8838,7 @@ function FateFarming:Run()
     PreAcquireDistance                    = FastCombatPacing and 220 or 130
     PreAcquireAttemptIntervalSeconds      = FastCombatPacing and 0.45 or 1.2
     FateTargetRadiusPadding               = 3
-    FateMoveBoundaryBuffer                = 4
+    FateMoveBoundaryBuffer                = 0
     FateHardBoundaryBuffer                = 14
     FateLevelSyncTargetRadiusPadding      = 0.5
     FateLevelSyncBoundaryBuffer           = 0.5
