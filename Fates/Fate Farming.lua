@@ -5122,11 +5122,9 @@ function MoveToFate()
         nearestFloor = ClampPositionToCurrentFateBounds(nearestFloor, 0)
     end
 
-    -- Use the original fate position (not the randomized offset) for dismount distance check
-    -- so we don't dismount too far from the actual flag/destination.
-    local distanceToOriginalTarget = GetDistanceToPoint(CurrentFate.position)
+    -- Dismount when close to the actual flag/destination (nearestFloor).
     local distanceToMoveTarget = GetDistanceToPoint(nearestFloor)
-    if distanceToOriginalTarget > 12 then
+    if distanceToMoveTarget > 12 then
         local mountDistanceThreshold = MountTravelMinDistance or 24
         local shouldMountForTravel = distanceToMoveTarget >= mountDistanceThreshold
         if not Svc.Condition[CharacterCondition.mounted] then
