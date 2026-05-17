@@ -1382,7 +1382,7 @@ function GetLangTable(lang)
                 ["Trajectory"] = "トラジェクトリー",
                 ["Iron Will"] = "アイアンウィル",
                 ["Defiance"] = "ディフェアンス",
-                ["Grit"] = "グリット",
+                ["Grit"] = "グリットスタンス",
                 ["Royal Guard"] = "ロイヤルガード",
                 ["Winged Glide"] = "ウィンググライド",
                 ["Thunderclap"] = "抜重歩法",
@@ -4769,106 +4769,17 @@ function MiddleOfFateDismount()
         return
     end
 
-    local now = os.clock()
-    if MiddleDismountFateId ~= CurrentFate.fateId then
-        MiddleDismountFateId = CurrentFate.fateId
-        MiddleDismountStartedAt = now
-        MiddleDismountNoTargetSince = 0
-    end
-    local levelSyncPending = IsLevelSyncPendingForCurrentFate()
-    if levelSyncPending and Svc.Targets.Target ~= nil then
-        ClearTarget()
-    end
-
-    if Svc.Targets.Target ~= nil then
-        MiddleDismountNoTargetSince = 0
-        -- Dismount immediately when a target is found so we don't circle on mount
-        if Svc.Condition[CharacterCondition.mounted] then
-            Dalamud.Log("[FATE] Target found while mounted. Dismounting immediately.")
-            Dismount(true)
-            return
-        end
-        if GetDistanceToTarget() > (MaxDistance + GetTargetHitboxRadius() + 5) then
-            if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
-                    ClearTarget()
-                    local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
-                    if fallbackPos ~= nil then
-                        IPC.vnavmesh.PathfindAndMoveTo(fallbackPos, false)
-                    end
-                else
-                    Dalamud.Log("[FATE] MiddleOfFateDismount IPC.vnavmesh.PathfindAndMoveTo")
-                    MoveToTargetHitbox()
-                end
-            end
-        else
+    if Svc.Condition[CharacterCondition.mounted] then
+        if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
             yield("/vnav stop")
-            yield("/wait 0.5")
-            ResetMiddleDismountState()
-            State = CharacterState.doFate
-            Dalamud.Log("[FATE] State Change: DoFate")
         end
-    else
-        if MiddleDismountNoTargetSince == nil or MiddleDismountNoTargetSince <= 0 then
-            MiddleDismountNoTargetSince = now
-        end
-        local noTargetElapsed = now - MiddleDismountNoTargetSince
-        if levelSyncPending then
-            if not IsCurrentFateInSyncRange() then
-                local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
-                if fallbackPos ~= nil and not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                    IPC.vnavmesh.PathfindAndMoveTo(fallbackPos, Player.CanFly and SelectedZone.flying)
-                end
-                return
-            end
-            if Svc.Condition[CharacterCondition.mounted] then
-                if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
-                    yield("/vnav stop")
-                end
-                if noTargetElapsed >= (MiddleDismountForceAfterSeconds or 1.8) then
-                    Dalamud.Log("[FATE] MiddleOfFateDismount: level sync pending, force dismount.")
-                    Dismount(true)
-                end
-                return
-            end
-            if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
-                yield("/vnav stop")
-            end
-            ResetMiddleDismountState()
-            State = CharacterState.doFate
-            Dalamud.Log("[FATE] State Change: DoFate")
-            return
-        end
-
-        local fateRadius = GetFateRadiusValue(CurrentFate, nil) or 0
-        local acquireRadius = math.max((DynamicAoeCheckRadius or 30) + 10, (ClusterMoveRadius or 40), fateRadius + 20)
-        local gotTarget = AttemptToTargetClosestFateEnemy(true, acquireRadius, true)
-        if gotTarget then
-            MiddleDismountNoTargetSince = 0
-            return
-        end
-
-        if Svc.Condition[CharacterCondition.mounted] then
-            if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
-                yield("/vnav stop")
-            end
-            -- At flag: dismount immediately without waiting for target
-            Dalamud.Log("[FATE] MiddleOfFateDismount: at flag, dismounting immediately.")
-            Dismount(true)
-        else
-            -- Already dismounted at flag: walk to optimal spot if needed
-            local movePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
-            if movePos ~= nil and GetDistanceToPoint(movePos) > 5
-                and not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                IPC.vnavmesh.PathfindAndMoveTo(movePos, false)
-                return
-            end
-            yield("/vnav stop")
-            ResetMiddleDismountState()
-            State = CharacterState.doFate
-            Dalamud.Log("[FATE] State Change: DoFate")
-        end
+        Dismount(true)
+        return
     end
+
+    ResetMiddleDismountState()
+    State = CharacterState.doFate
+    Dalamud.Log("[FATE] State Change: DoFate")
 end
 
 function NpcDismount()
@@ -4906,7 +4817,7 @@ function MoveToFate()
 
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
-        (Player ~= nil and Player.Available and Player)
+        (Player ~= nil and Player.Available == true and Player)
     if lp == nil then
         return
     end
@@ -7117,7 +7028,7 @@ function Ready()
 
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
-        (Player ~= nil and Player.Available and Player)
+        (Player ~= nil and Player.Available == true and Player)
     if lp == nil then
         return
     end
@@ -7831,7 +7742,7 @@ end
 function HasStatusId(statusId)
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
-        (Player ~= nil and Player.Available and Player)
+        (Player ~= nil and Player.Available == true and Player)
     if lp == nil then
         return false
     end
@@ -7854,7 +7765,7 @@ end
 function TankStanceCheck()
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
-        (Player ~= nil and Player.Available and Player)
+        (Player ~= nil and Player.Available == true and Player)
     if lp == nil then return end
 
     local jobId = nil
@@ -7910,8 +7821,12 @@ function TankStanceCheck()
     end
 
     if not HasStatusId(stanceStatusId) then
-        Dalamud.Log("[FATE] Tank stance missing (" .. stanceSkill .. "), activating.")
-        yield("/ac \"" .. stanceSkill .. "\"")
+        Dalamud.Log("[FATE] Tank stance missing (" .. tostring(stanceSkill) .. "), activating.")
+        local cmd = "/ac \"" .. tostring(stanceSkill) .. "\""
+        local ok = pcall(function() yield(cmd) end)
+        if not ok then
+            Dalamud.Log("[FATE] Tank stance /ac command failed (possibly invalid action name or wrong job). Skipping.")
+        end
         yield("/wait 1.5")
         if HasStatusId(stanceStatusId) then
             Dalamud.Log("[FATE] Tank stance activated for fate #" .. tostring(CurrentFate.fateId) .. ".")
@@ -8092,7 +8007,7 @@ end
 CanUseConsumableNow = function()
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
-        (Player ~= nil and Player.Available and Player)
+        (Player ~= nil and Player.Available == true and Player)
     if lp == nil then
         return false
     end
@@ -8690,7 +8605,7 @@ function FateFarming:Run()
     Dalamud.Log("[FATE-FIXED] Run() started.")
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
-        (Player ~= nil and Player.Available and Player)
+        (Player ~= nil and Player.Available == true and Player)
     if lp == nil then
         local msg =
         "ERROR: LocalPlayer not found. Please ensure you are logged in and using SomethingNeedDoing [Expanded Edition]."
@@ -9314,7 +9229,7 @@ function FateFarming:Run()
     while not StopScript do
         local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
             (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
-            (Player ~= nil and Player.Available and Player)
+            (Player ~= nil and Player.Available == true and Player)
         local isPlayerAvailable = lp ~= nil
 
         if not isPlayerAvailable then
