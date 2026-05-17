@@ -4525,13 +4525,19 @@ function WaitForContinuation()
     if InActiveFate() then
         Dalamud.Log("WaitForContinuation IsInFate")
         local nextFate = Fates.GetNearestFate()
-        if nextFate ~= nil and nextFate ~= CurrentFate.fateObject then
-            local builtFate = BuildFateTable(nextFate)
-            if builtFate ~= nil then
-                CurrentFate = builtFate
-                State = CharacterState.doFate
-                Dalamud.Log("[FATE] State Change: DoFate")
+        if nextFate ~= nil then
+            local isNewFate = nextFate.Id ~= CurrentFate.fateId
+                or not IsFateActive(CurrentFate.fateObject)
+            if isNewFate and IsFateActive(nextFate) then
+                local builtFate = BuildFateTable(nextFate)
+                if builtFate ~= nil then
+                    CurrentFate = builtFate
+                    State = CharacterState.doFate
+                    Dalamud.Log("[FATE] State Change: DoFate (continuation, fateId=" .. tostring(builtFate.fateId) .. ")")
+                end
             end
+        else
+            yield("/wait 1")
         end
     elseif os.clock() - LastFateEndTime > 30 then
         Dalamud.Log("WaitForContinuation Abort")
@@ -5930,6 +5936,11 @@ end
 
 function DoFate()
     Dalamud.Log("[FATE] DoFate")
+    if CurrentFate == nil or CurrentFate.fateObject == nil then
+        Dalamud.Log("[FATE] DoFate: CurrentFate is invalid, returning to Ready.")
+        State = CharacterState.ready
+        return
+    end
     if WaitingForFateRewards ~= nil and WaitingForFateRewards.fateId ~= CurrentFate.fateId then
         FinalizeFateTimingLog(WaitingForFateRewards, nil)
     end
@@ -6541,6 +6552,21 @@ function DoFate()
                 and (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning())
             then
                 yield("/vnav stop")
+            end
+
+            -- If no target for a while (e.g. after continuation fate spawn), move back to center
+            if Svc.Targets.Target == nil
+                and noTargetElapsed >= 6
+                and not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning())
+                and not Svc.Condition[CharacterCondition.mounted]
+                and not Svc.Condition[CharacterCondition.flying]
+                and not Svc.Condition[CharacterCondition.casting]
+            then
+                local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+                if fallbackPos ~= nil and GetDistanceToPoint(fallbackPos) > 8 then
+                    Dalamud.Log("[FATE] No target for " .. string.format("%.1f", noTargetElapsed) .. "s, moving to fate center.")
+                    IPC.vnavmesh.PathfindAndMoveTo(fallbackPos, false)
+                end
             end
         end
     end
