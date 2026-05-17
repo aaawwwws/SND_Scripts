@@ -4852,11 +4852,17 @@ function MiddleOfFateDismount()
             if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
                 yield("/vnav stop")
             end
-            if noTargetElapsed >= (MiddleDismountForceAfterSeconds or 1.8) then
-                Dalamud.Log("[FATE] MiddleOfFateDismount: no target, force dismount.")
-                Dismount(true)
-            end
+            -- At flag: dismount immediately without waiting for target
+            Dalamud.Log("[FATE] MiddleOfFateDismount: at flag, dismounting immediately.")
+            Dismount(true)
         else
+            -- Already dismounted at flag: walk to optimal spot if needed
+            local movePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+            if movePos ~= nil and GetDistanceToPoint(movePos) > 5
+                and not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                IPC.vnavmesh.PathfindAndMoveTo(movePos, false)
+                return
+            end
             yield("/vnav stop")
             ResetMiddleDismountState()
             State = CharacterState.doFate
@@ -5122,27 +5128,33 @@ function MoveToFate()
         nearestFloor = ClampPositionToCurrentFateBounds(nearestFloor, 0)
     end
 
-    -- Dismount when close to the actual flag/destination (nearestFloor).
-    local distanceToMoveTarget = GetDistanceToPoint(nearestFloor)
-    if distanceToMoveTarget > 12 then
+    -- Always mount toward the FLAG position (CurrentFate.position).
+    -- After dismounting at the flag, we'll walk to the optimal spot (nearestFloor).
+    local distanceToFlag = GetDistanceToPoint(CurrentFate.position)
+    if distanceToFlag > 3 then
         local mountDistanceThreshold = MountTravelMinDistance or 24
-        local shouldMountForTravel = distanceToMoveTarget >= mountDistanceThreshold
+        local shouldMountForTravel = distanceToFlag >= mountDistanceThreshold
         if not Svc.Condition[CharacterCondition.mounted] then
             if shouldMountForTravel then
                 State = CharacterState.mounting
                 Dalamud.Log("[FATE] State Change: Mounting")
                 return
             elseif not IPC.vnavmesh.PathfindInProgress() and not IPC.vnavmesh.IsRunning() then
-                yield("/vnav moveflag")
+                -- Move toward the FLAG position specifically
+                IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, Player.CanFly and SelectedZone.flying)
             end
         elseif not IPC.vnavmesh.PathfindInProgress() and not IPC.vnavmesh.IsRunning() then
             if Player.CanFly and SelectedZone.flying then
-                yield("/vnav flyflag")
+                IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, true)
             else
-                yield("/vnav moveflag")
+                IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, false)
             end
         end
     else
+        -- Close to flag: stop nav and transition to dismount
+        if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+            yield("/vnav stop")
+        end
         State = CharacterState.MiddleOfFateDismount
     end
 end
