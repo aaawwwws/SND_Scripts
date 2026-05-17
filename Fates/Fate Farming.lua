@@ -7541,9 +7541,19 @@ end
 function Repair()
     local needsRepair = Inventory.GetItemsInNeedOfRepairs(RemainingDurabilityToRepair)
     local needsRepairCount = 0
-    if type(needsRepair) == "table" then
-        needsRepairCount = tonumber(needsRepair.Count) or #needsRepair or 0
+    if needsRepair ~= nil then
+        -- C# List<> may appear as userdata; try Count/Length safely
+        local okCount, countVal = pcall(function() return needsRepair.Count end)
+        if okCount and countVal ~= nil then
+            needsRepairCount = tonumber(countVal) or 0
+        else
+            local okLen, lenVal = pcall(function() return needsRepair.Length end)
+            if okLen and lenVal ~= nil then
+                needsRepairCount = tonumber(lenVal) or 0
+            end
+        end
     end
+    Dalamud.Log("[FATE] Repair check: needsRepairCount=" .. tostring(needsRepairCount) .. ", SelfRepair=" .. tostring(SelfRepair) .. ", DarkMatter=" .. tostring(Inventory.GetItemCount(33916)))
 
     if AddonReady("SelectYesno") then
         yield("/callback SelectYesno true 0")
