@@ -106,6 +106,9 @@ configs:
   Follow Party Members:
     description: PTプレイ時、PTメンバーが60y以上離れている場合に自動で追従します。
     default: true
+  Follow Party Leader Zone?:
+    description: PTリーダーが別ゾーンに移動した際、自動でそのゾーンの最寄りエーテライトへテレポートします。テレポ勧誘も自動承諾します。
+    default: true
   Auto-buy Gysahl Greens?:
     description: ギサールの野菜が切れた際、リムサ・ロミンサで購入します。
     default: true
@@ -537,6 +540,8 @@ local GetPartyMemberTargetObjects
 local IsPartyMemberInFate
 local GetPartyPlayActive
 local IsPartyMemberObject
+local GetPartyLeaderZoneId
+local FollowPartyLeaderToZone
 
 -- 出現中FATEデータ保存用の設定/状態
 local FateDataLogEnabled
@@ -6834,6 +6839,11 @@ function Ready()
         AcceptTeleportOfferLocation("")
     end
 
+    -- Party Play: follow party leader to their zone
+    if FollowPartyLeaderZone == true and GetPartyPlayActive() then
+        FollowPartyLeaderToZone()
+    end
+
     -- Party Play: follow closest party member if far away
     if FollowPartyMembers == true and GetPartyPlayActive() then
         local ptPos, ptDist = GetClosestPartyMemberPosition()
@@ -8418,6 +8428,107 @@ function GetClosestPartyMemberPosition()
     return closest, closestDist
 end
 
+function GetPartyLeaderZoneId()
+    local ok, party = pcall(function()
+        if Svc and Svc.Party then return Svc.Party end
+        if Svc and Svc.ClientState and Svc.ClientState.Party then return Svc.ClientState.Party end
+        return nil
+    end)
+    if not ok or party == nil then return nil end
+
+    local lenOk, len = pcall(function() return party.Length end)
+    if not lenOk or len == nil then
+        lenOk, len = pcall(function() return party.Count end)
+    end
+    if not lenOk or len == nil or len == 0 then return nil end
+
+    local leaderOk, leader = pcall(function() return party[0] end)
+    if not leaderOk or leader == nil then return nil end
+
+    local gameObjOk, gameObj = pcall(function() return leader.GameObject end)
+    if not gameObjOk or gameObj == nil then return nil end
+
+    local terrOk, terr = pcall(function() return gameObj.Territory end)
+    if not terrOk or terr == nil then return nil end
+
+    local typeOk, terrType = pcall(function() return terr.TerritoryType end)
+    if typeOk and terrType ~= nil and terrType ~= 0 then
+        return tonumber(terrType)
+    end
+
+    local rowOk, rowId = pcall(function() return terr.TerritoryTypeRowId end)
+    if rowOk and rowId ~= nil and rowId ~= 0 then
+        return tonumber(rowId)
+    end
+
+    return nil
+end
+
+function FollowPartyLeaderToZone()
+    if FollowPartyLeaderZone ~= true then return end
+    if not GetPartyPlayActive() then return end
+
+    if Svc.Condition[CharacterCondition.inCombat]
+        or Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or Svc.Condition[CharacterCondition.mounted]
+        or Svc.Condition[CharacterCondition.flying]
+        or Svc.Condition[CharacterCondition.occupied]
+        or Svc.Condition[CharacterCondition.dead]
+    then
+        return
+    end
+
+    if IsLifestreamBusySafe() then return end
+
+    AcceptTeleportOfferLocation("")
+
+    local leaderZoneId = GetPartyLeaderZoneId()
+
+    local shouldTeleport = false
+    local destinationZoneId = nil
+
+    if leaderZoneId ~= nil and leaderZoneId ~= Svc.ClientState.TerritoryType then
+        shouldTeleport = true
+        destinationZoneId = leaderZoneId
+        Dalamud.Log("[FATE] Party leader is in zone " .. leaderZoneId .. ", current zone is " .. Svc.ClientState.TerritoryType)
+    end
+
+    if not shouldTeleport then
+        local partyPositions = GetPartyMemberPositions()
+        if #partyPositions == 0 and GetPartyMemberCount() > 1 then
+            if LastPartyLeaderZoneId ~= nil and LastPartyLeaderZoneId ~= Svc.ClientState.TerritoryType then
+                shouldTeleport = true
+                destinationZoneId = LastPartyLeaderZoneId
+                Dalamud.Log("[FATE] No party members in current zone. Following leader to zone " .. destinationZoneId)
+            end
+        end
+    end
+
+    if not shouldTeleport or destinationZoneId == nil then
+        return
+    end
+
+    if SelectedZone ~= nil and SelectedZone.zoneId == destinationZoneId then
+        return
+    end
+
+    Dalamud.Log("[FATE] Teleporting to party leader's zone (zoneId: " .. destinationZoneId .. ")")
+
+    local closestAetheryte = GetClosestAetheryteInZoneToPoint(destinationZoneId, GetPlayerPosition() or {X=0, Y=0, Z=0})
+    if closestAetheryte ~= nil then
+        TeleportTo(closestAetheryte.name)
+    else
+        local aetherytes = GetAetherytesInZone(destinationZoneId)
+        if #aetherytes > 0 then
+            local aetheryteName = GetAetheryteName(aetherytes[1])
+            TeleportTo(aetheryteName)
+        else
+            Dalamud.Log("[FATE] No aetherytes found in zone " .. destinationZoneId)
+        end
+    end
+end
+
 -- ============================================================
 
 function ChocoboCheck()
@@ -9498,6 +9609,11 @@ function FateFarming:Run()
                     or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
                     or IsLifestreamBusySafe())
             then
+                -- Party Play: global teleport acceptance (runs regardless of state)
+                if GetPartyPlayActive() and FollowPartyLeaderZone == true then
+                    AcceptTeleportOfferLocation("")
+                end
+
                 State()
             end
         end
