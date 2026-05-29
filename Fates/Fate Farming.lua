@@ -1354,6 +1354,7 @@ function GetLangTable(lang)
                 ["Shield Lob"] = "シールドロブ",
                 ["Tomahawk"] = "トマホーク",
                 ["Unmend"] = "アンメンド",
+                ["Unleash"] = "アンリーシュ",
                 ["Lightning Shot"] = "サンダーバレット",
                 ["Fast Blade"] = "ファストブレード",
                 ["Heavy Swing"] = "ヘヴィスウィング",
@@ -5255,7 +5256,7 @@ function GetCombatOpenActionCandidates()
         }
     elseif jobId == ClassList.drk.classId then
         return {
-            LANG.actions["Unmend"] or "Unmend",
+            LANG.actions["Unleash"] or "Unleash",
             LANG.actions["Hard Slash"] or "Hard Slash"
         }
     elseif jobId == ClassList.gnb.classId then
@@ -7542,18 +7543,19 @@ function Repair()
     local needsRepair = Inventory.GetItemsInNeedOfRepairs(RemainingDurabilityToRepair)
     local needsRepairCount = 0
     if needsRepair ~= nil then
-        -- C# List<> may appear as userdata; try Count/Length safely
-        local okCount, countVal = pcall(function() return needsRepair.Count end)
-        if okCount and countVal ~= nil then
-            needsRepairCount = tonumber(countVal) or 0
+        -- Try direct property access first (works for C# List<> and arrays in NLua)
+        local count = needsRepair.Count
+        if type(count) == "number" then
+            needsRepairCount = count
         else
-            local okLen, lenVal = pcall(function() return needsRepair.Length end)
-            if okLen and lenVal ~= nil then
-                needsRepairCount = tonumber(lenVal) or 0
+            -- Fallback for plain Lua tables or arrays
+            local len = #needsRepair
+            if type(len) == "number" then
+                needsRepairCount = len
             end
         end
     end
-    Dalamud.Log("[FATE] Repair check: needsRepairCount=" .. tostring(needsRepairCount) .. ", SelfRepair=" .. tostring(SelfRepair) .. ", DarkMatter=" .. tostring(Inventory.GetItemCount(33916)))
+    Dalamud.Log("[FATE] Repair check: needsRepairCount=" .. tostring(needsRepairCount) .. ", type=" .. type(needsRepair) .. ", SelfRepair=" .. tostring(SelfRepair) .. ", DarkMatter=" .. tostring(Inventory.GetItemCount(33916)))
 
     if AddonReady("SelectYesno") then
         yield("/callback SelectYesno true 0")
