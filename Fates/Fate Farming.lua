@@ -1312,6 +1312,34 @@ FatesData = {
     }
 }
 
+SolutionNineWaypoints = {
+    { name = "Center", position = Vector3(-150, 0, -50) },
+    { name = "North", position = Vector3(-150, 0, -120) },
+    { name = "South", position = Vector3(-150, 0, 20) },
+    { name = "East", position = Vector3(-80, 0, -50) },
+    { name = "West", position = Vector3(-220, 0, -50) },
+    { name = "Aetheryte", position = Vector3(-198, 0, -7) },
+    { name = "NexusArcade", position = Vector3(-158, 0, -10) },
+}
+
+function GetSolutionNineWaypoint(targetPos)
+    if targetPos == nil or SolutionNineWaypoints == nil then
+        return nil
+    end
+    
+    local closest = nil
+    local closestDist = math.maxinteger
+    for _, wp in ipairs(SolutionNineWaypoints) do
+        local dist = DistanceBetweenFlat(wp.position, targetPos)
+        if dist < closestDist then
+            closestDist = dist
+            closest = wp
+        end
+    end
+    
+    return closest
+end
+
 function find(array, f)
     for _, v in ipairs(array) do
         if ~f(v) then
@@ -4933,6 +4961,21 @@ function MoveToFate()
     local distanceToPreferredMovePos = GetDistanceToPoint(preferredMovePos)
     local levelSyncPending = IsLevelSyncPendingForCurrentFate()
 
+    if IsSolutionNineZone() and not Svc.Condition[CharacterCondition.mounted] then
+        local closestWaypoint = GetSolutionNineWaypoint(preferredMovePos)
+        if closestWaypoint ~= nil then
+            local distToWaypoint = DistanceBetweenFlat(GetLocalPlayerPosition(), closestWaypoint.position)
+            local distWaypointToFate = DistanceBetweenFlat(closestWaypoint.position, preferredMovePos)
+            if distToWaypoint > 10 and distWaypointToFate > 10 then
+                if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                    Dalamud.Log("[FATE] Solution Nine: Using waypoint " .. closestWaypoint.name)
+                    IPC.vnavmesh.PathfindAndMoveTo(closestWaypoint.position, false)
+                end
+                return
+            end
+        end
+    end
+
     if not (CurrentFate.isOtherNpcFate or CurrentFate.isCollectionsFate)
         and not levelSyncPending
         and distanceToPreferredMovePos <= (PreAcquireDistance or 130)
@@ -7200,6 +7243,10 @@ function ResetMovementStuckState()
     MoveStuckLastDistanceToTarget = nil
 end
 
+function IsSolutionNineZone()
+    return Svc.ClientState.TerritoryType == 1186
+end
+
 function HandleMovementStuck(targetPosition)
     if EnableStagedAntiStuck ~= true then
         return false
@@ -7210,8 +7257,12 @@ function HandleMovementStuck(targetPosition)
         return false
     end
 
+    local isSolutionNine = IsSolutionNineZone()
+    local stuckCheckInterval = isSolutionNine and 5 or StuckCheckIntervalSeconds
+    local stuckThreshold = isSolutionNine and 2 or StuckMovementThreshold
+
     local now = os.clock()
-    if now - MoveStuckLastCheckTime < StuckCheckIntervalSeconds then
+    if now - MoveStuckLastCheckTime < stuckCheckInterval then
         return false
     end
     MoveStuckLastCheckTime = now
@@ -7229,7 +7280,7 @@ function HandleMovementStuck(targetPosition)
     local distanceToTarget = nil
     if effectiveTarget ~= nil then
         distanceToTarget = DistanceBetweenFlat(playerPos, effectiveTarget)
-        if distanceToTarget <= math.max(5, StuckMovementThreshold * 1.5) then
+        if distanceToTarget <= math.max(5, stuckThreshold * 1.5) then
             MoveStuckCount = 0
             MoveStuckLastPosition = playerPos
             MoveStuckLastDistanceToTarget = distanceToTarget
@@ -7239,13 +7290,13 @@ function HandleMovementStuck(targetPosition)
 
     local movedEnough = true
     if MoveStuckLastPosition ~= nil then
-        movedEnough = DistanceBetweenFlat(playerPos, MoveStuckLastPosition) >= StuckMovementThreshold
+        movedEnough = DistanceBetweenFlat(playerPos, MoveStuckLastPosition) >= stuckThreshold
     end
 
     local madeTargetProgress = false
     if distanceToTarget ~= nil and MoveStuckLastDistanceToTarget ~= nil then
         madeTargetProgress = (MoveStuckLastDistanceToTarget - distanceToTarget) >=
-            math.max(0.8, StuckMovementThreshold * 0.25)
+            math.max(0.8, stuckThreshold * 0.25)
     end
 
     if movedEnough or madeTargetProgress then
@@ -7256,7 +7307,7 @@ function HandleMovementStuck(targetPosition)
     end
 
     MoveStuckCount = MoveStuckCount + 1
-    Dalamud.Log("[FATE] Movement stuck detected. Stage #" .. tostring(MoveStuckCount))
+    Dalamud.Log("[FATE] Movement stuck detected. Stage #" .. tostring(MoveStuckCount) .. (isSolutionNine and " (Solution Nine)" or ""))
 
     yield("/vnav stop")
     yield("/wait 0.2")
@@ -7285,11 +7336,22 @@ function HandleMovementStuck(targetPosition)
         IPC.vnavmesh.PathfindAndMoveTo(retryTarget, Player.CanFly and SelectedZone.flying)
         SessionStuckRepathCount = SessionStuckRepathCount + 1
     elseif MoveStuckCount == 2 then
-        local closestAetheryte = GetClosestAetheryteInZoneToPoint(Svc.ClientState.TerritoryType, playerPos)
-        if closestAetheryte ~= nil then
-            local teleported = TeleportTo(closestAetheryte.name)
-            if teleported ~= false then
-                SessionStuckAetheryteCount = SessionStuckAetheryteCount + 1
+        if isSolutionNine then
+            local closestAetheryte = GetClosestAetheryteInZoneToPoint(Svc.ClientState.TerritoryType, playerPos)
+            if closestAetheryte ~= nil then
+                local teleported = TeleportTo(closestAetheryte.name)
+                if teleported ~= false then
+                    SessionStuckAetheryteCount = SessionStuckAetheryteCount + 1
+                    Dalamud.Log("[FATE] Solution Nine: Teleported to aetheryte after stuck")
+                end
+            end
+        else
+            local closestAetheryte = GetClosestAetheryteInZoneToPoint(Svc.ClientState.TerritoryType, playerPos)
+            if closestAetheryte ~= nil then
+                local teleported = TeleportTo(closestAetheryte.name)
+                if teleported ~= false then
+                    SessionStuckAetheryteCount = SessionStuckAetheryteCount + 1
+                end
             end
         end
         CurrentFate = nil
@@ -7340,11 +7402,11 @@ function HandleExchangeMovementStuck()
     local isSolutionNineRoute = SelectedBicolorExchangeData ~= nil
         and SelectedBicolorExchangeData.zoneId == 1186
         and Svc.ClientState.TerritoryType == 1186
-    local stuckCheckInterval = isSolutionNineRoute and 4 or 3
-    local stuckMoveThreshold = isSolutionNineRoute and 0.7 or 1.5
-    local shopProgressThreshold = isSolutionNineRoute and 0.4 or 0.8
+    local stuckCheckInterval = isSolutionNineRoute and 3 or 3
+    local stuckMoveThreshold = isSolutionNineRoute and 0.5 or 1.5
+    local shopProgressThreshold = isSolutionNineRoute and 0.3 or 0.8
     local repathSpread = isSolutionNineRoute and 10 or 3
-    local maxRepathAttempts = isSolutionNineRoute and 3 or 5
+    local maxRepathAttempts = isSolutionNineRoute and 2 or 5
 
     local now = os.clock()
     if now - ExchangeMoveLastCheckTime < stuckCheckInterval then
@@ -7449,8 +7511,8 @@ function ExecuteBicolorExchange()
                 SelectedBicolorExchangeData.position
             )
             local shouldUseMiniAethernet = distanceToShop > (miniToShopDistance + 10)
-            if SelectedBicolorExchangeData.zoneId == 1186 and distanceToShop > 35 then
-                -- Solution Nine has frequent pathing dead-ends from far spots; force an aethernet reset first.
+            local solutionNineThreshold = 25
+            if SelectedBicolorExchangeData.zoneId == 1186 and distanceToShop > solutionNineThreshold then
                 shouldUseMiniAethernet = true
             end
             if shouldUseMiniAethernet then
