@@ -4739,14 +4739,18 @@ end
 
 function MountState()
     if Svc.Condition[CharacterCondition.mounted] then
-        -- Start moving immediately after mounting
+        -- Start flying immediately after mounting
         if CurrentFate ~= nil then
             local targetPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
             local useFlying = Player.CanFly and SelectedZone.flying
-            IPC.vnavmesh.PathfindAndMoveTo(targetPos, useFlying)
+            if useFlying then
+                IPC.vnavmesh.PathfindAndMoveTo(targetPos, true)
+                Dalamud.Log("[FATE] Mounted - starting flight to destination")
+            else
+                IPC.vnavmesh.PathfindAndMoveTo(targetPos, false)
+                Dalamud.Log("[FATE] Mounted - starting ground movement to destination")
+            end
         end
-        local postMountWait = FastCombatPacing and 0.12 or 1
-        yield("/wait " .. tostring(postMountWait))
         State = CharacterState.moveToFate
         Dalamud.Log("[FATE] State Change: MoveToFate")
     else
@@ -5129,8 +5133,10 @@ function MoveToFate()
                 -- Move toward the FLAG position specifically
                 IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, Player.CanFly and SelectedZone.flying)
             end
-        elseif not IPC.vnavmesh.PathfindInProgress() and not IPC.vnavmesh.IsRunning() then
-            if Player.CanFly and SelectedZone.flying then
+        else
+            -- Mounted: always fly/move toward destination
+            local useFlying = Player.CanFly and SelectedZone.flying
+            if useFlying then
                 IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, true)
             else
                 IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, false)
