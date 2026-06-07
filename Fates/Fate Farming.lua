@@ -1782,7 +1782,7 @@ function IsCurrentTargetInsideCurrentFateBounds(margin)
     return IsPositionInsideCurrentFateBounds(Svc.Targets.Target.Position, margin)
 end
 
-function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance)
+function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance, ignoreFateRadiusFilter)
     local playerPos = GetLocalPlayerPosition()
     if playerPos == nil then
         return {}, nil
@@ -1800,7 +1800,7 @@ function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance)
                 local passesCombatFilter = (onlyUnengaged ~= true) or isUnengaged
                 local passesDistanceFilter = (maxDistance == nil) or (dist <= maxDistance)
                 local passesFateRadiusFilter = true
-                if CurrentFate ~= nil and CurrentFate.fateId == objFateId and CurrentFate.position ~= nil then
+                if not ignoreFateRadiusFilter and CurrentFate ~= nil and CurrentFate.fateId == objFateId and CurrentFate.position ~= nil then
                     local fateRadius = GetFateRadiusValue(CurrentFate, nil)
                     if fateRadius ~= nil and fateRadius > 0 then
                         local fatePadding = GetCurrentFateTargetRadiusPadding()
@@ -1896,6 +1896,12 @@ function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallba
     if #candidates == 0 and unengagedOnly and allowFallbackToAny then
         candidates = CollectFateEnemyCandidates(fateIdFilter, false, maxDistance)
     end
+    if #candidates == 0 and allowFallbackToAny then
+        candidates = CollectFateEnemyCandidates(fateIdFilter, unengagedOnly, maxDistance, true)
+        if #candidates == 0 and unengagedOnly then
+            candidates = CollectFateEnemyCandidates(fateIdFilter, false, maxDistance, true)
+        end
+    end
     if #candidates == 0 then
         return false
     end
@@ -1938,6 +1944,9 @@ function AttemptToTargetLowestHpFateEnemy(maxDistance)
     end
 
     local candidates = CollectFateEnemyCandidates(fateIdFilter, false, maxDistance)
+    if #candidates == 0 then
+        candidates = CollectFateEnemyCandidates(fateIdFilter, false, maxDistance, true)
+    end
     if #candidates == 0 then
         return false
     end
@@ -5384,6 +5393,12 @@ function TryActivePullNearbyEnemies(now)
     local fateIdFilter = CurrentFate.fateId
     local candidates = CollectFateEnemyCandidates(fateIdFilter, true, pullRange)
 
+    if #candidates == 0 then
+        candidates = CollectFateEnemyCandidates(fateIdFilter, true, pullRange, true)
+    end
+    if #candidates == 0 then
+        candidates = CollectFateEnemyCandidates(fateIdFilter, false, pullRange, true)
+    end
     if #candidates == 0 then
         return false
     end
