@@ -5115,8 +5115,12 @@ function MoveToFate()
         local shouldMountForTravel = distanceToFlag >= mountDistanceThreshold
         if not Svc.Condition[CharacterCondition.mounted] then
             if shouldMountForTravel then
-                State = CharacterState.mounting
-                Dalamud.Log("[FATE] State Change: Mounting")
+                -- Start moving toward destination while attempting to mount
+                if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                    IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, Player.CanFly and SelectedZone.flying)
+                end
+                -- Try to mount while moving
+                Mount()
                 return
             elseif not IPC.vnavmesh.PathfindInProgress() and not IPC.vnavmesh.IsRunning() then
                 -- Move toward the FLAG position specifically
