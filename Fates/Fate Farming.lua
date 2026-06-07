@@ -1387,7 +1387,7 @@ function GetLangTable(lang)
                 ["Shadowstride"] = "シャドウストライド",
                 ["Trajectory"] = "トラジェクトリー",
                 ["Iron Will"] = "アイアンウィル",
-                ["Defiance"] = "ディフェアンス",
+                ["Defiance"] = "ディフェンダー",
                 ["Grit"] = "グリットスタンス",
                 ["Royal Guard"] = "ロイヤルガード",
                 ["Winged Glide"] = "ウィンググライド",
@@ -3671,7 +3671,7 @@ function SelectNextFate()
     else
         Dalamud.Log("[FATE] Final selected fate #" .. nextFate.fateId .. " " .. nextFate.fateName)
     end
-    yield("/wait " .. tostring(FastCombatPacing and 0.05 or 0.211))
+    yield("/wait " .. tostring(FastCombatPacing and 0.02 or 0.211))
     return nextFate
 end
 
@@ -6518,7 +6518,8 @@ function DoFate()
             then
                 local fallbackPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
                 if fallbackPos ~= nil and GetDistanceToPoint(fallbackPos) > 8 then
-                    Dalamud.Log("[FATE] No target for " .. string.format("%.1f", noTargetElapsed) .. "s, moving to fate center.")
+                    Dalamud.Log("[FATE] No target for " ..
+                    string.format("%.1f", noTargetElapsed) .. "s, moving to fate center.")
                     IPC.vnavmesh.PathfindAndMoveTo(fallbackPos, false)
                 end
             end
@@ -6713,11 +6714,11 @@ function DoFate()
         TurnOffRaidBuffs()
     end
 
-    local stopBeforeInchWait = FastCombatPacing and 0.12 or 5.002
-    local inchCloserWait = FastCombatPacing and 0.12 or 1
-    local preApproachWaitOutOfCombat = FastCombatPacing and 0.45 or 5.003
-    local preApproachWaitInCombat = FastCombatPacing and 0.45 or 5.004
-    local targetStickWait = FastCombatPacing and 0.1 or 1
+    local stopBeforeInchWait = FastCombatPacing and 0.08 or 5.002
+    local inchCloserWait = FastCombatPacing and 0.08 or 1
+    local preApproachWaitOutOfCombat = FastCombatPacing and 0.3 or 5.003
+    local preApproachWaitInCombat = FastCombatPacing and 0.3 or 5.004
+    local targetStickWait = FastCombatPacing and 0.05 or 1
 
     local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
     local leashSafeRadius = GetLeashSafeRetargetRadius()
@@ -7582,7 +7583,11 @@ function Repair()
             end
         end
     end
-    Dalamud.Log("[FATE] Repair check: needsRepairCount=" .. tostring(needsRepairCount) .. ", type=" .. type(needsRepair) .. ", SelfRepair=" .. tostring(SelfRepair) .. ", DarkMatter=" .. tostring(Inventory.GetItemCount(33916)))
+    Dalamud.Log("[FATE] Repair check: needsRepairCount=" ..
+    tostring(needsRepairCount) ..
+    ", type=" ..
+    type(needsRepair) ..
+    ", SelfRepair=" .. tostring(SelfRepair) .. ", DarkMatter=" .. tostring(Inventory.GetItemCount(33916)))
 
     if AddonReady("SelectYesno") then
         yield("/callback SelectYesno true 0")
@@ -7678,7 +7683,8 @@ function Repair()
             end
         else
             if Echo == "all" then
-                yield("/echo [FATE] Self-repair unavailable (no dark matter or no items to repair). Falling back to Limsa mender.")
+                yield(
+                "/echo [FATE] Self-repair unavailable (no dark matter or no items to repair). Falling back to Limsa mender.")
             end
             -- Do NOT overwrite SelfRepair globally; just fall back to NPC mender for this cycle
             if needsRepairCount > 0 then
@@ -8508,7 +8514,8 @@ function FollowPartyLeaderToZone()
     if leaderZoneId ~= nil and leaderZoneId ~= Svc.ClientState.TerritoryType then
         shouldTeleport = true
         destinationZoneId = leaderZoneId
-        Dalamud.Log("[FATE] Party leader is in zone " .. leaderZoneId .. ", current zone is " .. Svc.ClientState.TerritoryType)
+        Dalamud.Log("[FATE] Party leader is in zone " ..
+        leaderZoneId .. ", current zone is " .. Svc.ClientState.TerritoryType)
     end
 
     if not shouldTeleport then
@@ -8532,7 +8539,7 @@ function FollowPartyLeaderToZone()
 
     Dalamud.Log("[FATE] Teleporting to party leader's zone (zoneId: " .. destinationZoneId .. ")")
 
-    local closestAetheryte = GetClosestAetheryteInZoneToPoint(destinationZoneId, GetPlayerPosition() or {X=0, Y=0, Z=0})
+    local closestAetheryte = GetClosestAetheryteInZoneToPoint(destinationZoneId, GetPlayerPosition() or { X = 0, Y = 0, Z = 0 })
     if closestAetheryte ~= nil then
         TeleportTo(closestAetheryte.name)
     else
@@ -8911,33 +8918,33 @@ function FateFarming:Run()
     PreferredHighLevelZonePenaltyDecay    = 0.62
     SkipLevelSyncForHighLevelFates        = false
     LevelSyncBypassMinFateLevel           = 96
-    CombatFateSelectionBonus              = FastCombatPacing and 9 or 5
+    CombatFateSelectionBonus              = FastCombatPacing and 12 or 5
     BossFateSelectionPenalty              = FastCombatPacing and 20 or 12
-    FatePrefetchProgressThreshold         = FastCombatPacing and 45 or 70
-    FatePrefetchIntervalSeconds           = FastCombatPacing and 0.9 or 3.5
+    FatePrefetchProgressThreshold         = FastCombatPacing and 35 or 70
+    FatePrefetchIntervalSeconds           = FastCombatPacing and 0.6 or 3.5
     FatePrefetchTtlSeconds                = 30
-    MainLoopWaitSeconds                   = FastCombatPacing and 0.11 or 0.25
-    FastNoFateZoneSwitchCooldownSeconds   = FastCombatPacing and 0.8 or 4
-    CombatStartBoostDurationSeconds       = FastCombatPacing and 6 or 12
+    MainLoopWaitSeconds                   = FastCombatPacing and 0.05 or 0.25
+    FastNoFateZoneSwitchCooldownSeconds   = FastCombatPacing and 0.5 or 4
+    CombatStartBoostDurationSeconds       = FastCombatPacing and 4 or 12
     TeleportHysteresisEnterGain           = FastCombatPacing and 52 or 70
     TeleportHysteresisExitGain            = FastCombatPacing and 16 or 25
-    NoCombatRecoveryRetargetRatio         = FastCombatPacing and 0.25 or 0.35
-    NoCombatRecoveryRepositionRatio       = FastCombatPacing and 0.55 or 0.7
-    MeleeApproachRetargetSeconds          = FastCombatPacing and 3.2 or 5
-    MeleeApproachMovePulseSeconds         = FastCombatPacing and 0.55 or 1.0
+    NoCombatRecoveryRetargetRatio         = FastCombatPacing and 0.2 or 0.35
+    NoCombatRecoveryRepositionRatio       = FastCombatPacing and 0.45 or 0.7
+    MeleeApproachRetargetSeconds          = FastCombatPacing and 2.5 or 5
+    MeleeApproachMovePulseSeconds         = FastCombatPacing and 0.4 or 1.0
     MountTravelMinDistance                = FastCombatPacing and 20 or 24
-    MountToggleCooldownSeconds            = FastCombatPacing and 1.25 or 2.2
-    MountRetryCooldownSeconds             = FastCombatPacing and 0.45 or 1.2
-    DismountRetryCooldownSeconds          = FastCombatPacing and 0.35 or 0.8
+    MountToggleCooldownSeconds            = FastCombatPacing and 1.0 or 2.2
+    MountRetryCooldownSeconds             = FastCombatPacing and 0.35 or 1.2
+    DismountRetryCooldownSeconds          = FastCombatPacing and 0.25 or 0.8
     DynamicZoneSelectionEnabled           = true
     ZoneNoFateBlockSeconds                = 180
     UnresponsiveLevelSyncEarlySkipSeconds = 16
-    UnresponsiveNoTargetSkipSeconds       = FastCombatPacing and 6 or 10
+    UnresponsiveNoTargetSkipSeconds       = FastCombatPacing and 5 or 10
     UnresponsiveSkipRatio                 = 0.65
     FateResultSummaryWriteIntervalSeconds = 30
     MiddleDismountForceAfterSeconds       = 1.8
-    PreAcquireDistance                    = FastCombatPacing and 220 or 130
-    PreAcquireAttemptIntervalSeconds      = FastCombatPacing and 0.45 or 1.2
+    PreAcquireDistance                    = FastCombatPacing and 250 or 130
+    PreAcquireAttemptIntervalSeconds      = FastCombatPacing and 0.35 or 1.2
     FateTargetRadiusPadding               = 3
     FateMoveBoundaryBuffer                = 0
     FateHardBoundaryBuffer                = 14
@@ -8958,19 +8965,19 @@ function FateFarming:Run()
     DynamicAoeDisableStableSamples        = 3
     DynamicAoeMixedPackMinimumEnemies     = 2
     PreferUnengagedFateTargets            = not TargetEngagedEnemies
-    TargetAcquireRetrySeconds             = FastCombatPacing and 0.4 or 0.9
-    TargetAcquireStopNavSeconds           = FastCombatPacing and 1.2 or 2.4
-    CombatOpenNoCombatGraceSeconds        = FastCombatPacing and 0.35 or 0.8
-    CombatOpenPulseSeconds                = FastCombatPacing and 0.45 or 0.8
-    CombatOpenActionRetrySeconds          = FastCombatPacing and 0.55 or 0.9
+    TargetAcquireRetrySeconds             = FastCombatPacing and 0.3 or 0.9
+    TargetAcquireStopNavSeconds           = FastCombatPacing and 0.9 or 2.4
+    CombatOpenNoCombatGraceSeconds        = FastCombatPacing and 0.25 or 0.8
+    CombatOpenPulseSeconds                = FastCombatPacing and 0.35 or 0.8
+    CombatOpenActionRetrySeconds          = FastCombatPacing and 0.4 or 0.9
     CombatOpenActionMaxRange              = 20.5
-    CombatOpenRetargetSeconds             = FastCombatPacing and 1.2 or 2.2
-    MeleeApproachHardRecoverSeconds       = FastCombatPacing and 4.8 or 6.5
-    MeleeApproachForceGapDistance         = FastCombatPacing and 6 or 8
-    MeleeApproachHardRecoverCooldown      = FastCombatPacing and 1.8 or 2.6
+    CombatOpenRetargetSeconds             = FastCombatPacing and 0.9 or 2.2
+    MeleeApproachHardRecoverSeconds       = FastCombatPacing and 3.8 or 6.5
+    MeleeApproachForceGapDistance         = FastCombatPacing and 5 or 8
+    MeleeApproachHardRecoverCooldown      = FastCombatPacing and 1.4 or 2.6
     WrathKeepAliveEnabled                 = true
-    WrathKeepAliveIntervalSeconds         = FastCombatPacing and 1.3 or 2.8
-    WrathStallRecoverySeconds             = FastCombatPacing and 2.0 or 4.2
+    WrathKeepAliveIntervalSeconds         = FastCombatPacing and 1.0 or 2.8
+    WrathStallRecoverySeconds             = FastCombatPacing and 1.5 or 4.2
     --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
     -- Variable initialzation
@@ -9182,9 +9189,9 @@ function FateFarming:Run()
     end
 
     --Post Fate Settings
-    MinWait                        = FastCombatPacing and 0.05 or
+    MinWait                        = FastCombatPacing and 0.01 or
         3                                  --Min number of seconds it should wait until mounting up for next fate.
-    MaxWait                        = FastCombatPacing and 0.25 or
+    MaxWait                        = FastCombatPacing and 0.1 or
         10                                 --Max number of seconds it should wait until mounting up for next fate.
     --Actual wait time will be a randomly generated number between MinWait and MaxWait.
     DownTimeWaitAtNearestAetheryte = false --When waiting for fates to pop, should you fly to the nearest Aetheryte and wait there?
