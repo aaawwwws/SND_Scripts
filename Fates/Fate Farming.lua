@@ -8964,7 +8964,7 @@ function FateFarming:Run()
     DynamicAoeEnableStableSamples         = 2
     DynamicAoeDisableStableSamples        = 3
     DynamicAoeMixedPackMinimumEnemies     = 2
-    PreferUnengagedFateTargets            = not TargetEngagedEnemies
+    PreferUnengagedFateTargets            = not (TargetEngagedEnemies == true)
     TargetAcquireRetrySeconds             = FastCombatPacing and 0.3 or 0.9
     TargetAcquireStopNavSeconds           = FastCombatPacing and 0.9 or 2.4
     CombatOpenNoCombatGraceSeconds        = FastCombatPacing and 0.25 or 0.8
