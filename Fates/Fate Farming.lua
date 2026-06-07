@@ -6757,8 +6757,15 @@ function DoFate()
                     end
                 end
             elseif not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                yield("/wait " .. preApproachWaitOutOfCombat) -- brief wait before approaching again
+                local meleeOrTank = Player.Job and (Player.Job.IsMeleeDPS or Player.Job.IsTank)
+                if not meleeOrTank then
+                    yield("/wait " .. preApproachWaitOutOfCombat)
+                end
                 if (Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.inCombat]) and not Svc.Condition[CharacterCondition.casting] then
+                    MoveToTargetHitbox()
+                end
+            elseif Player.Job and (Player.Job.IsMeleeDPS or Player.Job.IsTank) then
+                if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
                     MoveToTargetHitbox()
                 end
             end
@@ -6823,8 +6830,19 @@ function DoFate()
             if HandleMovementStuck(Svc.Targets.Target and Svc.Targets.Target.Position or nil) then
                 return
             end
+            local meleeOrTank = Player.Job and (Player.Job.IsMeleeDPS or Player.Job.IsTank)
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                yield("/wait " .. preApproachWaitInCombat)
+                if not meleeOrTank then
+                    yield("/wait " .. preApproachWaitInCombat)
+                end
+                if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
+                    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
+                        ClearTarget()
+                    else
+                        MoveToTargetHitbox()
+                    end
+                end
+            elseif meleeOrTank then
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
                     if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
                         ClearTarget()
