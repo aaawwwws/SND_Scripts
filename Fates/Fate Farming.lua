@@ -6280,6 +6280,8 @@ function DoFate()
             ForlornMarked = false
             MovingAnnouncementLock = false
             ResetTargetAcquireWatchdog()
+            CurrentFate = nil
+            NextFate = nil
             State = CharacterState.ready
             Dalamud.Log("[FATE] State Change: Ready")
         end
