@@ -1342,7 +1342,7 @@ end
 
 function find(array, f)
     for _, v in ipairs(array) do
-        if ~f(v) then
+        if not f(v) then
             return v
         end
     end
@@ -2254,6 +2254,9 @@ function IsCollectionsFate(fateName)
 end
 
 function IsBossFate(fate)
+    if fate == nil then
+        return false
+    end
     return fate.IconId == 60722
 end
 
@@ -3331,6 +3334,10 @@ function BuildFateTable(fateObj)
         isBonusFate = fateObj.IsBonus,
     }
 
+    if fateTable.position == nil then
+        Dalamud.Log("[FATE] Warning: fate #" .. tostring(fateTable.fateId) .. " has nil position (Location)")
+    end
+
     fateTable.npcName = GetFateNpcName(fateTable.fateName)
 
     local currentTime = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
@@ -3616,7 +3623,9 @@ function SelectNextFate()
             tempFate.fateId .. ": " .. math.floor(tempFate.timeLeft // 60) .. "min, " ..
             math.floor(tempFate.timeLeft % 60) .. "s")
 
-        if not (tempFate.position.X == 0 and tempFate.position.Z == 0)
+        if tempFate.position == nil then
+            Dalamud.Log("[FATE] FATE position is nil, skipping fate #" .. tostring(tempFate.fateId))
+        elseif not (tempFate.position.X == 0 and tempFate.position.Z == 0)
             and not tempFate.isBlacklistedFate
             and (tempFate.duration ~= 0 or tempFate.isOtherNpcFate or tempFate.isCollectionsFate)
         then
@@ -3627,7 +3636,7 @@ function SelectNextFate()
             end
         end
 
-        if not (tempFate.position.X == 0 and tempFate.position.Z == 0) then -- sometimes game doesnt send the correct coords
+        if tempFate.position ~= nil and not (tempFate.position.X == 0 and tempFate.position.Z == 0) then -- sometimes game doesnt send the correct coords
             if not tempFate.isBlacklistedFate then                          -- check fate is not blacklisted for any reason
                 if tempFate.isBossFate then
                     Dalamud.Log("[FATE] Is a boss fate")
@@ -3723,6 +3732,10 @@ function GetPlayerPosition()
 end
 
 function DistanceBetween(pos1, pos2)
+    if pos1 == nil or pos2 == nil then
+        Dalamud.Log("[FATE] Warning: DistanceBetween called with nil position")
+        return 0
+    end
     local dx = pos1.X - pos2.X
     local dy = pos1.Y - pos2.Y
     local dz = pos1.Z - pos2.Z
@@ -3770,6 +3783,10 @@ function GetDistanceToPointFlat(vec3)
 end
 
 function DistanceBetweenFlat(pos1, pos2)
+    if pos1 == nil or pos2 == nil then
+        Dalamud.Log("[FATE] Warning: DistanceBetweenFlat called with nil position")
+        return 0
+    end
     local dx = pos1.X - pos2.X
     local dz = pos1.Z - pos2.Z
     return math.sqrt(dx * dx + dz * dz)
@@ -4856,6 +4873,10 @@ end
 
 --Paths to the Fate NPC Starter
 function MoveToNPC()
+    if CurrentFate.npcName == nil or CurrentFate.npcName == "" then
+        Dalamud.Log("[FATE] MoveToNPC: npcName is nil or empty, skipping")
+        return
+    end
     yield("/target " .. CurrentFate.npcName)
     if Svc.Targets.Target ~= nil and GetTargetName() == CurrentFate.npcName then
         if GetDistanceToTarget() > 5 then
