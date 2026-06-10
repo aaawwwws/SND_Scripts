@@ -198,7 +198,7 @@ configs:
     max: 20
   Dynamic AoE same-name enemy count:
     description: 現在ターゲットと同名の敵がこの数以上いる時のみAoEを許可します。1で同名チェック無効。
-    default: 2
+    default: 1
     min: 1
     max: 20
   Dynamic AoE check radius:
@@ -9010,7 +9010,7 @@ function FateFarming:Run()
         DynamicAoeEnemyCount = 1
     end
     if DynamicAoeSameNameEnemyCount == nil or DynamicAoeSameNameEnemyCount < 1 then
-        DynamicAoeSameNameEnemyCount = 2
+        DynamicAoeSameNameEnemyCount = 1
     end
     if DynamicAoeCheckRadius == nil or DynamicAoeCheckRadius < 1 then
         DynamicAoeCheckRadius = 30
