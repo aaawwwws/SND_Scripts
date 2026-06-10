@@ -6052,12 +6052,14 @@ function DoFate()
 
         if inSyncRange and (Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying]) then
             Dismount(true)
+            TurnOnCombatMods("auto")
             return
         end
 
         if not inSyncRange then
             local syncMoveTarget = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
             if HandleMovementStuck(syncMoveTarget) then
+                TurnOnCombatMods("auto")
                 return
             end
 
@@ -6071,6 +6073,7 @@ function DoFate()
                 IPC.vnavmesh.PathfindAndMoveTo(syncMoveTarget, Player.CanFly and SelectedZone.flying)
                 LevelSyncOutOfRangeNoProgressSince = now
                 LevelSyncOutOfRangeLastDistance = GetDistanceToPoint(CurrentFate.position)
+                TurnOnCombatMods("auto")
                 return
             end
         end
@@ -6178,6 +6181,7 @@ function DoFate()
             local preferredSyncPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
             IPC.vnavmesh.PathfindAndMoveTo(preferredSyncPos, Player.CanFly and SelectedZone.flying)
         end
+        TurnOnCombatMods("auto")
         return
     else
         LastLevelSyncAttemptAt = 0
