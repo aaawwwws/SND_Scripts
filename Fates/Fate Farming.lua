@@ -9733,13 +9733,17 @@ function FateFarming:Run()
                     end
                     WaitingForFateRewards = nil
                 else
-                    local msg = "[FATE] Not clearing WaitingForFateRewards: fate state=" ..
-                        tostring(state) ..
-                        ", expected one of [Ended: " ..
-                        tostring(FateState.Ended) .. ", Failed: " .. tostring(FateState.Failed) .. "] or nil."
-                    Dalamud.Log(msg)
-                    if Echo == "all" then
-                        yield("/echo " .. msg)
+                    local now_waiting = os.clock()
+                    if WaitingForFateRewardsLastEchoAt == nil or (now_waiting - WaitingForFateRewardsLastEchoAt) >= 10 then
+                        WaitingForFateRewardsLastEchoAt = now_waiting
+                        local msg = "[FATE] Not clearing WaitingForFateRewards: fate state=" ..
+                            tostring(state) ..
+                            ", expected one of [Ended: " ..
+                            tostring(FateState.Ended) .. ", Failed: " .. tostring(FateState.Failed) .. "] or nil."
+                        Dalamud.Log(msg)
+                        if Echo == "all" then
+                            yield("/echo " .. msg)
+                        end
                     end
                 end
             end
