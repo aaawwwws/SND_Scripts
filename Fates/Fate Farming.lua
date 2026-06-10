@@ -8998,10 +8998,10 @@ function FateFarming:Run()
         ClusterMoveRadius = 40
     end
     if ClusterMoveMinimumEnemies == nil or ClusterMoveMinimumEnemies < 1 then
-        ClusterMoveMinimumEnemies = 2
+        ClusterMoveMinimumEnemies = FastCombatPacing and 1 or 2
     end
     if ClusterMoveRefreshSeconds == nil or ClusterMoveRefreshSeconds < 0.2 then
-        ClusterMoveRefreshSeconds = 1
+        ClusterMoveRefreshSeconds = FastCombatPacing and 0.5 or 1
     end
     if DynamicAoeSwitch == nil then
         DynamicAoeSwitch = true
@@ -9048,7 +9048,7 @@ function FateFarming:Run()
     TeleportHysteresisExitGain            = FastCombatPacing and 16 or 25
     NoCombatRecoveryRetargetRatio         = FastCombatPacing and 0.2 or 0.35
     NoCombatRecoveryRepositionRatio       = FastCombatPacing and 0.45 or 0.7
-    MeleeApproachRetargetSeconds          = FastCombatPacing and 2.5 or 5
+    MeleeApproachRetargetSeconds          = FastCombatPacing and 1.5 or 5
     MeleeApproachMovePulseSeconds         = FastCombatPacing and 0.4 or 1.0
     MountTravelMinDistance                = FastCombatPacing and 20 or 24
     MountToggleCooldownSeconds            = FastCombatPacing and 1.0 or 2.2
@@ -9078,21 +9078,21 @@ function FateFarming:Run()
     FinisherRemainingMultiplier           = 1.15
     FinisherMinRemainingWindow            = 0.8
     FinisherMaxSampleDelta                = 25
-    DynamicAoeSwitchCooldownSeconds       = 1.6
-    DynamicAoeEnableStableSamples         = 2
-    DynamicAoeDisableStableSamples        = 3
+    DynamicAoeSwitchCooldownSeconds       = FastCombatPacing and 0.8 or 1.6
+    DynamicAoeEnableStableSamples         = FastCombatPacing and 1 or 2
+    DynamicAoeDisableStableSamples        = FastCombatPacing and 2 or 3
     DynamicAoeMixedPackMinimumEnemies     = 2
     PreferUnengagedFateTargets            = not (TargetEngagedEnemies == true)
-    TargetAcquireRetrySeconds             = FastCombatPacing and 0.3 or 0.9
-    TargetAcquireStopNavSeconds           = FastCombatPacing and 0.9 or 2.4
+    TargetAcquireRetrySeconds             = FastCombatPacing and 0.15 or 0.9
+    TargetAcquireStopNavSeconds           = FastCombatPacing and 0.5 or 2.4
     CombatOpenNoCombatGraceSeconds        = FastCombatPacing and 0.25 or 0.8
     CombatOpenPulseSeconds                = FastCombatPacing and 0.35 or 0.8
     CombatOpenActionRetrySeconds          = FastCombatPacing and 0.4 or 0.9
     CombatOpenActionMaxRange              = 20.5
-    CombatOpenRetargetSeconds             = FastCombatPacing and 0.9 or 2.2
-    MeleeApproachHardRecoverSeconds       = FastCombatPacing and 3.8 or 6.5
+    CombatOpenRetargetSeconds             = FastCombatPacing and 0.5 or 2.2
+    MeleeApproachHardRecoverSeconds       = FastCombatPacing and 2.5 or 6.5
     MeleeApproachForceGapDistance         = FastCombatPacing and 5 or 8
-    MeleeApproachHardRecoverCooldown      = FastCombatPacing and 1.4 or 2.6
+    MeleeApproachHardRecoverCooldown      = FastCombatPacing and 0.8 or 2.6
     WrathKeepAliveEnabled                 = true
     WrathKeepAliveIntervalSeconds         = FastCombatPacing and 1.0 or 2.8
     WrathStallRecoverySeconds             = FastCombatPacing and 1.5 or 4.2
