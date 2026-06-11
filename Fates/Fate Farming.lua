@@ -6382,8 +6382,24 @@ function DoFate()
 
     Dalamud.Log("[FATE] DoFate->Finished transition checks")
 
+    -- Force target specific enemies for continuation FATEs
+    local forceTargetNames = {
+        "カナルガルパー",
+        "Canal Gulper",
+    }
+    local forceTargeted = false
+    for _, enemyName in ipairs(forceTargetNames) do
+        yield("/target " .. enemyName)
+        yield("/wait 0.1")
+        if Svc.Targets.Target ~= nil and GetTargetName() == enemyName and not Svc.Targets.Target.IsDead then
+            forceTargeted = true
+            Dalamud.Log("[FATE] Force targeted: " .. enemyName)
+            break
+        end
+    end
+
     -- do not target fate npc during combat
-    if CurrentFate.npcName ~= nil and GetTargetName() == CurrentFate.npcName then
+    if not forceTargeted and CurrentFate.npcName ~= nil and GetTargetName() == CurrentFate.npcName then
         Dalamud.Log("[FATE] Attempting to clear target.")
         ClearTarget()
         yield("/wait 1")
