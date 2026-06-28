@@ -148,8 +148,8 @@ configs:
     min: 3
     max: 30
   Dense pull minimum enemies:
-    description: 近距離優先から密集優先に切り替える最小敵数です。
-    default: 1
+    description: 近距離優先から密集優先に切り替える最小敵数です。3以上にするとAoEで処理しやすい3体以上のクラスタを優先します。
+    default: 3
     min: 1
     max: 20
   Active pull enabled?:
@@ -179,8 +179,8 @@ configs:
     min: 5
     max: 40
   Cluster movement minimum enemies:
-    description: 密集地点として採用する最小敵数です。
-    default: 2
+    description: 密集地点として採用する最小敵数です。3以上にするとAoE射線が通りやすい3体以上の密集地を経由します。
+    default: 3
     min: 2
     max: 30
   Cluster movement refresh (secs):
@@ -6382,21 +6382,14 @@ function DoFate()
 
     Dalamud.Log("[FATE] DoFate->Finished transition checks")
 
-    -- Force target specific enemies for continuation FATEs
-    local forceTargetNames = {
-        "カナルガルパー",
-        "Canal Gulper",
-    }
+    -- (Removed) Force target specific enemies for continuation FATEs
+    -- The hardcoded list (カナルガルパー / Canal Gulper) only matched one
+    -- continuation FATE ("Pulling the Wool"). When the list did not match
+    -- the current continuation FATE, the empty /target calls cleared
+    -- Svc.Targets.Target and delayed the fallback acquisition. Let the
+    -- AttemptToTargetClosestFateEnemy / hasValidTarget fallback below
+    -- pick the first valid enemy for any continuation FATE.
     local forceTargeted = false
-    for _, enemyName in ipairs(forceTargetNames) do
-        yield("/target " .. enemyName)
-        yield("/wait 0.1")
-        if Svc.Targets.Target ~= nil and GetTargetName() == enemyName and not Svc.Targets.Target.IsDead then
-            forceTargeted = true
-            Dalamud.Log("[FATE] Force targeted: " .. enemyName)
-            break
-        end
-    end
 
     -- do not target fate npc during combat
     if not forceTargeted and CurrentFate.npcName ~= nil and GetTargetName() == CurrentFate.npcName then
@@ -9059,7 +9052,7 @@ function FateFarming:Run()
     FatePrefetchTtlSeconds                = 30
     MainLoopWaitSeconds                   = FastCombatPacing and 0.05 or 0.25
     FastNoFateZoneSwitchCooldownSeconds   = FastCombatPacing and 0.5 or 4
-    CombatStartBoostDurationSeconds       = FastCombatPacing and 4 or 12
+    CombatStartBoostDurationSeconds       = FastCombatPacing and 8 or 12
     TeleportHysteresisEnterGain           = FastCombatPacing and 52 or 70
     TeleportHysteresisExitGain            = FastCombatPacing and 16 or 25
     NoCombatRecoveryRetargetRatio         = FastCombatPacing and 0.2 or 0.35
