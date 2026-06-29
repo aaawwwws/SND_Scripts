@@ -5091,9 +5091,16 @@ function MoveToFate()
                 yield("/target " .. CurrentFate.npcName)
             else
                 local gotTarget = AttemptToTargetClosestFateEnemy(true, nil, true)
-                if not gotTarget and InActiveFate() then
+                if not gotTarget
+                    and IsFateActive(CurrentFate.fateObject)
+                    and distanceToFlag <= 15
+                then
+                    -- InActiveFate() can briefly return false right after a FATE
+                    -- spawns on top of the player (Fate.InFate lags by a frame),
+                    -- so use FATE-active + close-to-flag as a more reliable
+                    -- dismount signal and avoid dropping the attack window.
                     State = CharacterState.MiddleOfFateDismount
-                    Dalamud.Log("[FATE] State Change: MiddleOfFateDismount (fallback no target)")
+                    Dalamud.Log("[FATE] State Change: MiddleOfFateDismount (no target, in fate area)")
                     return
                 end
                 if Svc.Targets.Target == nil and OptimizeClusterMovement == true then
