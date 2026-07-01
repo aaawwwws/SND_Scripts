@@ -7185,7 +7185,7 @@ function Ready()
         end
         if MoveToRandomSpot then
             MoveToRandomNearbySpot(50, 75)
-            yield("/wait " .. tostring(FastCombatPacing and 3 or 10))
+            yield("/wait " .. tostring(FastCombatPacing and 1 or 10))
         end
         return
     end
@@ -7196,7 +7196,7 @@ function Ready()
             State = CharacterState.flyBackToAetheryte
             Dalamud.Log("[FATE] State Change: FlyBackToAetheryte")
         else
-            yield("/wait " .. tostring(FastCombatPacing and 3 or 10))
+            yield("/wait " .. tostring(FastCombatPacing and 1 or 10))
         end
         return
     end
@@ -8749,7 +8749,7 @@ function ChocoboCheck()
     -- Dismount if mounted (items can't be used while mounted)
     if Svc.Condition[CharacterCondition.mounted] then
         yield("/ac dismount")
-        yield("/wait 2")
+        yield("/wait " .. tostring(FastCombatPacing and 0.5 or 2))
         -- Check if dismounted successfully
         if Svc.Condition[CharacterCondition.mounted] then
             yield("/echo [FATE] Failed to dismount, cannot summon chocobo")
