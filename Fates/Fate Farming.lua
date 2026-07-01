@@ -4582,6 +4582,38 @@ function WaitForContinuation()
         return
     end
 
+    -- Distance-based early detection: InActiveFate() depends on the game's
+    -- Fate.InFate flag, which can lag by a frame when a new FATE spawns on
+    -- top of the player. Without this fallback, a FATE that pops up at the
+    -- player's location after Part 1 ends (or after a non-continuation FATE
+    -- with hasContinuation=true) would only be detected up to 30s later,
+    -- when WaitForContinuation aborts and falls back to Ready.
+    local playerPos = GetLocalPlayerPosition()
+    if playerPos ~= nil then
+        local activeFates = Fates.GetActiveFates()
+        for i = 0, activeFates.Count - 1 do
+            local fateObj = activeFates[i]
+            if fateObj ~= nil
+                and IsFateActive(fateObj)
+                and fateObj.Id ~= CurrentFate.fateId
+            then
+                local fatePos = fateObj.Position
+                if fatePos ~= nil then
+                    local dist = DistanceBetween(playerPos, fatePos)
+                    if dist <= 30 then
+                        local builtFate = BuildFateTable(fateObj)
+                        if builtFate ~= nil then
+                            CurrentFate = builtFate
+                            State = CharacterState.doFate
+                            Dalamud.Log("[FATE] State Change: DoFate (early continuation, fateId=" .. tostring(builtFate.fateId) .. ")")
+                            return
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     if InActiveFate() then
         Dalamud.Log("WaitForContinuation IsInFate")
         local nextFate = Fates.GetNearestFate()
