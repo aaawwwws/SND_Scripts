@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.9
+version: 3.1.10
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -279,6 +279,9 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.10   修正: /mount と /action コマンドの閉じ引用符不足を修正。
+                修正: HasContinuation チェックの論理ミスとスペルミスを修正。
+                改善: math.randomseed で乱数を初期化。
     -> 3.1.9    修正: タンクスタンス付与中に /ac 実行して解除されるリスクを軽減（2回確認＋1回限りのリトライ）。
                 修正: FATE境界での1pxちらつき移動を軽減（境界バッファ拡大＋移動コマンドのデッドゾーン追加）。
     -> 3.1.8    追加: PTプレイモード（Party Play Mode）。PTメンバー検知・ターゲット優先・FATE優先・チョコボ自動抑制。
@@ -4717,9 +4720,9 @@ function FlyBackToAetheryte()
             Dalamud.Log("[FATE] State Change: Ready")
         else
             if MountToUse == "mount roulette" then
-                yield('/action ' .. LANG.actions["mount roulette"])
+                yield('/action "' .. LANG.actions["mount roulette"] .. '"')
             else
-                yield('/mount "' .. MountToUse)
+                yield('/mount "' .. MountToUse .. '"')
             end
         end
         return
@@ -4798,9 +4801,9 @@ function Mount()
 
     LastMountCommandAt = now
     if MountToUse == "mount roulette" then
-        yield('/action ' .. LANG.actions["mount roulette"])
+        yield('/action "' .. LANG.actions["mount roulette"] .. '"')
     else
-        yield('/mount "' .. MountToUse)
+        yield('/mount "' .. MountToUse .. '"')
     end
     local mountCommandSettleWait = FastCombatPacing and 0.2 or 0.5
     yield("/wait " .. tostring(mountCommandSettleWait))
@@ -6406,7 +6409,8 @@ function DoFate()
     elseif not IsFateActive(CurrentFate.fateObject) or progress == 100 then
         yield("/vnav stop")
         ClearTarget()
-        if not Dalamud.Log("[FATE] HasContintuation check") and CurrentFate.hasContinuation then
+        Dalamud.Log("[FATE] HasContinuation check")
+        if CurrentFate.hasContinuation then
             LastFateEndTime = os.clock()
             State = CharacterState.waitForContinuation
             Dalamud.Log("[FATE] State Change: WaitForContinuation")
@@ -8984,6 +8988,8 @@ function FateFarming:Run()
         Dalamud.Log("[FATE-FIXED] " .. msg)
         return
     end
+
+    math.randomseed(os.time())
 
     CharacterState = {
         ready                  = Ready,
