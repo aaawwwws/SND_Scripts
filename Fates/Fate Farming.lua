@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.8
+version: 3.1.9
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -279,6 +279,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.9    修正: タンクスタンス付与中に /ac 実行して解除されるリスクを軽減（2回確認＋1回限りのリトライ）。
+                修正: FATE境界での1pxちらつき移動を軽減（境界バッファ拡大＋移動コマンドのデッドゾーン追加）。
     -> 3.1.8    追加: PTプレイモード（Party Play Mode）。PTメンバー検知・ターゲット優先・FATE優先・チョコボ自動抑制。
     -> 3.1.7    追加: 出現中FATEの名前とNPC名をJSONLに保存
     -> 3.1.6    修正: セルフ修理OFF時でもボーナスバフ中に修理移動するように変更
@@ -585,6 +587,10 @@ local NativeItemCommandDisabled
 local NativeItemCommandWarned
 local TeleportFailureByDestination
 local TeleportFailureWarnedAt
+
+-- MoveToTargetHitbox のちらつき防止用
+local MoveToTargetLastPos
+local MoveToTargetLastAt
 
 -- 密集移動のキャッシュ
 local ClusterMoveLastRefresh
@@ -2229,6 +2235,20 @@ function MoveToTargetHitbox()
     local ideal = targetPos + (dir * desiredRange)
     local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, GetCurrentFateMoveBoundaryBuffer())
     local newPos = IPC.vnavmesh.PointOnFloor(boundedIdeal, false, 1.5) or boundedIdeal
+
+    -- Avoid reissuing tiny movement commands that cause 1px jitter at fate edges.
+    local now = os.clock()
+    local posDeadzone = 0.5
+    local timeDeadzone = FastCombatPacing and 0.35 or 1.0
+    if MoveToTargetLastPos ~= nil and MoveToTargetLastAt ~= nil
+        and now - MoveToTargetLastAt < timeDeadzone
+        and DistanceBetweenFlat(MoveToTargetLastPos, newPos) < posDeadzone
+    then
+        return
+    end
+
+    MoveToTargetLastPos = newPos
+    MoveToTargetLastAt = now
     IPC.vnavmesh.PathfindAndMoveTo(newPos, false)
 end
 
@@ -8041,21 +8061,49 @@ function TankStanceCheck()
         TankStanceAcAttemptedForFate = CurrentFate.fateId
     end
 
-    if not HasStatusId(stanceStatusId) then
-        Dalamud.Log("[FATE] Tank stance missing (" .. tostring(stanceSkill) .. "), activating.")
-        local cmd = "/ac \"" .. tostring(stanceSkill) .. "\""
-        local ok = pcall(function() yield(cmd) end)
-        if not ok then
-            Dalamud.Log("[FATE] Tank stance /ac command failed (possibly invalid action name or wrong job). Skipping.")
-        end
-        yield("/wait 1.5")
-        if HasStatusId(stanceStatusId) then
-            Dalamud.Log("[FATE] Tank stance activated for fate #" .. tostring(CurrentFate.fateId) .. ".")
-        else
-            Dalamud.Log("[FATE] Tank stance not detected after /ac; will not retry this fate.")
-        end
+    -- Tank stances are toggles: casting while active removes them.
+    -- Verify the status is truly missing (with a short re-check) before casting.
+    local function StanceIsActive()
+        return HasStatusId(stanceStatusId)
+    end
+
+    if StanceIsActive() then
+        Dalamud.Log("[FATE] Tank stance already active for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
+        return
+    end
+
+    -- First read may be stale right after combat/zone transitions; re-verify.
+    yield("/wait 0.5")
+    if StanceIsActive() then
+        Dalamud.Log("[FATE] Tank stance detected on re-check for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
+        return
+    end
+
+    Dalamud.Log("[FATE] Tank stance missing (" .. tostring(stanceSkill) .. "), activating.")
+    local cmd = "/ac \"" .. tostring(stanceSkill) .. "\""
+    local ok = pcall(function() yield(cmd) end)
+    if not ok then
+        Dalamud.Log("[FATE] Tank stance /ac command failed (possibly invalid action name or wrong job). Skipping.")
+        return
+    end
+    yield("/wait 1.5")
+
+    if StanceIsActive() then
+        Dalamud.Log("[FATE] Tank stance activated for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
     else
-        Dalamud.Log("[FATE] Tank stance already active for fate #" .. tostring(CurrentFate.fateId) .. ".")
+        -- The /ac may have failed, or a rotation plugin toggled it off again.
+        -- Try once more after a brief wait, but never loop.
+        Dalamud.Log("[FATE] Tank stance not detected after /ac; retrying once.")
+        yield("/wait 1.0")
+        if not StanceIsActive() then
+            yield(cmd)
+            yield("/wait 1.5")
+        end
+        if StanceIsActive() then
+            Dalamud.Log("[FATE] Tank stance activated on retry for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
+        else
+            Dalamud.Log("[FATE] Tank stance not detected after retry; will not retry this fate.")
+        end
     end
 end
 
@@ -9112,10 +9160,10 @@ function FateFarming:Run()
     PreAcquireDistance                    = FastCombatPacing and 250 or 130
     PreAcquireAttemptIntervalSeconds      = FastCombatPacing and 0.35 or 1.2
     FateTargetRadiusPadding               = 3
-    FateMoveBoundaryBuffer                = 0
+    FateMoveBoundaryBuffer                = 3
     FateHardBoundaryBuffer                = 14
     FateLevelSyncTargetRadiusPadding      = 0.5
-    FateLevelSyncBoundaryBuffer           = 0.5
+    FateLevelSyncBoundaryBuffer           = 2
     FateLevelSyncHardBoundaryBuffer       = 2.5
     LeashSafeRetargetBuffer               = 18
     LevelSyncInRangeBuffer                = 1.5
