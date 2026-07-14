@@ -5518,7 +5518,6 @@ function GetCombatOpenActionCandidates()
         return {
             LANG.actions["Piercing Talon"] or "Piercing Talon",
             LANG.actions["Winged Glide"] or "Winged Glide",
-            LANG.actions["Spineshatter Dive"] or "Spineshatter Dive",
             LANG.actions["True Thrust"] or "True Thrust"
         }
     elseif jobId == ClassList.nin.classId or jobId == ClassList.rog.classId then
@@ -5802,8 +5801,6 @@ function TryGapCloserOnTarget(distance)
             yield("/ac \"" .. (LANG.actions["Plunge"] or "Plunge") .. "\"")
         elseif job.Id == ClassList.gnb.classId then
             yield("/ac \"" .. (LANG.actions["Rough Divide"] or "Rough Divide") .. "\"")
-        elseif job.Id == ClassList.drg.classId then
-            yield("/ac \"" .. (LANG.actions["Spineshatter Dive"] or "Spineshatter Dive") .. "\"")
         end
         return true
     end
