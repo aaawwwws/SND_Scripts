@@ -5613,7 +5613,19 @@ function TryActivePullNearbyEnemies(now)
         return false
     end
 
-    table.sort(validCandidates, function(a, b) return a.dist < b.dist end)
+    -- Sort candidates by distance from the *current target* rather than the player.
+    -- This pulls enemies toward the main target, making AoE/clustering much more
+    -- effective for melee jobs.
+    local currentTarget = Svc.Targets.Target
+    local currentTargetPos = currentTarget ~= nil and currentTarget.Position or nil
+    table.sort(validCandidates, function(a, b)
+        if currentTargetPos == nil then
+            return a.dist < b.dist
+        end
+        local distA = DistanceBetweenFlat(currentTargetPos, a.obj.Position)
+        local distB = DistanceBetweenFlat(currentTargetPos, b.obj.Position)
+        return distA < distB
+    end)
 
     local pullCount = math.min(maxTargets, #validCandidates)
     local pulledAny = false
@@ -5635,6 +5647,12 @@ function TryActivePullNearbyEnemies(now)
                 yield("/wait 0.3")
             end
         end
+    end
+
+    -- Restore the original target so BMR/RSR don't chase a pulled mob away from
+    -- the pack. The pulled enemies have aggro and will follow the player.
+    if currentTarget ~= nil and not currentTarget.IsDead then
+        Svc.Targets.Target = currentTarget
     end
 
     return pulledAny
@@ -7341,6 +7359,7 @@ function Ready()
     SetMapFlag(SelectedZone.zoneId, mappedPosition)
     State = CharacterState.moveToFate
     Dalamud.Log("[FATE] State Change: MovingtoFate " .. CurrentFate.fateName)
+    yield("/echo [FATE] Moving to: " .. CurrentFate.fateName)
 end
 
 function HandleDeath()
