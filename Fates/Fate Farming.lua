@@ -52,6 +52,9 @@ configs:
   Potion:
     description: 薬品を使わない場合は空欄。HQ品は名前の後ろに <hq> を付けてください（例：Superior Spiritbond Potion <hq>）。
     default: ""
+  Tank Gearset for Level Sync:
+    description: レベルシンクが必要なFATEに参加する際に自動で着替えるタンクのギアセット名または番号。空欄の場合は着替えません。
+    default: ""
   Max melee distance:
     description: 近接ジョブ時の目標戦闘距離です。
     default: 2.5
@@ -5113,6 +5116,22 @@ function MoveToFate()
         end
     end
 
+    -- change to tank gearset for level-synced FATEs if configured
+    local needsLevelSync = NeedsLevelSyncForFate(CurrentFate)
+    if needsLevelSync and LevelSyncTankGearset ~= nil and LevelSyncTankGearset ~= "" then
+        if not LevelSyncGearsetActive then
+            yield("/gs change " .. LevelSyncTankGearset)
+            yield("/wait 1.5")
+            LevelSyncGearsetActive = true
+            return
+        end
+    elseif LevelSyncGearsetActive then
+        yield("/gs change " .. MainClass.Name)
+        yield("/wait 1.5")
+        LevelSyncGearsetActive = false
+        return
+    end
+
     -- change to secondary class if its a boss fate
     if BossFatesClass ~= nil then
         local currentClass = Player.Job.Id
@@ -5120,7 +5139,7 @@ function MoveToFate()
             yield("/gs change " .. BossFatesClass.className)
             return
         elseif not CurrentFate.isBossFate and currentClass ~= MainClass.classId then
-            yield("/gs change " .. MainClass.className)
+            yield("/gs change " .. MainClass.Name)
             return
         end
     end
@@ -6199,6 +6218,26 @@ function DoFate()
     EnsureFateTimingEntry(CurrentFate)
     NoteFateCombatStart(CurrentFate)
     local currentClass = Player.Job
+    local needsLevelSync = NeedsLevelSyncForFate(CurrentFate)
+
+    -- Switch to a tank gearset for level-synced FATEs if configured.
+    if needsLevelSync and LevelSyncTankGearset ~= nil and LevelSyncTankGearset ~= "" and not Player.IsBusy then
+        if not LevelSyncGearsetActive then
+            TurnOffCombatMods()
+            yield("/gs change " .. LevelSyncTankGearset)
+            yield("/wait 1.5")
+            LevelSyncGearsetActive = true
+            return
+        end
+    elseif LevelSyncGearsetActive and not Player.IsBusy then
+        -- Level sync no longer needed; swap back to the main class gearset.
+        TurnOffCombatMods()
+        yield("/gs change " .. MainClass.Name)
+        yield("/wait 1.5")
+        LevelSyncGearsetActive = false
+        return
+    end
+
     -- switch classes (mostly for continutation fates that pop you directly into the next one)
     if CurrentFate.isBossFate and BossFatesClass ~= nil and currentClass ~= BossFatesClass.classId and not Player.IsBusy then
         TurnOffCombatMods()
@@ -9614,6 +9653,7 @@ function FateFarming:Run()
     NativeItemCommandWarned               = false
     BossModPresetMissingWarned            = false
     LastProcessedState                    = nil
+    LevelSyncGearsetActive                = false
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
@@ -9808,6 +9848,7 @@ function FateFarming:Run()
     DiscordWebhookUrl               = Config.Get("Discord Webhook URL")
     SummonChocobo                   = Config.Get("Summon Chocobo?")
     ShouldAutoBuyGysahlGreens       = Config.Get("Auto-buy Gysahl Greens?")
+    LevelSyncTankGearset            = Config.Get("Tank Gearset for Level Sync")
 
     -- Party Play settings
     PartyPlayMode                   = Config.Get("Party Play Mode")
