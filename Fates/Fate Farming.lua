@@ -6141,12 +6141,18 @@ function TurnOffCombatMods()
 end
 
 function HandleUnexpectedCombat()
+    Dalamud.Log("[FATE] HandleUnexpectedCombat entered. inCombat=" ..
+        tostring(Svc.Condition[CharacterCondition.inCombat]) ..
+        " mounted=" .. tostring(Svc.Condition[CharacterCondition.mounted]) ..
+        " flying=" .. tostring(Svc.Condition[CharacterCondition.flying]))
+
     if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then
         Dalamud.Log("[FATE] UnexpectedCombat: Dismounting due to combat")
         Dismount(true)
         return
     end
     TurnOnCombatMods("manual")
+    yield("/wait 0.3")
 
     local nearestFate = Fates.GetNearestFate()
     local nearestProgress = nearestFate and nearestFate.Progress or nil
@@ -6156,14 +6162,20 @@ function HandleUnexpectedCombat()
         Dalamud.Log("[FATE] State Change: DoFate")
         return
     elseif not Svc.Condition[CharacterCondition.inCombat] then
-        yield("/vnav stop")
-        ClearTarget()
-        TurnOffCombatMods()
-        State = CharacterState.ready
-        Dalamud.Log("[FATE] State Change: Ready")
-        local randomWait = GetPostFateWaitSeconds()
-        yield("/wait " .. randomWait)
-        return
+        if Svc.Targets.Target ~= nil and not Svc.Targets.Target.IsDead then
+            -- The inCombat condition can flicker; if we still have a live target,
+            -- keep fighting instead of dropping back to ready.
+            Dalamud.Log("[FATE] UnexpectedCombat: inCombat flag dropped, but target still present")
+        else
+            yield("/vnav stop")
+            ClearTarget()
+            TurnOffCombatMods()
+            State = CharacterState.ready
+            Dalamud.Log("[FATE] State Change: Ready")
+            local randomWait = GetPostFateWaitSeconds()
+            yield("/wait " .. randomWait)
+            return
+        end
     end
 
     -- if Svc.Condition[CharacterCondition.mounted] then
@@ -6176,10 +6188,19 @@ function HandleUnexpectedCombat()
 
     -- targets whatever is trying to kill you
     if Svc.Targets.Target == nil then
+        Dalamud.Log("[FATE] UnexpectedCombat: no target, attempting acquisition")
         if not TargetNearestAttackingEnemy() then
             yield("/battletarget")
+            yield("/wait 0.3")
+        end
+        if Svc.Targets.Target == nil then
+            yield("/targetenemy")
+            yield("/wait 0.3")
         end
     end
+    Dalamud.Log("[FATE] UnexpectedCombat: target=" ..
+        tostring(Svc.Targets.Target and Svc.Targets.Target.Name or "nil") ..
+        " distance=" .. tostring(GetDistanceToTargetFlat()))
 
     -- pathfind closer if enemies are too far
     if Svc.Targets.Target ~= nil then
