@@ -9142,9 +9142,11 @@ function ChocoboCheck()
         -- cooldown availability) to settle before using the item.
         yield("/wait 1")
 
-        -- Try to use Gysahl Greens. Use the localized name first (this is what
-        -- the user's client understands), then try cross-language fallbacks,
-        -- and finally attempt FFXIVClientStructs ActionManager directly.
+        -- Try to use Gysahl Greens. The localized name (e.g. "ギサールの野菜"
+        -- on JP client) is what the client understands. If the native /item
+        -- command fails, the item is most likely on cooldown or the chocobo is
+        -- already summoned, so we don't spam fallbacks that would only add
+        -- errors to the SND log.
         local function TryUseGysahlGreens()
             if Svc.Condition[CharacterCondition.inCombat]
                 or Svc.Condition[CharacterCondition.casting]
@@ -9153,49 +9155,13 @@ function ChocoboCheck()
                 return false
             end
 
-            local ok, err
             local greens = LANG.actions["Gysahl Greens"]
-
-            -- 1. Localized name (e.g. "ギサールの野菜" on JP client)
-            ok, err = pcall(function() yield('/item "' .. greens .. '"') end)
-            if ok then return true end
-            yield("/wait 0.5")
-
-            if Svc.Condition[CharacterCondition.inCombat]
-                or Svc.Condition[CharacterCondition.casting]
-                or Svc.Condition[CharacterCondition.mounted]
-            then
-                return false
+            local ok = pcall(function() yield('/item "' .. greens .. '"') end)
+            if ok then
+                return true
             end
 
-            -- 2. Cross-language fallbacks only when localized name failed
-            if GameLanguage ~= "Japanese" then
-                ok, err = pcall(function() yield('/item "ギサールの野菜"') end)
-                if ok then return true end
-                yield("/wait 0.5")
-
-                if Svc.Condition[CharacterCondition.inCombat]
-                    or Svc.Condition[CharacterCondition.casting]
-                    or Svc.Condition[CharacterCondition.mounted]
-                then
-                    return false
-                end
-            end
-
-            if GameLanguage ~= "English" then
-                ok, err = pcall(function() yield('/item "Gysahl Greens"') end)
-                if ok then return true end
-                yield("/wait 0.5")
-
-                if Svc.Condition[CharacterCondition.inCombat]
-                    or Svc.Condition[CharacterCondition.casting]
-                    or Svc.Condition[CharacterCondition.mounted]
-                then
-                    return false
-                end
-            end
-
-            -- 3. Direct game API attempt: ActionManager.Instance()->UseAction(ActionType.Item, 4868)
+            -- Fallback: direct game API attempt via ActionManager.
             local directOk, amType = pcall(function()
                 return luanet.import_type("FFXIVClientStructs.FFXIV.Client.Game.ActionManager")
             end)
@@ -9210,7 +9176,6 @@ function ChocoboCheck()
                 end
             end
 
-            -- Keep log quiet; the caller will report after the post-use check.
             return false
         end
 
@@ -9236,12 +9201,13 @@ function ChocoboCheck()
             else
                 ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
                 if ChocoboSummonFailureCount <= 3 then
-                    yield("/echo [FATE] Chocobo still not detected after using greens (attempt " ..
+                    yield("/echo [FATE] Failed to use Gysahl Greens (attempt " ..
                         tostring(ChocoboSummonFailureCount) .. ")")
                 end
-                -- Something blocked the item use; wait longer before retrying
-                -- to avoid spamming errors (e.g. chocobo summon cooldown).
-                ChocoboLastSummonAttemptAt = now + 300
+                -- /item failed. This usually means the chocobo is already
+                -- summoned or the item is on cooldown. Wait the full 30-minute
+                -- duration before retrying to avoid error spam.
+                ChocoboLastSummonAttemptAt = os.clock() + (30 * 60) - 30
                 if ChocoboSummonFailureCount >= 3 then
                     ChocoboSummonDisabled = true
                     yield("/echo [FATE] Chocobo summon failed 3 times. Disabling auto-summon for this session.")
