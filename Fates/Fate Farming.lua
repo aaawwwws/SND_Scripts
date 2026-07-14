@@ -5591,6 +5591,19 @@ function TryActivePullNearbyEnemies(now)
     end
     ActivePullLastAttemptAt = now
 
+    -- SAM: build Kenki before pulling so Enpi/Hissatsu: Gyoten are available.
+    if Player.Job and Player.Job.Id == ClassList.sam.classId then
+        local kenki = GetSamuraiKenki()
+        if kenki < 25 then
+            Dalamud.Log("[FATE] SAM low Kenki (" .. tostring(kenki) .. "); using Meditation before active pull.")
+            local meditationName = LANG.actions["Meditation"] or "Meditation"
+            for i = 1, 3 do
+                yield('/ac "' .. meditationName .. '"')
+            end
+            yield("/wait 1.5")
+        end
+    end
+
     local pullRange = ActivePullMaxRange or 25
     local maxTargets = ActivePullMaxTargets or 3
     local fateIdFilter = CurrentFate.fateId
