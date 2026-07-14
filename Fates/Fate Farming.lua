@@ -597,6 +597,7 @@ local TeleportFailureWarnedAt
 -- MoveToTargetHitbox のちらつき防止用
 local MoveToTargetLastPos
 local MoveToTargetLastAt
+local MoveToTargetLastTargetPos
 
 -- 密集移動のキャッシュ
 local ClusterMoveLastRefresh
@@ -2121,7 +2122,14 @@ function GetPreferredFateMovePosition(fate)
     ClusterMoveLastRefresh = now
     ClusterMoveCachedFateId = fate.fateId
     if center ~= nil then
-        ClusterMoveCachedPosition = ClampPositionToCurrentFateBounds(center, 0)
+        -- Ignore tiny cluster-center shifts to avoid 1px pathing jitter.
+        local snappedCenter = center
+        if ClusterMoveCachedPosition ~= nil
+            and DistanceBetweenFlat(ClusterMoveCachedPosition, center) < 2.0
+        then
+            snappedCenter = ClusterMoveCachedPosition
+        end
+        ClusterMoveCachedPosition = ClampPositionToCurrentFateBounds(snappedCenter, 0)
         return ClusterMoveCachedPosition
     end
 
@@ -2238,7 +2246,7 @@ function MoveToTargetHitbox()
     if distance == 0 then return end
 
     local desiredRange = math.max(0.1, GetTargetHitboxRadius() + GetPlayerHitboxRadius() + MaxDistance)
-    local STOP_EPS = 0.15
+    local STOP_EPS = 0.5
     if distance <= (desiredRange + STOP_EPS) then return end
     local dir = Normalize(playerPos - targetPos)
     if dir:Length() == 0 then return end
@@ -2250,13 +2258,18 @@ function MoveToTargetHitbox()
     local now = os.clock()
     local posDeadzone = 0.5
     local timeDeadzone = FastCombatPacing and 0.35 or 1.0
-    if MoveToTargetLastPos ~= nil and MoveToTargetLastAt ~= nil
+    local targetMicroMoved = true
+    if MoveToTargetLastTargetPos ~= nil then
+        targetMicroMoved = DistanceBetweenFlat(MoveToTargetLastTargetPos, targetPos) >= 0.3
+    end
+    if not targetMicroMoved and MoveToTargetLastPos ~= nil and MoveToTargetLastAt ~= nil
         and now - MoveToTargetLastAt < timeDeadzone
         and DistanceBetweenFlat(MoveToTargetLastPos, newPos) < posDeadzone
     then
         return
     end
 
+    MoveToTargetLastTargetPos = targetPos
     MoveToTargetLastPos = newPos
     MoveToTargetLastAt = now
     IPC.vnavmesh.PathfindAndMoveTo(newPos, false)
