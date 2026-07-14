@@ -8876,6 +8876,7 @@ end
 
 function ChocoboCheck()
     if not SummonChocobo then return end
+    if ChocoboSummonDisabled then return end
     if DisableChocoboInParty and GetPartyPlayActive() then
         return
     end
@@ -9008,12 +9009,18 @@ function ChocoboCheck()
         -- Check if summoning worked
         if IsChocoboSummoned() then
             yield("/echo [FATE] Chocobo summoned successfully")
+            ChocoboSummonFailureCount = 0
         else
             yield("/echo [FATE] Chocobo still not detected after using greens")
             if not used then
                 -- Something blocked the item use; wait longer before retrying
                 -- to avoid spamming errors (e.g. chocobo summon cooldown).
                 ChocoboLastSummonAttemptAt = now + 300
+                ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
+                if ChocoboSummonFailureCount >= 3 then
+                    ChocoboSummonDisabled = true
+                    yield("/echo [FATE] Chocobo summon failed 3 times. Disabling auto-summon for this session.")
+                end
             end
         end
     elseif ShouldAutoBuyGysahlGreens then
@@ -9389,6 +9396,8 @@ function FateFarming:Run()
     DidFate                               = false
     NeedsGysahlGreens                     = false
     ChocoboLastSummonAttemptAt            = 0
+    ChocoboSummonFailureCount             = 0
+    ChocoboSummonDisabled                 = false
     RsrDynamicSingleApplied               = false
     VbmAiActive                           = false
     GemAnnouncementLock                   = false
