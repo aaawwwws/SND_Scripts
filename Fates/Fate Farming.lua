@@ -3847,6 +3847,40 @@ function DistanceBetweenFlat(pos1, pos2)
     return math.sqrt(dx * dx + dz * dz)
 end
 
+function TargetNearestAttackingEnemy()
+    local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
+    if not playerOk or player == nil then
+        return false
+    end
+    local playerPos = player.Position
+    local bestObj = nil
+    local bestDist = 9999
+    local maxIndex = math.min(Svc.Objects.Length - 1, 300)
+    for i = 0, maxIndex do
+        local objOk, obj = pcall(function() return Svc.Objects[i] end)
+        if objOk and obj then
+            local kindOk, kind = pcall(function() return obj.ObjectKind end)
+            local posOk, pos = pcall(function() return obj.Position end)
+            local deadOk, isDead = pcall(function() return obj.IsDead end)
+            local hpOk, hp = pcall(function() return obj.CurrentHp end)
+            if kindOk and posOk and deadOk and hpOk and kind == 2 and not isDead and hp > 0 then
+                local dist = DistanceBetweenFlat(playerPos, pos)
+                if dist < bestDist then
+                    bestDist = dist
+                    bestObj = obj
+                end
+            end
+        end
+    end
+    if bestObj ~= nil then
+        local setOk = pcall(function() Svc.Targets.Target = bestObj end)
+        if setOk then
+            return true
+        end
+    end
+    return false
+end
+
 function RandomAdjustCoordinates(position, maxDistance)
     local angle = math.random() * 2 * math.pi
     local x_adjust = maxDistance * math.random()
@@ -6126,7 +6160,9 @@ function HandleUnexpectedCombat()
 
     -- targets whatever is trying to kill you
     if Svc.Targets.Target == nil then
-        yield("/battletarget")
+        if not TargetNearestAttackingEnemy() then
+            yield("/battletarget")
+        end
     end
 
     -- pathfind closer if enemies are too far
@@ -10105,20 +10141,18 @@ function FateFarming:Run()
             if State ~= CharacterState.dead and Svc.Condition[CharacterCondition.dead] then
                 State = CharacterState.dead
                 Dalamud.Log("[FATE] State Change: Dead")
-            elseif not Player.IsMoving then
-                if State ~= CharacterState.unexpectedCombat
-                    and State ~= CharacterState.doFate
-                    and State ~= CharacterState.waitForContinuation
-                    and State ~= CharacterState.collectionsFateTurnIn
-                    and Svc.Condition[CharacterCondition.inCombat]
-                    and (
-                        not InActiveFate()
-                        or (InActiveFate() and nearestFate ~= nil and IsCollectionsFate(nearestFate.Name) and nearestFate.Progress == 100)
-                    )
-                then
-                    State = CharacterState.unexpectedCombat
-                    Dalamud.Log("[FATE] State Change: UnexpectedCombat")
-                end
+            elseif State ~= CharacterState.unexpectedCombat
+                and State ~= CharacterState.doFate
+                and State ~= CharacterState.waitForContinuation
+                and State ~= CharacterState.collectionsFateTurnIn
+                and Svc.Condition[CharacterCondition.inCombat]
+                and (
+                    not InActiveFate()
+                    or (InActiveFate() and nearestFate ~= nil and IsCollectionsFate(nearestFate.Name) and nearestFate.Progress == 100)
+                )
+            then
+                State = CharacterState.unexpectedCombat
+                Dalamud.Log("[FATE] State Change: UnexpectedCombat")
             end
 
             BicolorGemCount = Inventory.GetItemCount(26807)
