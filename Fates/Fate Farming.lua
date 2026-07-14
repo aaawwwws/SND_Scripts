@@ -9161,21 +9161,6 @@ function ChocoboCheck()
                 return true
             end
 
-            -- Fallback: direct game API attempt via ActionManager.
-            local directOk, amType = pcall(function()
-                return luanet.import_type("FFXIVClientStructs.FFXIV.Client.Game.ActionManager")
-            end)
-            if directOk and amType ~= nil then
-                local instanceOk, am = pcall(function() return amType.Instance() end)
-                if instanceOk and am ~= nil then
-                    local useOk = pcall(function() am:UseAction(17, 4868) end)
-                    if useOk then
-                        Dalamud.Log("[FATE] Used Gysahl Greens via ActionManager")
-                        return true
-                    end
-                end
-            end
-
             return false
         end
 
