@@ -160,7 +160,7 @@ configs:
     default: true
   Active pull interval (secs):
     description: pullを試行する間隔です。短いほど多くの敵を引き寄せます。
-    default: 2.0
+    default: 1.5
     min: 0.5
     max: 10
   Active pull max targets:
@@ -170,7 +170,7 @@ configs:
     max: 10
   Active pull max range:
     description: pull対象の最大距離です。spawn地点から離れすぎるとリセットされるので控えめに。
-    default: 15
+    default: 20
     min: 5
     max: 25
   Optimize movement to mob clusters?:
@@ -1433,6 +1433,8 @@ function GetLangTable(lang)
                 ["Winged Glide"] = "ウィンググライド",
                 ["Thunderclap"] = "抜重歩法",
                 ["Hissatsu: Gyoten"] = "必殺剣・暁天",
+                ["Hakaze"] = "刃風",
+                ["True Thrust"] = "トゥルースラスト",
                 ["Hell's Ingress"] = "ヘルズイングレス",
                 ["Plunge"] = "プランジカット",
                 ["Rough Divide"] = "ラフディバイド",
@@ -1508,6 +1510,8 @@ function GetLangTable(lang)
                 ["Winged Glide"] = "Winged Glide",
                 ["Thunderclap"] = "Thunderclap",
                 ["Hissatsu: Gyoten"] = "Hissatsu: Gyoten",
+                ["Hakaze"] = "Hakaze",
+                ["True Thrust"] = "True Thrust",
                 ["Hell's Ingress"] = "Hell's Ingress",
                 ["Plunge"] = "Plunge",
                 ["Rough Divide"] = "Rough Divide",
@@ -5455,7 +5459,8 @@ function GetCombatOpenActionCandidates()
     elseif jobId == ClassList.drg.classId or jobId == ClassList.lnc.classId then
         return {
             LANG.actions["Piercing Talon"] or "Piercing Talon",
-            LANG.actions["Spineshatter Dive"] or "Spineshatter Dive"
+            LANG.actions["Spineshatter Dive"] or "Spineshatter Dive",
+            LANG.actions["True Thrust"] or "True Thrust"
         }
     elseif jobId == ClassList.nin.classId or jobId == ClassList.rog.classId then
         return {
@@ -5464,7 +5469,8 @@ function GetCombatOpenActionCandidates()
     elseif jobId == ClassList.sam.classId then
         return {
             LANG.actions["Enpi"] or "Enpi",
-            LANG.actions["Hissatsu: Gyoten"] or "Hissatsu: Gyoten"
+            LANG.actions["Hissatsu: Gyoten"] or "Hissatsu: Gyoten",
+            LANG.actions["Hakaze"] or "Hakaze"
         }
     elseif jobId == ClassList.rpr.classId then
         return {
@@ -5594,11 +5600,14 @@ function TryActivePullNearbyEnemies(now)
         if targetObj ~= nil and not targetObj.IsDead and targetObj.IsTargetable then
             Svc.Targets.Target = targetObj
             yield("/wait 0.2")
-            local used = TryUseActionOnTarget(pullAction)
+            -- Cycle through available pull actions so ranged gap-closers are
+            -- used first, then fall back to melee basic attacks for nearby targets.
+            local actionToUse = actionCandidates[((i - 1) % #actionCandidates) + 1]
+            local used = TryUseActionOnTarget(actionToUse)
             if used then
                 Dalamud.Log("[FATE] Active pull " ..
                     i ..
-                    "/" .. pullCount .. " on " .. tostring(targetObj.Name:GetText()) .. " with " .. tostring(pullAction))
+                    "/" .. pullCount .. " on " .. tostring(targetObj.Name:GetText()) .. " with " .. tostring(actionToUse))
                 pulledAny = true
                 yield("/wait 0.3")
             end
