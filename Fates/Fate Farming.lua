@@ -8880,9 +8880,9 @@ function ChocoboCheck()
 
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
 
-        -- Try to use Gysahl Greens by name. SND's /item command does not accept
-        -- raw item IDs ("Item not found: 4868"), so we try the English and
-        -- Japanese names explicitly, then fall back to the localized name.
+        -- Try to use Gysahl Greens by name. SND's /item command can be flaky
+        -- with inventory lookups, so try the localized name first, then fall
+        -- back to English/Japanese names with a short wait between attempts.
         local function TryUseGysahlGreens()
             if Svc.Condition[CharacterCondition.inCombat]
                 or Svc.Condition[CharacterCondition.casting]
@@ -8892,9 +8892,22 @@ function ChocoboCheck()
             end
 
             local ok, err
+            local greens = LANG.actions["Gysahl Greens"]
+
+            ok, err = pcall(function() yield('/item "' .. greens .. '"') end)
+            if ok then return true end
+            yield("/wait 0.5")
+
+            if Svc.Condition[CharacterCondition.inCombat]
+                or Svc.Condition[CharacterCondition.casting]
+                or Svc.Condition[CharacterCondition.mounted]
+            then
+                return false
+            end
 
             ok, err = pcall(function() yield('/item "Gysahl Greens"') end)
             if ok then return true end
+            yield("/wait 0.5")
 
             if Svc.Condition[CharacterCondition.inCombat]
                 or Svc.Condition[CharacterCondition.casting]
@@ -8904,17 +8917,6 @@ function ChocoboCheck()
             end
 
             ok, err = pcall(function() yield('/item "ギサールの野菜"') end)
-            if ok then return true end
-
-            if Svc.Condition[CharacterCondition.inCombat]
-                or Svc.Condition[CharacterCondition.casting]
-                or Svc.Condition[CharacterCondition.mounted]
-            then
-                return false
-            end
-
-            local greens = LANG.actions["Gysahl Greens"]
-            ok, err = pcall(function() yield('/item "' .. greens .. '"') end)
             if ok then return true end
 
             yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(err))
