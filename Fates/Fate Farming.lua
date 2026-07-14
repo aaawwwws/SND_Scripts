@@ -5946,17 +5946,17 @@ function TurnOnCombatMods(rotationMode)
                     yield("/bmrai followoutofcombat off")
                 end
             elseif DodgingPlugin == "VBM" then
-                -- Modern VBM no longer has a standalone AI mode; AI behavior is
-                -- provided by an autorotation preset (typically "VBM Multibox")
-                -- containing AI -> Automatic targeting/movement modules.
-                -- /vbm ai on is the legacy compatibility toggle, but using the
-                -- preset toggle directly lets users select a melee/ranged preset.
-                if not VbmAiActive then
-                    local vbmPreset = BossModAiPreset or "VBM Multibox"
-                    yield('/vbm ar toggle "' .. vbmPreset .. '"')
-                    Dalamud.Log("[FATE] TurnOnCombatMods VBM AI preset: " .. vbmPreset)
-                    VbmAiActive = true
+                yield("/vbm ai on")
+                --[[vbm ai doesn't support these options
+                yield("/vbmai followtarget on") -- overrides navmesh path and runs into walls sometimes
+                yield("/vbmai followcombat on")
+                yield("/vbmai maxdistancetarget " .. MaxDistance)
+                if MoveToMob == true then
+                    yield("/vbmai followoutofcombat on")
                 end
+                if RotationPlugin ~= "VBM" then
+                    yield("/vbmai ForbidActions on") --This Disables VBM AI Auto-Target
+                end]]
             end
             AiDodgingOn = true
         end
@@ -5988,12 +5988,7 @@ function TurnOffCombatMods()
                 yield("/bmrai followcombat off")
                 yield("/bmrai followoutofcombat off")
             elseif DodgingPlugin == "VBM" then
-                if VbmAiActive then
-                    local vbmPreset = BossModAiPreset or "VBM Multibox"
-                    yield('/vbm ar toggle "' .. vbmPreset .. '"')
-                    Dalamud.Log("[FATE] TurnOffCombatMods VBM AI preset: " .. vbmPreset)
-                    VbmAiActive = false
-                end
+                yield("/vbm ai off")
                 --[[vbm ai doesn't support these options.
                 yield("/vbmai followtarget off")
                 yield("/vbmai followcombat off")
