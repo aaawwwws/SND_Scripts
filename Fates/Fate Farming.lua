@@ -8926,6 +8926,10 @@ function ChocoboCheck()
 
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
 
+        -- Wait a moment for any ongoing state transitions (dismount, combat drop,
+        -- cooldown availability) to settle before using the item.
+        yield("/wait 1")
+
         -- Try to use Gysahl Greens by name. SND's /item command can be flaky
         -- with inventory lookups, so try the localized name first, then fall
         -- back to English/Japanese names with a short wait between attempts.
@@ -8980,7 +8984,7 @@ function ChocoboCheck()
             if not used then
                 -- Something blocked the item use; wait longer before retrying
                 -- to avoid spamming errors (e.g. chocobo summon cooldown).
-                ChocoboLastSummonAttemptAt = now + 120
+                ChocoboLastSummonAttemptAt = now + 300
             end
         end
     elseif ShouldAutoBuyGysahlGreens then
