@@ -8879,6 +8879,10 @@ function ChocoboCheck()
     if DisableChocoboInParty and GetPartyPlayActive() then
         return
     end
+    -- Skip summoning while in town/traveling; wait until we reach the farming zone.
+    if SelectedZone ~= nil and Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
+        return
+    end
     if Svc.Condition[CharacterCondition.inCombat]
         or Svc.Condition[CharacterCondition.casting]
         or Svc.Condition[CharacterCondition.occupied]
