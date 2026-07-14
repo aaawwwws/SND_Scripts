@@ -9151,21 +9151,25 @@ function ChocoboCheck()
             -- Don't attempt another summon until shortly before expiration.
             ChocoboLastSummonAttemptAt = os.clock() + (30 * 60) - 30
         else
-            ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
-            if ChocoboSummonFailureCount <= 3 then
-                yield("/echo [FATE] Chocobo still not detected after using greens (attempt " ..
-                    tostring(ChocoboSummonFailureCount) .. ")")
-            end
-            if not used then
+            if used then
+                -- The item command succeeded. Detection APIs can be flaky, but the
+                -- 30-minute buff is almost certainly active, so don't retry until
+                -- shortly before expiration.
+                ChocoboSummonFailureCount = 0
+                ChocoboLastSummonAttemptAt = os.clock() + (30 * 60) - 30
+            else
+                ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
+                if ChocoboSummonFailureCount <= 3 then
+                    yield("/echo [FATE] Chocobo still not detected after using greens (attempt " ..
+                        tostring(ChocoboSummonFailureCount) .. ")")
+                end
                 -- Something blocked the item use; wait longer before retrying
                 -- to avoid spamming errors (e.g. chocobo summon cooldown).
                 ChocoboLastSummonAttemptAt = now + 300
-            else
-                ChocoboLastSummonAttemptAt = now + 60
-            end
-            if ChocoboSummonFailureCount >= 3 then
-                ChocoboSummonDisabled = true
-                yield("/echo [FATE] Chocobo summon failed 3 times. Disabling auto-summon for this session.")
+                if ChocoboSummonFailureCount >= 3 then
+                    ChocoboSummonDisabled = true
+                    yield("/echo [FATE] Chocobo summon failed 3 times. Disabling auto-summon for this session.")
+                end
             end
         end
     elseif ShouldAutoBuyGysahlGreens then
