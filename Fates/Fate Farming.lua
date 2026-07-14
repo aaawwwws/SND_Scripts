@@ -8871,8 +8871,9 @@ function ChocoboCheck()
 
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
 
-        -- Try to use Gysahl Greens. Prefer SndGameUtils.UseItem if available,
-        -- then fall back to /item by ID and finally by localized name.
+        -- Try to use Gysahl Greens by name. SND's /item command does not accept
+        -- raw item IDs ("Item not found: 4868"), so we try the English and
+        -- Japanese names explicitly, then fall back to the localized name.
         local function TryUseGysahlGreens()
             if Svc.Condition[CharacterCondition.inCombat]
                 or Svc.Condition[CharacterCondition.casting]
@@ -8881,13 +8882,10 @@ function ChocoboCheck()
                 return false
             end
 
-            if SndGameUtils ~= nil and SndGameUtils.UseItem ~= nil then
-                local ok = pcall(function() SndGameUtils.UseItem(4868, false) end)
-                if ok then
-                    Dalamud.Log("[FATE] Used Gysahl Greens via SndGameUtils.UseItem")
-                    return true
-                end
-            end
+            local ok, err
+
+            ok, err = pcall(function() yield('/item "Gysahl Greens"') end)
+            if ok then return true end
 
             if Svc.Condition[CharacterCondition.inCombat]
                 or Svc.Condition[CharacterCondition.casting]
@@ -8896,10 +8894,8 @@ function ChocoboCheck()
                 return false
             end
 
-            local ok, err = pcall(function() yield("/item 4868") end)
-            if ok then
-                return true
-            end
+            ok, err = pcall(function() yield('/item "ギサールの野菜"') end)
+            if ok then return true end
 
             if Svc.Condition[CharacterCondition.inCombat]
                 or Svc.Condition[CharacterCondition.casting]
@@ -8910,11 +8906,10 @@ function ChocoboCheck()
 
             local greens = LANG.actions["Gysahl Greens"]
             ok, err = pcall(function() yield('/item "' .. greens .. '"') end)
-            if not ok then
-                yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(err))
-                return false
-            end
-            return true
+            if ok then return true end
+
+            yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(err))
+            return false
         end
 
         local used = TryUseGysahlGreens()
