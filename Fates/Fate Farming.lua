@@ -8626,6 +8626,25 @@ function IsChocoboSummoned()
             return false
         end
 
+        -- Method 0: While mounted/flying the game hides the companion object and
+        -- removes it from Svc.Buddies. If we have a recent cached expiration, trust
+        -- it so we don't re-summon immediately after dismounting.
+        if Svc.Condition[CharacterCondition.mounted]
+            or Svc.Condition[CharacterCondition.flying]
+            or Svc.Condition[CharacterCondition.mounting57]
+            or Svc.Condition[CharacterCondition.mounting64]
+        then
+            if ChocoboSummonExpiresAt ~= nil then
+                local remaining = ChocoboSummonExpiresAt - os.time()
+                if remaining > 0 then
+                    if shouldDebug then
+                        yield("/echo [FATE] Chocobo debug: mounted, trusting cached expiration")
+                    end
+                    return true
+                end
+            end
+        end
+
         -- Method 1: Svc.Buddies.Companion
         if Svc and Svc.Buddies then
             local buddyOk, hasBuddy = pcall(function() return Svc.Buddies.Companion ~= nil end)
