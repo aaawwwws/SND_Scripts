@@ -1434,6 +1434,7 @@ function GetLangTable(lang)
                 ["Winged Glide"] = "ウィンググライド",
                 ["Thunderclap"] = "抜重歩法",
                 ["Hissatsu: Gyoten"] = "必殺剣・暁天",
+                ["Meditation"] = "黙想",
                 ["Hakaze"] = "刃風",
                 ["True Thrust"] = "トゥルースラスト",
                 ["Bootshine"] = "ブートシャイン",
@@ -1515,6 +1516,7 @@ function GetLangTable(lang)
                 ["Winged Glide"] = "Winged Glide",
                 ["Thunderclap"] = "Thunderclap",
                 ["Hissatsu: Gyoten"] = "Hissatsu: Gyoten",
+                ["Meditation"] = "Meditation",
                 ["Hakaze"] = "Hakaze",
                 ["True Thrust"] = "True Thrust",
                 ["Bootshine"] = "Bootshine",
@@ -5547,6 +5549,18 @@ function GetCombatOpenActionCandidates()
     return {}
 end
 
+function GetSamuraiKenki()
+    local gauge = Player.Job and Player.Job.Gauge
+    if gauge == nil then
+        return 0
+    end
+    local ok, kenki = pcall(function() return gauge.Kenki end)
+    if ok and type(kenki) == "number" then
+        return kenki
+    end
+    return 0
+end
+
 function TryActivePullNearbyEnemies(now)
     if ActivePullEnabled == false then
         return false
@@ -8512,8 +8526,8 @@ function IsChocoboSummoned()
             local buddyOk, hasBuddy = pcall(function() return Svc.Buddies.Companion ~= nil end)
             if buddyOk and hasBuddy then
                 local timeLeftOk, timeLeft = pcall(function() return Svc.Buddies.Companion.TimeLeft end)
-                if timeLeftOk and type(timeLeft) == "number" and timeLeft > 0 then
-                    return true
+                if timeLeftOk and type(timeLeft) == "number" then
+                    return timeLeft > 0
                 end
             end
         end
@@ -8521,12 +8535,20 @@ function IsChocoboSummoned()
         -- Method 2: Try SndGameUtils
         if SndGameUtils ~= nil then
             local utilsOk, time = pcall(function() return SndGameUtils.GetBuddyTimeRemaining() end)
-            if utilsOk and type(time) == "number" and time > 0 then
+            if utilsOk and type(time) == "number" then
+                return time > 0
+            end
+        end
+
+        -- Method 3: cached expiration time from last successful summon
+        if ChocoboSummonExpiresAt ~= nil then
+            local remaining = ChocoboSummonExpiresAt - os.time()
+            if remaining > 0 then
                 return true
             end
         end
 
-        -- Method 3: Check for companion entity in object table
+        -- Method 4: Check for companion entity in object table
         if Svc and Svc.Objects then
             local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
             if playerOk and player then
@@ -9010,6 +9032,9 @@ function ChocoboCheck()
         if IsChocoboSummoned() then
             yield("/echo [FATE] Chocobo summoned successfully")
             ChocoboSummonFailureCount = 0
+            -- Gysahl Greens last 30 minutes; cache the expiration to avoid
+            -- re-summoning when TimeLeft APIs are slow/unreliable.
+            ChocoboSummonExpiresAt = os.time() + (30 * 60)
         else
             yield("/echo [FATE] Chocobo still not detected after using greens")
             if not used then
@@ -9398,6 +9423,7 @@ function FateFarming:Run()
     ChocoboLastSummonAttemptAt            = 0
     ChocoboSummonFailureCount             = 0
     ChocoboSummonDisabled                 = false
+    ChocoboSummonExpiresAt                = nil
     RsrDynamicSingleApplied               = false
     VbmAiActive                           = false
     GemAnnouncementLock                   = false
