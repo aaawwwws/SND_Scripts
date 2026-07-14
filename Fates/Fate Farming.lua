@@ -8930,9 +8930,9 @@ function ChocoboCheck()
         -- cooldown availability) to settle before using the item.
         yield("/wait 1")
 
-        -- Try to use Gysahl Greens. First attempt via FFXIVClientStructs
-        -- ActionManager to bypass SND's flaky /item command, then fall back to
-        -- /item by localized/English/Japanese names.
+        -- Try to use Gysahl Greens. Use the localized name first (this is what
+        -- the user's client understands), then try cross-language fallbacks,
+        -- and finally attempt FFXIVClientStructs ActionManager directly.
         local function TryUseGysahlGreens()
             if Svc.Condition[CharacterCondition.inCombat]
                 or Svc.Condition[CharacterCondition.casting]
@@ -8941,7 +8941,49 @@ function ChocoboCheck()
                 return false
             end
 
-            -- Direct game API attempt: ActionManager.Instance()->UseAction(ActionType.Item, 4868)
+            local ok, err
+            local greens = LANG.actions["Gysahl Greens"]
+
+            -- 1. Localized name (e.g. "ギサールの野菜" on JP client)
+            ok, err = pcall(function() yield('/item "' .. greens .. '"') end)
+            if ok then return true end
+            yield("/wait 0.5")
+
+            if Svc.Condition[CharacterCondition.inCombat]
+                or Svc.Condition[CharacterCondition.casting]
+                or Svc.Condition[CharacterCondition.mounted]
+            then
+                return false
+            end
+
+            -- 2. Cross-language fallbacks only when localized name failed
+            if GameLanguage ~= "Japanese" then
+                ok, err = pcall(function() yield('/item "ギサールの野菜"') end)
+                if ok then return true end
+                yield("/wait 0.5")
+
+                if Svc.Condition[CharacterCondition.inCombat]
+                    or Svc.Condition[CharacterCondition.casting]
+                    or Svc.Condition[CharacterCondition.mounted]
+                then
+                    return false
+                end
+            end
+
+            if GameLanguage ~= "English" then
+                ok, err = pcall(function() yield('/item "Gysahl Greens"') end)
+                if ok then return true end
+                yield("/wait 0.5")
+
+                if Svc.Condition[CharacterCondition.inCombat]
+                    or Svc.Condition[CharacterCondition.casting]
+                    or Svc.Condition[CharacterCondition.mounted]
+                then
+                    return false
+                end
+            end
+
+            -- 3. Direct game API attempt: ActionManager.Instance()->UseAction(ActionType.Item, 4868)
             local directOk, amType = pcall(function()
                 return luanet.import_type("FFXIVClientStructs.FFXIV.Client.Game.ActionManager")
             end)
@@ -8955,34 +8997,6 @@ function ChocoboCheck()
                     end
                 end
             end
-
-            local ok, err
-            local greens = LANG.actions["Gysahl Greens"]
-
-            ok, err = pcall(function() yield('/item "' .. greens .. '"') end)
-            if ok then return true end
-            yield("/wait 0.5")
-
-            if Svc.Condition[CharacterCondition.inCombat]
-                or Svc.Condition[CharacterCondition.casting]
-                or Svc.Condition[CharacterCondition.mounted]
-            then
-                return false
-            end
-
-            ok, err = pcall(function() yield('/item "Gysahl Greens"') end)
-            if ok then return true end
-            yield("/wait 0.5")
-
-            if Svc.Condition[CharacterCondition.inCombat]
-                or Svc.Condition[CharacterCondition.casting]
-                or Svc.Condition[CharacterCondition.mounted]
-            then
-                return false
-            end
-
-            ok, err = pcall(function() yield('/item "ギサールの野菜"') end)
-            if ok then return true end
 
             yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(err))
             return false
