@@ -1436,6 +1436,10 @@ function GetLangTable(lang)
                 ["Hissatsu: Gyoten"] = "必殺剣・暁天",
                 ["Hakaze"] = "刃風",
                 ["True Thrust"] = "トゥルースラスト",
+                ["Bootshine"] = "ブートシャイン",
+                ["Spinning Edge"] = "スピニングエッジ",
+                ["Slice"] = "スライス",
+                ["Steel Fangs"] = "スティールファングス",
                 ["Hell's Ingress"] = "ヘルズイングレス",
                 ["Plunge"] = "プランジカット",
                 ["Rough Divide"] = "ラフディバイド",
@@ -1513,6 +1517,10 @@ function GetLangTable(lang)
                 ["Hissatsu: Gyoten"] = "Hissatsu: Gyoten",
                 ["Hakaze"] = "Hakaze",
                 ["True Thrust"] = "True Thrust",
+                ["Bootshine"] = "Bootshine",
+                ["Spinning Edge"] = "Spinning Edge",
+                ["Slice"] = "Slice",
+                ["Steel Fangs"] = "Steel Fangs",
                 ["Hell's Ingress"] = "Hell's Ingress",
                 ["Plunge"] = "Plunge",
                 ["Rough Divide"] = "Rough Divide",
@@ -5477,7 +5485,8 @@ function GetCombatOpenActionCandidates()
         }
     elseif jobId == ClassList.nin.classId or jobId == ClassList.rog.classId then
         return {
-            LANG.actions["Throwing Dagger"] or "Throwing Dagger"
+            LANG.actions["Throwing Dagger"] or "Throwing Dagger",
+            LANG.actions["Spinning Edge"] or "Spinning Edge"
         }
     elseif jobId == ClassList.sam.classId then
         return {
@@ -5487,7 +5496,8 @@ function GetCombatOpenActionCandidates()
         }
     elseif jobId == ClassList.rpr.classId then
         return {
-            LANG.actions["Harpe"] or "Harpe"
+            LANG.actions["Harpe"] or "Harpe",
+            LANG.actions["Slice"] or "Slice"
         }
     elseif jobId == ClassList.smn.classId or jobId == ClassList.acn.classId then
         return {
@@ -5503,7 +5513,7 @@ function GetCombatOpenActionCandidates()
         }
     elseif jobId == ClassList.vpr.classId then
         return {
-            LANG.actions["Wrath's Sting"] or "Wrath's Sting"
+            LANG.actions["Steel Fangs"] or "Steel Fangs"
         }
     elseif jobId == ClassList.pct.classId then
         return {
