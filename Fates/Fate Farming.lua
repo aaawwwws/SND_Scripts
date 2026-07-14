@@ -8930,15 +8930,30 @@ function ChocoboCheck()
         -- cooldown availability) to settle before using the item.
         yield("/wait 1")
 
-        -- Try to use Gysahl Greens by name. SND's /item command can be flaky
-        -- with inventory lookups, so try the localized name first, then fall
-        -- back to English/Japanese names with a short wait between attempts.
+        -- Try to use Gysahl Greens. First attempt via FFXIVClientStructs
+        -- ActionManager to bypass SND's flaky /item command, then fall back to
+        -- /item by localized/English/Japanese names.
         local function TryUseGysahlGreens()
             if Svc.Condition[CharacterCondition.inCombat]
                 or Svc.Condition[CharacterCondition.casting]
                 or Svc.Condition[CharacterCondition.mounted]
             then
                 return false
+            end
+
+            -- Direct game API attempt: ActionManager.Instance()->UseAction(ActionType.Item, 4868)
+            local directOk, amType = pcall(function()
+                return luanet.import_type("FFXIVClientStructs.FFXIV.Client.Game.ActionManager")
+            end)
+            if directOk and amType ~= nil then
+                local instanceOk, am = pcall(function() return amType.Instance() end)
+                if instanceOk and am ~= nil then
+                    local useOk = pcall(function() am:UseAction(17, 4868) end)
+                    if useOk then
+                        Dalamud.Log("[FATE] Used Gysahl Greens via ActionManager")
+                        return true
+                    end
+                end
             end
 
             local ok, err
