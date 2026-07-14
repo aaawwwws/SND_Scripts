@@ -7385,8 +7385,10 @@ function Ready()
     local mappedPosition = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
     SetMapFlag(SelectedZone.zoneId, mappedPosition)
     State = CharacterState.moveToFate
-    Dalamud.Log("[FATE] State Change: MovingtoFate " .. CurrentFate.fateName)
-    yield("/echo [FATE] Moving to: " .. CurrentFate.fateName)
+    local fateDisplayName = (CurrentFate ~= nil and CurrentFate.fateName ~= nil) and CurrentFate.fateName
+        or ("FATE #" .. tostring(CurrentFate and CurrentFate.fateId or 0))
+    Dalamud.Log("[FATE] State Change: MovingtoFate " .. fateDisplayName)
+    yield("/echo [FATE] Moving to: " .. fateDisplayName)
 end
 
 function HandleDeath()
