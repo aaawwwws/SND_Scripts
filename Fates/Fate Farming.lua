@@ -1364,7 +1364,8 @@ end
 
 function includes(array, searchStr)
     for _, value in ipairs(array) do
-        if value ~= "" and value == searchStr then
+        local trimmed = TrimString(value)
+        if trimmed ~= "" and trimmed == searchStr then
             return true
         end
     end
