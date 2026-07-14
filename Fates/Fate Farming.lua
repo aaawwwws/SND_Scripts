@@ -40,6 +40,9 @@ configs:
   Hold Buff Rotation:
     description: 指定進捗以上で2分バーストを温存するためのプリセット名。
     default: ""
+  BossMod AI Preset:
+    description: BossMod（無印）使用時に有効化するAIプリセット名。空欄の場合は "VBM Multibox" を使用します。
+    default: "VBM Multibox"
   Percentage to Hold Buff:
     description: バフを温存し始める進捗%。70%以上にすると進行が速いFATEで数秒分のロスが出る場合があります。
     default: 65
@@ -3685,7 +3688,8 @@ function SelectNextFate()
                     else
                         Dalamud.Log("[FATE] else")
                     end
-                elseif tempFate.duration ~= 0 then -- else is normal fate. avoid unlisted talk to npc fates
+                elseif tempFate.duration ~= 0
+                    or (IsFateActive(tempFate.fateObject) and not tempFate.isOtherNpcFate and not tempFate.isCollectionsFate) then -- else is normal fate. avoid unlisted talk to npc fates
                     Dalamud.Log("[FATE] Normal fate")
                     nextFate = SelectNextFateHelper(tempFate, nextFate)
                 else
@@ -4598,6 +4602,38 @@ function ChangeInstance()
     Dalamud.Log("[FATE] State Change: Ready")
 end
 
+function FindNearbyActiveFate(centerPos, radius, excludeFateId)
+    if centerPos == nil then
+        return nil
+    end
+    local activeFates = Fates.GetActiveFates()
+    if activeFates == nil then
+        return nil
+    end
+    local bestFate = nil
+    local bestDist = radius
+    for i = 0, activeFates.Count - 1 do
+        local fateObj = activeFates[i]
+        if fateObj ~= nil
+            and IsFateActive(fateObj)
+            and (excludeFateId == nil or fateObj.Id ~= excludeFateId)
+        then
+            local fatePos = fateObj.Position
+            if fatePos ~= nil then
+                local dist = DistanceBetween(centerPos, fatePos)
+                if dist <= bestDist then
+                    local builtFate = BuildFateTable(fateObj)
+                    if builtFate ~= nil then
+                        bestFate = builtFate
+                        bestDist = dist
+                    end
+                end
+            end
+        end
+    end
+    return bestFate
+end
+
 function WaitForContinuation()
     if CurrentFate == nil or CurrentFate.fateObject == nil then
         Dalamud.Log("[FATE] WaitForContinuation: CurrentFate missing, returning to Ready.")
@@ -4612,29 +4648,12 @@ function WaitForContinuation()
     -- with hasContinuation=true) would only be detected up to 30s later,
     -- when WaitForContinuation aborts and falls back to Ready.
     local playerPos = GetLocalPlayerPosition()
-    if playerPos ~= nil then
-        local activeFates = Fates.GetActiveFates()
-        for i = 0, activeFates.Count - 1 do
-            local fateObj = activeFates[i]
-            if fateObj ~= nil
-                and IsFateActive(fateObj)
-                and fateObj.Id ~= CurrentFate.fateId
-            then
-                local fatePos = fateObj.Position
-                if fatePos ~= nil then
-                    local dist = DistanceBetween(playerPos, fatePos)
-                    if dist <= 30 then
-                        local builtFate = BuildFateTable(fateObj)
-                        if builtFate ~= nil then
-                            CurrentFate = builtFate
-                            State = CharacterState.doFate
-                            Dalamud.Log("[FATE] State Change: DoFate (early continuation, fateId=" .. tostring(builtFate.fateId) .. ")")
-                            return
-                        end
-                    end
-                end
-            end
-        end
+    local nearbyNewFate = FindNearbyActiveFate(playerPos, 30, CurrentFate.fateId)
+    if nearbyNewFate ~= nil then
+        CurrentFate = nearbyNewFate
+        State = CharacterState.doFate
+        Dalamud.Log("[FATE] State Change: DoFate (early continuation, fateId=" .. tostring(CurrentFate.fateId) .. ")")
+        return
     end
 
     if InActiveFate() then
@@ -5765,15 +5784,31 @@ function TurnOffRaidBuffs()
 end
 
 function SetMaxDistance()
-    -- Check if the current job is a melee DPS or tank.
-    if Player.Job and (Player.Job.IsMeleeDPS or Player.Job.IsTank) then
+    -- Determine role from ClassList instead of relying solely on
+    -- Player.Job.IsMeleeDPS / IsTank, which may not be reliable in all
+    -- SND/ClientState environments. Using the wrong distance causes BMR/VBM
+    -- to stay at ranged range even on melee jobs.
+    local jobId = Player.Job and Player.Job.Id
+    local classData = nil
+    if jobId ~= nil then
+        for _, data in pairs(ClassList) do
+            if data.classId == jobId then
+                classData = data
+                break
+            end
+        end
+    end
+
+    if classData ~= nil and (classData.isMelee or classData.isTank) then
         MaxDistance = MeleeDist
         MoveToMob = true
-        Dalamud.Log("[FATE] Setting max distance to " .. tostring(MeleeDist) .. " (melee/tank)")
+        Dalamud.Log("[FATE] Setting max distance to " .. tostring(MeleeDist) ..
+            " (melee/tank, jobId=" .. tostring(jobId) .. ")")
     else
         MoveToMob = false
         MaxDistance = RangedDist
-        Dalamud.Log("[FATE] Setting max distance to " .. tostring(RangedDist) .. " (ranged/caster)")
+        Dalamud.Log("[FATE] Setting max distance to " .. tostring(RangedDist) ..
+            " (ranged/caster, jobId=" .. tostring(jobId) .. ")")
     end
 end
 
@@ -5911,17 +5946,17 @@ function TurnOnCombatMods(rotationMode)
                     yield("/bmrai followoutofcombat off")
                 end
             elseif DodgingPlugin == "VBM" then
-                yield("/vbm ai on")
-                --[[vbm ai doesn't support these options
-                yield("/vbmai followtarget on") -- overrides navmesh path and runs into walls sometimes
-                yield("/vbmai followcombat on")
-                yield("/vbmai maxdistancetarget " .. MaxDistance)
-                if MoveToMob == true then
-                    yield("/vbmai followoutofcombat on")
+                -- Modern VBM no longer has a standalone AI mode; AI behavior is
+                -- provided by an autorotation preset (typically "VBM Multibox")
+                -- containing AI -> Automatic targeting/movement modules.
+                -- /vbm ai on is the legacy compatibility toggle, but using the
+                -- preset toggle directly lets users select a melee/ranged preset.
+                if not VbmAiActive then
+                    local vbmPreset = BossModAiPreset or "VBM Multibox"
+                    yield('/vbm ar toggle "' .. vbmPreset .. '"')
+                    Dalamud.Log("[FATE] TurnOnCombatMods VBM AI preset: " .. vbmPreset)
+                    VbmAiActive = true
                 end
-                if RotationPlugin ~= "VBM" then
-                    yield("/vbmai ForbidActions on") --This Disables VBM AI Auto-Target
-                end]]
             end
             AiDodgingOn = true
         end
@@ -5953,7 +5988,12 @@ function TurnOffCombatMods()
                 yield("/bmrai followcombat off")
                 yield("/bmrai followoutofcombat off")
             elseif DodgingPlugin == "VBM" then
-                yield("/vbm ai off")
+                if VbmAiActive then
+                    local vbmPreset = BossModAiPreset or "VBM Multibox"
+                    yield('/vbm ar toggle "' .. vbmPreset .. '"')
+                    Dalamud.Log("[FATE] TurnOffCombatMods VBM AI preset: " .. vbmPreset)
+                    VbmAiActive = false
+                end
                 --[[vbm ai doesn't support these options.
                 yield("/vbmai followtarget off")
                 yield("/vbmai followcombat off")
@@ -6424,10 +6464,23 @@ function DoFate()
             ForlornMarked = false
             MovingAnnouncementLock = false
             ResetTargetAcquireWatchdog()
-            CurrentFate = nil
-            NextFate = nil
-            State = CharacterState.ready
-            Dalamud.Log("[FATE] State Change: Ready")
+
+            -- If a new FATE spawned right on top of the old one, switch to it
+            -- immediately instead of going back to Ready and risking it not
+            -- being picked up (e.g. duration/startTime still zero).
+            local nearbyNewFate = FindNearbyActiveFate(CurrentFate.position, 30, CurrentFate.fateId)
+            if nearbyNewFate ~= nil then
+                CurrentFate = nearbyNewFate
+                NextFate = nearbyNewFate
+                ResetNoCombatRecoveryState()
+                State = CharacterState.doFate
+                Dalamud.Log("[FATE] State Change: DoFate (same-spot new fate, fateId=" .. tostring(CurrentFate.fateId) .. ")")
+            else
+                CurrentFate = nil
+                NextFate = nil
+                State = CharacterState.ready
+                Dalamud.Log("[FATE] State Change: Ready")
+            end
         end
         return
     elseif Svc.Condition[CharacterCondition.mounted] then
@@ -9206,6 +9259,7 @@ function FateFarming:Run()
     NeedsGysahlGreens                     = false
     ChocoboLastSummonAttemptAt            = 0
     RsrDynamicSingleApplied               = false
+    VbmAiActive                           = false
     GemAnnouncementLock                   = false
     DeathAnnouncementLock                 = false
     MovingAnnouncementLock                = false
@@ -9363,6 +9417,10 @@ function FateFarming:Run()
     RotationSingleTargetPreset = NormalizePresetName(Config.Get("Single Target Rotation")) --Preset name with single target strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
     RotationAoePreset          = NormalizePresetName(Config.Get("AoE Rotation"))           --Preset with AOE + Buff strategies.
     RotationHoldBuffPreset     = NormalizePresetName(Config.Get("Hold Buff Rotation"))     --Preset to hold 2min burst when progress gets to seleted %
+    BossModAiPreset            = NormalizePresetName(Config.Get("BossMod AI Preset"))
+    if BossModAiPreset == "" then
+        BossModAiPreset = "VBM Multibox"
+    end
     PercentageToHoldBuff       = Config.Get("Percentage to Hold Buff")                     --Ideally youll want to make full use of your buffs, higher than 70% will still waste a few seconds if progress is too fast.
     if RotationPlugin == "BMR" or RotationPlugin == "VBM" then
         RotationAoePreset = SelectPresetName(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset)
