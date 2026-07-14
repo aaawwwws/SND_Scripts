@@ -8851,7 +8851,7 @@ function ChocoboCheck()
     -- Dismount if mounted (items can't be used while mounted)
     if Svc.Condition[CharacterCondition.mounted] then
         yield("/ac dismount")
-        yield("/wait " .. tostring(FastCombatPacing and 0.5 or 2))
+        yield("/wait " .. tostring(FastCombatPacing and 1.5 or 4))
         -- Check if dismounted successfully
         if Svc.Condition[CharacterCondition.mounted] then
             yield("/echo [FATE] Failed to dismount, cannot summon chocobo")
@@ -8862,27 +8862,50 @@ function ChocoboCheck()
     local itemCount = Inventory.GetItemCount(4868)
     if itemCount > 0 then
         -- Double-check combat state right before using item
-        if Svc.Condition[CharacterCondition.inCombat] then
+        if Svc.Condition[CharacterCondition.inCombat]
+            or Svc.Condition[CharacterCondition.casting]
+            or Svc.Condition[CharacterCondition.mounted]
+        then
             return
         end
 
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
 
-        -- Try to use Gysahl Greens. Prefer SndGameUtils.UseItem if available
-        -- (works when SND's native /item command is disabled in safety mode),
+        -- Try to use Gysahl Greens. Prefer SndGameUtils.UseItem if available,
         -- then fall back to /item by ID and finally by localized name.
         local function TryUseGysahlGreens()
+            if Svc.Condition[CharacterCondition.inCombat]
+                or Svc.Condition[CharacterCondition.casting]
+                or Svc.Condition[CharacterCondition.mounted]
+            then
+                return false
+            end
+
             if SndGameUtils ~= nil and SndGameUtils.UseItem ~= nil then
-                local ok = pcall(function() SndGameUtils.UseItem(4868) end)
+                local ok = pcall(function() SndGameUtils.UseItem(4868, false) end)
                 if ok then
                     Dalamud.Log("[FATE] Used Gysahl Greens via SndGameUtils.UseItem")
                     return true
                 end
             end
 
+            if Svc.Condition[CharacterCondition.inCombat]
+                or Svc.Condition[CharacterCondition.casting]
+                or Svc.Condition[CharacterCondition.mounted]
+            then
+                return false
+            end
+
             local ok, err = pcall(function() yield("/item 4868") end)
             if ok then
                 return true
+            end
+
+            if Svc.Condition[CharacterCondition.inCombat]
+                or Svc.Condition[CharacterCondition.casting]
+                or Svc.Condition[CharacterCondition.mounted]
+            then
+                return false
             end
 
             local greens = LANG.actions["Gysahl Greens"]
@@ -8894,7 +8917,7 @@ function ChocoboCheck()
             return true
         end
 
-        TryUseGysahlGreens()
+        local used = TryUseGysahlGreens()
         yield("/wait 5")
 
         -- Check if summoning worked
@@ -8902,6 +8925,11 @@ function ChocoboCheck()
             yield("/echo [FATE] Chocobo summoned successfully")
         else
             yield("/echo [FATE] Chocobo still not detected after using greens")
+            if not used then
+                -- Something blocked the item use; wait longer before retrying
+                -- to avoid spamming errors (e.g. chocobo summon cooldown).
+                ChocoboLastSummonAttemptAt = now + 120
+            end
         end
     elseif ShouldAutoBuyGysahlGreens then
         NeedsGysahlGreens = true
