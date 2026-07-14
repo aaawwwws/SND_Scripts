@@ -5812,6 +5812,13 @@ function ActivateBossModPreset(primary, fallback1, fallback2, reason)
         Dalamud.Log("[FATE] Failed to apply BMR/VBM preset for " .. tostring(reason) .. ": " .. selectedPreset)
         return false
     end
+    -- Preset switching can occasionally turn BMR/VBM AI off. Re-enable it
+    -- explicitly so AoE dodging stays active.
+    if DodgingPlugin == "BMR" then
+        yield("/bmrai on")
+    elseif DodgingPlugin == "VBM" then
+        yield("/vbm ai on")
+    end
     return true
 end
 
@@ -7183,7 +7190,13 @@ function Ready()
     ChocoboCheck()
     SprintCheck()
 
-    CombatModsOn = false
+    -- Only reset combat-mod tracking when the state changes. Resetting it every
+    -- frame made TurnOnCombatMods run every frame, which continuously re-sent
+    -- BMR/VBM preset/AI commands and could interrupt AoE dodging.
+    if LastProcessedState ~= State then
+        CombatModsOn = false
+        LastProcessedState = State
+    end
 
     local shouldWaitForBonusBuff = WaitIfBonusBuff and HasTwistOfFateBuff()
     local needsRepair = Inventory.GetItemsInNeedOfRepairs(RemainingDurabilityToRepair)
@@ -9508,6 +9521,7 @@ function FateFarming:Run()
     NativeItemCommandDisabled             = true
     NativeItemCommandWarned               = false
     BossModPresetMissingWarned            = false
+    LastProcessedState                    = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
