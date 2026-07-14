@@ -8551,26 +8551,39 @@ IsChocoboDebugDone = false
 
 function IsChocoboSummoned()
     local ok, result = pcall(function()
+        local now = os.clock()
+        local shouldDebug = (ChocoboLastDebugAt or 0) + 30 < now
+        if shouldDebug then
+            ChocoboLastDebugAt = now
+        end
+
         -- Helper: scan object table for an owned companion entity.
-        -- A summoned chocobo is owned by the player.  ObjectKind 8 is the
-        -- Companion kind in Dalamud; it can occasionally report as BattleNpc (11)
-        -- or EventNpc (2) during state transitions, so accept those as well.
+        -- A summoned chocobo is owned by the player. Dalamud's ObjectKind 8 is
+        -- Companion; during state transitions it may briefly report as 2 or 11.
         local function CompanionObjectExists()
             if Svc and Svc.Objects then
                 local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
                 if playerOk and player then
                     local playerId = player.EntityId
+                    local playerGoIdOk, playerGoId = pcall(function() return player.GameObjectId end)
                     for i = 0, math.min(Svc.Objects.Length - 1, 300) do
                         local objOk, obj = pcall(function() return Svc.Objects[i] end)
                         if objOk and obj then
                             local ownerOk, owner = pcall(function() return obj.OwnerId end)
-                            if ownerOk and owner == playerId then
-                                local kindOk, kind = pcall(function() return obj.ObjectKind end)
-                                local nameOk, name = pcall(function() return obj.Name end)
-                                if kindOk and nameOk and name and string.len(tostring(name)) > 0 then
-                                    if kind == 8 or kind == 11 or kind == 2 then
-                                        return true
-                                    end
+                            local kindOk, kind = pcall(function() return obj.ObjectKind end)
+                            local nameOk, name = pcall(function() return obj.Name end)
+                            local ownerMatches = ownerOk and (owner == playerId or
+                                (playerGoIdOk and owner == playerGoId))
+                            if shouldDebug and ownerOk and kindOk and nameOk and name and
+                                string.len(tostring(name)) > 0 then
+                                yield("/echo [FATE] Chocobo debug: obj kind=" .. tostring(kind) ..
+                                    " name=" .. tostring(name) .. " owner=" .. tostring(owner) ..
+                                    " playerId=" .. tostring(playerId) .. " match=" .. tostring(ownerMatches))
+                            end
+                            if ownerMatches and kindOk and nameOk and name and
+                                string.len(tostring(name)) > 0 then
+                                if kind == 8 or kind == 11 or kind == 2 then
+                                    return true
                                 end
                             end
                         end
@@ -8583,8 +8596,12 @@ function IsChocoboSummoned()
         -- Method 1: Svc.Buddies.Companion
         if Svc and Svc.Buddies then
             local buddyOk, hasBuddy = pcall(function() return Svc.Buddies.Companion ~= nil end)
+            local timeLeftOk, timeLeft = pcall(function() return Svc.Buddies.Companion.TimeLeft end)
+            if shouldDebug then
+                yield("/echo [FATE] Chocobo debug: hasBuddy=" .. tostring(hasBuddy) ..
+                    " timeLeft=" .. tostring(timeLeft))
+            end
             if buddyOk and hasBuddy then
-                local timeLeftOk, timeLeft = pcall(function() return Svc.Buddies.Companion.TimeLeft end)
                 if timeLeftOk and type(timeLeft) == "number" and timeLeft > 0 then
                     return true
                 end
@@ -8599,6 +8616,9 @@ function IsChocoboSummoned()
         -- Method 2: SndGameUtils
         if SndGameUtils ~= nil then
             local utilsOk, time = pcall(function() return SndGameUtils.GetBuddyTimeRemaining() end)
+            if shouldDebug then
+                yield("/echo [FATE] Chocobo debug: sndUtilsTime=" .. tostring(time))
+            end
             if utilsOk and type(time) == "number" and time > 0 then
                 return true
             end
@@ -8610,6 +8630,9 @@ function IsChocoboSummoned()
         -- Method 3: cached expiration time from last successful summon
         if ChocoboSummonExpiresAt ~= nil then
             local remaining = ChocoboSummonExpiresAt - os.time()
+            if shouldDebug then
+                yield("/echo [FATE] Chocobo debug: cachedRemaining=" .. tostring(remaining))
+            end
             if remaining > 0 then
                 return true
             end
@@ -8620,6 +8643,18 @@ function IsChocoboSummoned()
             return true
         end
 
+        -- Method 5: Status effect fallback
+        -- 1220/1221 are commonly used for Gysahl Greens / Companion presence.
+        if HasStatusId(1220) or HasStatusId(1221) then
+            if shouldDebug then
+                yield("/echo [FATE] Chocobo debug: detected via status effect")
+            end
+            return true
+        end
+
+        if shouldDebug then
+            yield("/echo [FATE] Chocobo debug: not summoned")
+        end
         return false
     end)
     if ok then
@@ -9473,6 +9508,7 @@ function FateFarming:Run()
     ChocoboSummonFailureCount             = 0
     ChocoboSummonDisabled                 = false
     ChocoboSummonExpiresAt                = nil
+    ChocoboLastDebugAt                    = 0
     RsrDynamicSingleApplied               = false
     VbmAiActive                           = false
     GemAnnouncementLock                   = false
