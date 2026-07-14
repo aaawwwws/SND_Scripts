@@ -1364,7 +1364,7 @@ end
 
 function includes(array, searchStr)
     for _, value in ipairs(array) do
-        local trimmed = TrimString(value)
+        local trimmed = tostring(value or ""):match("^%s*(.-)%s*$")
         if trimmed ~= "" and trimmed == searchStr then
             return true
         end
@@ -8537,13 +8537,48 @@ IsChocoboDebugDone = false
 
 function IsChocoboSummoned()
     local ok, result = pcall(function()
+        -- Helper: scan object table for owned companion entity.
+        local function CompanionObjectExists()
+            if Svc and Svc.Objects then
+                local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
+                if playerOk and player then
+                    local playerId = player.EntityId
+                    for i = 0, math.min(Svc.Objects.Length - 1, 300) do
+                        local objOk, obj = pcall(function() return Svc.Objects[i] end)
+                        if objOk and obj then
+                            local ownerOk, owner = pcall(function() return obj.OwnerId end)
+                            if ownerOk and owner == playerId then
+                                local kindOk, kind = pcall(function() return obj.ObjectKind end)
+                                if kindOk and (kind == 8 or kind == 11 or kind == 2) then
+                                    return true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            return false
+        end
+
         -- Method 1: Try Svc.Buddies.Companion
         if Svc and Svc.Buddies then
             local buddyOk, hasBuddy = pcall(function() return Svc.Buddies.Companion ~= nil end)
             if buddyOk and hasBuddy then
                 local timeLeftOk, timeLeft = pcall(function() return Svc.Buddies.Companion.TimeLeft end)
                 if timeLeftOk and type(timeLeft) == "number" then
-                    return timeLeft > 0
+                    if timeLeft > 0 then
+                        return true
+                    end
+                    -- TimeLeft APIs sometimes report 0 incorrectly. If the cached
+                    -- expiration is still valid and the companion object exists,
+                    -- assume the chocobo is still active.
+                    if ChocoboSummonExpiresAt ~= nil then
+                        local remaining = ChocoboSummonExpiresAt - os.time()
+                        if remaining > 0 and CompanionObjectExists() then
+                            return true
+                        end
+                    end
+                    return false
                 end
             end
         end
@@ -8552,7 +8587,16 @@ function IsChocoboSummoned()
         if SndGameUtils ~= nil then
             local utilsOk, time = pcall(function() return SndGameUtils.GetBuddyTimeRemaining() end)
             if utilsOk and type(time) == "number" then
-                return time > 0
+                if time > 0 then
+                    return true
+                end
+                if ChocoboSummonExpiresAt ~= nil then
+                    local remaining = ChocoboSummonExpiresAt - os.time()
+                    if remaining > 0 and CompanionObjectExists() then
+                        return true
+                    end
+                end
+                return false
             end
         end
 
