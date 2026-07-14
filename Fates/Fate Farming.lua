@@ -5483,6 +5483,7 @@ function GetCombatOpenActionCandidates()
     elseif jobId == ClassList.drg.classId or jobId == ClassList.lnc.classId then
         return {
             LANG.actions["Piercing Talon"] or "Piercing Talon",
+            LANG.actions["Winged Glide"] or "Winged Glide",
             LANG.actions["Spineshatter Dive"] or "Spineshatter Dive",
             LANG.actions["True Thrust"] or "True Thrust"
         }
@@ -8537,7 +8538,10 @@ IsChocoboDebugDone = false
 
 function IsChocoboSummoned()
     local ok, result = pcall(function()
-        -- Helper: scan object table for owned companion entity.
+        -- Helper: scan object table for an owned companion entity.
+        -- A summoned chocobo is owned by the player.  ObjectKind 8 is the
+        -- Companion kind in Dalamud; it can occasionally report as BattleNpc (11)
+        -- or EventNpc (2) during state transitions, so accept those as well.
         local function CompanionObjectExists()
             if Svc and Svc.Objects then
                 local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
@@ -8549,8 +8553,11 @@ function IsChocoboSummoned()
                             local ownerOk, owner = pcall(function() return obj.OwnerId end)
                             if ownerOk and owner == playerId then
                                 local kindOk, kind = pcall(function() return obj.ObjectKind end)
-                                if kindOk and (kind == 8 or kind == 11 or kind == 2) then
-                                    return true
+                                local nameOk, name = pcall(function() return obj.Name end)
+                                if kindOk and nameOk and name and string.len(tostring(name)) > 0 then
+                                    if kind == 8 or kind == 11 or kind == 2 then
+                                        return true
+                                    end
                                 end
                             end
                         end
@@ -8560,43 +8567,30 @@ function IsChocoboSummoned()
             return false
         end
 
-        -- Method 1: Try Svc.Buddies.Companion
+        -- Method 1: Svc.Buddies.Companion
         if Svc and Svc.Buddies then
             local buddyOk, hasBuddy = pcall(function() return Svc.Buddies.Companion ~= nil end)
             if buddyOk and hasBuddy then
                 local timeLeftOk, timeLeft = pcall(function() return Svc.Buddies.Companion.TimeLeft end)
-                if timeLeftOk and type(timeLeft) == "number" then
-                    if timeLeft > 0 then
-                        return true
-                    end
-                    -- TimeLeft APIs sometimes report 0 incorrectly. If the cached
-                    -- expiration is still valid and the companion object exists,
-                    -- assume the chocobo is still active.
-                    if ChocoboSummonExpiresAt ~= nil then
-                        local remaining = ChocoboSummonExpiresAt - os.time()
-                        if remaining > 0 and CompanionObjectExists() then
-                            return true
-                        end
-                    end
-                    return false
+                if timeLeftOk and type(timeLeft) == "number" and timeLeft > 0 then
+                    return true
+                end
+                -- Even when TimeLeft reports 0 or nil, the API can be slow/buggy.
+                -- If the actual companion object is still nearby, treat it as summoned.
+                if CompanionObjectExists() then
+                    return true
                 end
             end
         end
 
-        -- Method 2: Try SndGameUtils
+        -- Method 2: SndGameUtils
         if SndGameUtils ~= nil then
             local utilsOk, time = pcall(function() return SndGameUtils.GetBuddyTimeRemaining() end)
-            if utilsOk and type(time) == "number" then
-                if time > 0 then
-                    return true
-                end
-                if ChocoboSummonExpiresAt ~= nil then
-                    local remaining = ChocoboSummonExpiresAt - os.time()
-                    if remaining > 0 and CompanionObjectExists() then
-                        return true
-                    end
-                end
-                return false
+            if utilsOk and type(time) == "number" and time > 0 then
+                return true
+            end
+            if CompanionObjectExists() then
+                return true
             end
         end
 
@@ -8608,34 +8602,9 @@ function IsChocoboSummoned()
             end
         end
 
-        -- Method 4: Check for companion entity in object table
-        if Svc and Svc.Objects then
-            local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
-            if playerOk and player then
-                local playerId = player.EntityId
-                for i = 0, math.min(Svc.Objects.Length - 1, 300) do
-                    local objOk, obj = pcall(function() return Svc.Objects[i] end)
-                    if objOk and obj then
-                        local ownerOk, owner = pcall(function() return obj.OwnerId end)
-                        if ownerOk and owner == playerId then
-                            local kindOk, kind = pcall(function() return obj.ObjectKind end)
-                            local nameOk, name = pcall(function() return obj.Name end)
-                            -- Debug: log first match to see what kind companions are
-                            if not IsChocoboDebugDone and kindOk and nameOk then
-                                yield("/echo [FATE] Debug: Owned entity kind=" ..
-                                    tostring(kind) .. " name=" .. tostring(name))
-                                IsChocoboDebugDone = true
-                            end
-                            -- Try various companion kinds (8=BattleNpc, 11=Companion, 2=EventNpc)
-                            if kindOk and (kind == 8 or kind == 11 or kind == 2) then
-                                if nameOk and name and string.len(tostring(name)) > 0 then
-                                    return true
-                                end
-                            end
-                        end
-                    end
-                end
-            end
+        -- Method 4: Fallback to object-table scan
+        if CompanionObjectExists() then
+            return true
         end
 
         return false
@@ -9081,7 +9050,7 @@ function ChocoboCheck()
                 end
             end
 
-            yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(err))
+            -- Keep log quiet; the caller will report after the post-use check.
             return false
         end
 
@@ -9095,17 +9064,24 @@ function ChocoboCheck()
             -- Gysahl Greens last 30 minutes; cache the expiration to avoid
             -- re-summoning when TimeLeft APIs are slow/unreliable.
             ChocoboSummonExpiresAt = os.time() + (30 * 60)
+            -- Don't attempt another summon until shortly before expiration.
+            ChocoboLastSummonAttemptAt = os.clock() + (30 * 60) - 30
         else
-            yield("/echo [FATE] Chocobo still not detected after using greens")
+            ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
+            if ChocoboSummonFailureCount <= 3 then
+                yield("/echo [FATE] Chocobo still not detected after using greens (attempt " ..
+                    tostring(ChocoboSummonFailureCount) .. ")")
+            end
             if not used then
                 -- Something blocked the item use; wait longer before retrying
                 -- to avoid spamming errors (e.g. chocobo summon cooldown).
                 ChocoboLastSummonAttemptAt = now + 300
-                ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
-                if ChocoboSummonFailureCount >= 3 then
-                    ChocoboSummonDisabled = true
-                    yield("/echo [FATE] Chocobo summon failed 3 times. Disabling auto-summon for this session.")
-                end
+            else
+                ChocoboLastSummonAttemptAt = now + 60
+            end
+            if ChocoboSummonFailureCount >= 3 then
+                ChocoboSummonDisabled = true
+                yield("/echo [FATE] Chocobo summon failed 3 times. Disabling auto-summon for this session.")
             end
         end
     elseif ShouldAutoBuyGysahlGreens then
