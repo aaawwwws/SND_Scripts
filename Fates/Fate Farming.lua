@@ -5462,7 +5462,8 @@ function GetCombatOpenActionCandidates()
         }
     elseif jobId == ClassList.sam.classId then
         return {
-            LANG.actions["Enpi"] or "Enpi"
+            LANG.actions["Enpi"] or "Enpi",
+            LANG.actions["Hissatsu: Gyoten"] or "Hissatsu: Gyoten"
         }
     elseif jobId == ClassList.rpr.classId then
         return {
