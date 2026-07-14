@@ -5454,7 +5454,8 @@ function GetCombatOpenActionCandidates()
         }
     elseif jobId == ClassList.drg.classId or jobId == ClassList.lnc.classId then
         return {
-            LANG.actions["Piercing Talon"] or "Piercing Talon"
+            LANG.actions["Piercing Talon"] or "Piercing Talon",
+            LANG.actions["Spineshatter Dive"] or "Spineshatter Dive"
         }
     elseif jobId == ClassList.nin.classId or jobId == ClassList.rog.classId then
         return {
@@ -8867,12 +8868,33 @@ function ChocoboCheck()
 
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
 
-        -- Use item by name
-        local greens = LANG.actions["Gysahl Greens"]
-        local useOk, useErr = pcall(function() yield("/item \"" .. greens .. "\"") end)
-        if not useOk then
-            yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(useErr))
+        -- Try to use Gysahl Greens. Prefer SndGameUtils.UseItem if available
+        -- (works when SND's native /item command is disabled in safety mode),
+        -- then fall back to /item by ID and finally by localized name.
+        local function TryUseGysahlGreens()
+            if SndGameUtils ~= nil and SndGameUtils.UseItem ~= nil then
+                local ok = pcall(function() SndGameUtils.UseItem(4868) end)
+                if ok then
+                    Dalamud.Log("[FATE] Used Gysahl Greens via SndGameUtils.UseItem")
+                    return true
+                end
+            end
+
+            local ok, err = pcall(function() yield("/item 4868") end)
+            if ok then
+                return true
+            end
+
+            local greens = LANG.actions["Gysahl Greens"]
+            ok, err = pcall(function() yield('/item "' .. greens .. '"') end)
+            if not ok then
+                yield("/echo [FATE] Failed to use Gysahl Greens: " .. tostring(err))
+                return false
+            end
+            return true
         end
+
+        TryUseGysahlGreens()
         yield("/wait 5")
 
         -- Check if summoning worked
