@@ -548,68 +548,68 @@ local
     IsVnavmeshReadySafe,
     IsVnavmeshMovingSafe
 
--- Party Play related locals
-local GetPartyMemberCount
-local GetPartyMemberNames
-local GetPartyMemberTargetObjects
-local IsPartyMemberInFate
-local GetPartyPlayActive
-local IsPartyMemberObject
-local GetPartyLeaderZoneId
-local FollowPartyLeaderToZone
+-- Party Play related globals (moved out of local limit)
+GetPartyMemberCount = nil
+GetPartyMemberNames = nil
+GetPartyMemberTargetObjects = nil
+IsPartyMemberInFate = nil
+GetPartyPlayActive = nil
+IsPartyMemberObject = nil
+GetPartyLeaderZoneId = nil
+FollowPartyLeaderToZone = nil
 
 -- 出現中FATEデータ保存用の設定/状態
-local FateDataLogEnabled
-local FateDataLogIntervalSeconds
-local FateDataLogPath
-local FateDataLogResolvedPath
-local FateDataLogLastTime
-local FateDataLogLastSignature
-local FateDataLogError
-local FateDataLogLastOpenErrorAt
+FateDataLogEnabled = nil
+FateDataLogIntervalSeconds = nil
+FateDataLogPath = nil
+FateDataLogResolvedPath = nil
+FateDataLogLastTime = nil
+FateDataLogLastSignature = nil
+FateDataLogError = nil
+FateDataLogLastOpenErrorAt = nil
 
 -- 納品証交換時の移動スタック検知用
-local ExchangeMoveLastCheckTime
-local ExchangeMoveLastPosition
-local ExchangeMoveStuckCount
-local ExchangeMoveLastDistanceToShop
-local ExchangeMoveGraceUntil
+ExchangeMoveLastCheckTime = nil
+ExchangeMoveLastPosition = nil
+ExchangeMoveStuckCount = nil
+ExchangeMoveLastDistanceToShop = nil
+ExchangeMoveGraceUntil = nil
 
 -- 通常移動時のスタック検知用
-local MoveStuckLastCheckTime
-local MoveStuckLastPosition
-local MoveStuckCount
-local MoveStuckLastDistanceToTarget
+MoveStuckLastCheckTime = nil
+MoveStuckLastPosition = nil
+MoveStuckCount = nil
+MoveStuckLastDistanceToTarget = nil
 
 -- セッション統計
-local SessionStartClock
-local SessionStartGemCount
-local SessionFatesStarted
-local SessionFatesCompleted
-local SessionFatesFailed
-local SessionStuckRepathCount
-local SessionStuckAetheryteCount
-local SessionStuckZoneSwitchCount
-local SessionStopReason
-local FoodAutoUseDisabled
-local PotionAutoUseDisabled
-local TankStanceAcAttemptedForFate
-local LifestreamBusyWarned
-local VnavReadyCheckWarned
-local NativeItemCommandDisabled
-local NativeItemCommandWarned
-local TeleportFailureByDestination
-local TeleportFailureWarnedAt
+SessionStartClock = nil
+SessionStartGemCount = nil
+SessionFatesStarted = nil
+SessionFatesCompleted = nil
+SessionFatesFailed = nil
+SessionStuckRepathCount = nil
+SessionStuckAetheryteCount = nil
+SessionStuckZoneSwitchCount = nil
+SessionStopReason = nil
+FoodAutoUseDisabled = nil
+PotionAutoUseDisabled = nil
+TankStanceAcAttemptedForFate = nil
+LifestreamBusyWarned = nil
+VnavReadyCheckWarned = nil
+NativeItemCommandDisabled = nil
+NativeItemCommandWarned = nil
+TeleportFailureByDestination = nil
+TeleportFailureWarnedAt = nil
 
 -- MoveToTargetHitbox のちらつき防止用
-local MoveToTargetLastPos
-local MoveToTargetLastAt
-local MoveToTargetLastTargetPos
+MoveToTargetLastPos = nil
+MoveToTargetLastAt = nil
+MoveToTargetLastTargetPos = nil
 
 -- 密集移動のキャッシュ
-local ClusterMoveLastRefresh
-local ClusterMoveCachedFateId
-local ClusterMoveCachedPosition
+ClusterMoveLastRefresh = nil
+ClusterMoveCachedFateId = nil
+ClusterMoveCachedPosition = nil
 
 --[[
 ********************************************************************************
