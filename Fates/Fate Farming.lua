@@ -9094,6 +9094,8 @@ end
 
 function ChocoboCheck()
     if not SummonChocobo then return end
+    -- Native /item is unsafe in this SND build and can hard-fail the macro.
+    if NativeItemCommandDisabled then return end
     if ChocoboSummonDisabled then return end
     if DisableChocoboInParty and GetPartyPlayActive() then
         return
