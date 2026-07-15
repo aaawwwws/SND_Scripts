@@ -6207,9 +6207,11 @@ function HandleUnexpectedCombat()
         " mounted=" .. tostring(Svc.Condition[CharacterCondition.mounted]) ..
         " flying=" .. tostring(Svc.Condition[CharacterCondition.flying]))
 
+    -- Stay mounted when targeted while flying/riding; let vnavmesh keep moving
+    -- rather than dismounting and engaging every overworld mob.
     if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then
-        Dalamud.Log("[FATE] UnexpectedCombat: Dismounting due to combat")
-        Dismount(true)
+        Dalamud.Log("[FATE] UnexpectedCombat: staying mounted, resuming movement")
+        State = CharacterState.moveToFate
         return
     end
     TurnOnCombatMods("manual")
