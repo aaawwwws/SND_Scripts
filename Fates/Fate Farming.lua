@@ -20,7 +20,7 @@ plugin_dependencies:
 configs:
   Rotation Plugin:
     description: 使用する回しプラグインを選択します。
-    default: "RotationSolver"
+    default: "Wrath"
     is_choice: true
     choices: ["Any", "Wrath", "RotationSolver","BossMod", "BossModReborn"]
   Dodging Plugin:
@@ -54,10 +54,10 @@ configs:
     default: ""
   Tank Gearset for Level Sync:
     description: レベルシンクが必要なFATEに参加する際に自動で着替えるタンクのギアセット名または番号。空欄の場合は着替えません。
-    default: ""
+    default: "tank"
   Normal FATE Gearset:
     description: 通常FATE（レベルシンク不要）で自動で着替えるギアセット名または番号。空欄の場合はメインクラスのギアセットのままです。
-    default: ""
+    default: "dps"
   Max melee distance:
     description: 近接ジョブ時の目標戦闘距離です。
     default: 2.5
@@ -156,9 +156,17 @@ configs:
     default: 30
     min: 3
     max: 30
+  Aggressive pulling?:
+    description: 遠距離攻撃で積極的に敵を引き寄せ、大人数の集団戦を作ります。
+    default: true
+  Max pull count:
+    description: 1回のFATEで引き寄せる最大敵数です。高いほどAoE効率が上がります。
+    default: 10
+    min: 1
+    max: 30
   Dense pull minimum enemies:
-    description: 近距離優先から密集優先に切り替える最小敵数です。3以上にするとAoEで処理しやすい3体以上のクラスタを優先します。
-    default: 3
+    description: 近距離優先から密集優先に切り替える最小敵数です。2以上にするとAoEで処理しやすい複数体のクラスタを優先します。
+    default: 2
     min: 1
     max: 20
   Active pull enabled?:
@@ -166,17 +174,17 @@ configs:
     default: true
   Active pull interval (secs):
     description: pullを試行する間隔です。短いほど多くの敵を引き寄せます。
-    default: 1.5
+    default: 1.0
     min: 0.5
     max: 10
   Active pull max targets:
     description: 1サイクルでpullする最大敵数です。
-    default: 3
+    default: 5
     min: 1
     max: 10
   Active pull max range:
     description: pull対象の最大距離です。spawn地点から離れすぎるとリセットされるので控えめに。
-    default: 20
+    default: 25
     min: 5
     max: 25
   Optimize movement to mob clusters?:
@@ -188,8 +196,8 @@ configs:
     min: 5
     max: 40
   Cluster movement minimum enemies:
-    description: 密集地点として採用する最小敵数です。3以上にするとAoE射線が通りやすい3体以上の密集地を経由します。
-    default: 3
+    description: 密集地点として採用する最小敵数です。2以上にするとAoE射線が通りやすい複数体の密集地を経由します。
+    default: 2
     min: 2
     max: 30
   Cluster movement refresh (secs):
@@ -277,7 +285,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
