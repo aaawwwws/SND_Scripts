@@ -8657,21 +8657,28 @@ function IsChocoboSummoned()
             if Svc and Svc.Objects then
                 local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
                 if playerOk and player then
+                    local playerPos = player.Position
                     local playerId = player.EntityId
                     local playerGoIdOk, playerGoId = pcall(function() return player.GameObjectId end)
+                    if shouldDebug then
+                        yield("/echo [FATE] Chocobo debug: scanning objects. mounted=" ..
+                            tostring(Svc.Condition[CharacterCondition.mounted]) ..
+                            " playerId=" .. tostring(playerId))
+                    end
                     for i = 0, math.min(Svc.Objects.Length - 1, 300) do
                         local objOk, obj = pcall(function() return Svc.Objects[i] end)
                         if objOk and obj then
                             local ownerOk, owner = pcall(function() return obj.OwnerId end)
                             local kindOk, kind = pcall(function() return obj.ObjectKind end)
                             local nameOk, name = pcall(function() return obj.Name end)
+                            local posOk, pos = pcall(function() return obj.Position end)
                             local ownerMatches = ownerOk and (owner == playerId or
                                 (playerGoIdOk and owner == playerGoId))
-                            if shouldDebug and ownerOk and kindOk and nameOk and name and
-                                string.len(tostring(name)) > 0 then
-                                yield("/echo [FATE] Chocobo debug: obj kind=" .. tostring(kind) ..
-                                    " name=" .. tostring(name) .. " owner=" .. tostring(owner) ..
-                                    " playerId=" .. tostring(playerId) .. " match=" .. tostring(ownerMatches))
+                            local dist = (posOk and playerPos) and DistanceBetweenFlat(playerPos, pos) or nil
+                            if shouldDebug and dist ~= nil and dist < 20 and kindOk and nameOk then
+                                yield("/echo [FATE] Chocobo debug nearby: kind=" .. tostring(kind) ..
+                                    " name=" .. tostring(name) .. " dist=" .. string.format("%.1f", dist) ..
+                                    " owner=" .. tostring(owner) .. " match=" .. tostring(ownerMatches))
                             end
                             if ownerMatches and kindOk and nameOk and name and
                                 string.len(tostring(name)) > 0 then
@@ -9095,6 +9102,15 @@ function ChocoboCheck()
     if SelectedZone ~= nil and Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
         return
     end
+    -- If no chocobo-detection APIs are available, don't spam /item errors.
+    -- Object-table fallback is too unreliable on its own in this environment.
+    if (Svc == nil or Svc.Buddies == nil) and SndGameUtils == nil then
+        if (ChocoboSummonDisabled ~= true) then
+            ChocoboSummonDisabled = true
+            yield("/echo [FATE] Chocobo detection unavailable (Buddies and SndGameUtils missing). Disabling auto-summon.")
+        end
+        return
+    end
     if Svc.Condition[CharacterCondition.inCombat]
         or Svc.Condition[CharacterCondition.casting]
         or Svc.Condition[CharacterCondition.occupied]
@@ -9141,6 +9157,12 @@ function ChocoboCheck()
         -- Wait a moment for any ongoing state transitions (dismount, combat drop,
         -- cooldown availability) to settle before using the item.
         yield("/wait 1")
+
+        -- Re-check after waiting; the companion may have become visible or the
+        -- cached expiration may now be valid.
+        if IsChocoboSummoned() then
+            return
+        end
 
         -- Try to use Gysahl Greens. The localized name (e.g. "ギサールの野菜"
         -- on JP client) is what the client understands. If the native /item
