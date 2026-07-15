@@ -111,7 +111,7 @@ configs:
     default: true
   Disable Chocobo in Party:
     description: PTに参加している場合にチョコボ召喚を自動で無効にします。
-    default: true
+    default: false
   Follow Party Members:
     description: PTプレイ時、PTメンバーが60y以上離れている場合に自動で追従します。
     default: true
@@ -9137,13 +9137,27 @@ end
 -- ============================================================
 
 function ChocoboCheck()
-    if not SummonChocobo then return end
-    if ChocoboSummonDisabled then return end
+    local chocoboCheckDebugNow = os.clock()
+    local shouldDebugChocoboCheck = (ChocoboLastCheckDebugAt or 0) + 30 < chocoboCheckDebugNow
+    if shouldDebugChocoboCheck then
+        ChocoboLastCheckDebugAt = chocoboCheckDebugNow
+    end
+
+    if not SummonChocobo then
+        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: SummonChocobo=false") end
+        return
+    end
+    if ChocoboSummonDisabled then
+        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: ChocoboSummonDisabled=true") end
+        return
+    end
     if DisableChocoboInParty and GetPartyPlayActive() then
+        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: party play active") end
         return
     end
     -- Skip summoning while in town/traveling; wait until we reach the farming zone.
     if SelectedZone ~= nil and Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
+        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: not in selected zone") end
         return
     end
     if Svc.Condition[CharacterCondition.inCombat]
@@ -9152,11 +9166,13 @@ function ChocoboCheck()
         or Svc.Condition[CharacterCondition.betweenAreas]
         or Svc.Condition[CharacterCondition.dead]
     then
+        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: busy/in combat/casting") end
         return
     end
 
     local isSummoned = IsChocoboSummoned()
     if isSummoned then
+        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: already summoned") end
         return
     end
 
@@ -9165,6 +9181,7 @@ function ChocoboCheck()
     -- possible while keeping error/usage spam minimal.
     local now = os.clock()
     if now - (ChocoboLastSummonAttemptAt or 0) < (30 * 60) then
+        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: on 30-minute cooldown") end
         return
     end
     ChocoboLastSummonAttemptAt = now
@@ -9187,9 +9204,11 @@ function ChocoboCheck()
             or Svc.Condition[CharacterCondition.casting]
             or Svc.Condition[CharacterCondition.mounted]
         then
+            if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: became busy after dismount") end
             return
         end
 
+        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck: attempting to summon (Greens: " .. tostring(itemCount) .. ")") end
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
 
         -- Wait a moment for any ongoing state transitions (dismount, combat drop,
@@ -9635,6 +9654,7 @@ function FateFarming:Run()
     ChocoboSummonDisabled                 = false
     ChocoboSummonExpiresAt                = nil
     ChocoboLastDebugAt                    = 0
+    ChocoboLastCheckDebugAt               = 0
     RsrDynamicSingleApplied               = false
     VbmAiActive                           = false
     GemAnnouncementLock                   = false
