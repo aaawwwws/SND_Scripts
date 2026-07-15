@@ -285,7 +285,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション,水の迷宮の夢"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -4914,7 +4914,7 @@ function Mount()
 
     LastMountCommandAt = now
     if MountToUse == "mount roulette" then
-        yield('/action "' .. LANG.actions["mount roulette"] .. '"')
+        SafeYield('/action "' .. LANG.actions["mount roulette"] .. '"')
     else
         SafeYield('/mount "' .. MountToUse .. '"')
     end
@@ -4927,7 +4927,11 @@ function MountState()
         -- Start flying immediately after mounting
         if CurrentFate ~= nil then
             local targetPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
-            local useFlying = Player.CanFly and SelectedZone.flying
+            local playerCanFly = Player.CanFly == true
+            local zoneAllowsFlying = SelectedZone ~= nil and SelectedZone.flying ~= false
+            local useFlying = playerCanFly and zoneAllowsFlying
+            Dalamud.Log(string.format("[FATE] Mount decision: playerCanFly=%s zoneAllowsFlying=%s useFlying=%s",
+                tostring(playerCanFly), tostring(zoneAllowsFlying), tostring(useFlying)))
             if useFlying then
                 IPC.vnavmesh.PathfindAndMoveTo(targetPos, true)
                 Dalamud.Log("[FATE] Mounted - starting flight to destination")
@@ -9117,30 +9121,12 @@ end
 
 function ChocoboCheck()
     if not SummonChocobo then return end
-    -- Native /item is unsafe in this SND build and can hard-fail the macro.
-    if NativeItemCommandDisabled then return end
     if ChocoboSummonDisabled then return end
     if DisableChocoboInParty and GetPartyPlayActive() then
         return
     end
     -- Skip summoning while in town/traveling; wait until we reach the farming zone.
     if SelectedZone ~= nil and Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
-        return
-    end
-    -- If no chocobo-detection APIs are available, don't spam /item errors.
-    -- Object-table fallback is too unreliable on its own in this environment.
-    local buddiesApiOk = false
-    if Svc and Svc.Buddies then
-        local accessOk = pcall(function() return Svc.Buddies.Companion end)
-        if accessOk then
-            buddiesApiOk = true
-        end
-    end
-    if not buddiesApiOk and SndGameUtils == nil then
-        if (ChocoboSummonDisabled ~= true) then
-            ChocoboSummonDisabled = true
-            yield("/echo [FATE] Chocobo detection unavailable (Buddy API and SndGameUtils missing). Disabling auto-summon.")
-        end
         return
     end
     if Svc.Condition[CharacterCondition.inCombat]
@@ -9157,8 +9143,11 @@ function ChocoboCheck()
         return
     end
 
+    -- Detection APIs may be unreliable. To avoid wasting greens, only attempt
+    -- a summon once every 30 minutes. This keeps the chocobo out as much as
+    -- possible while keeping error/usage spam minimal.
     local now = os.clock()
-    if now - (ChocoboLastSummonAttemptAt or 0) < 60 then
+    if now - (ChocoboLastSummonAttemptAt or 0) < (30 * 60) then
         return
     end
     ChocoboLastSummonAttemptAt = now
@@ -9246,9 +9235,9 @@ function ChocoboCheck()
                 -- summoned or the item is on cooldown. Wait the full 30-minute
                 -- duration before retrying to avoid error spam.
                 ChocoboLastSummonAttemptAt = os.clock() + (30 * 60) - 30
-                if ChocoboSummonFailureCount >= 3 then
+                if ChocoboSummonFailureCount >= 10 then
                     ChocoboSummonDisabled = true
-                    yield("/echo [FATE] Chocobo summon failed 3 times. Disabling auto-summon for this session.")
+                    yield("/echo [FATE] Chocobo summon failed 10 times. Disabling auto-summon for this session.")
                 end
             end
         end
