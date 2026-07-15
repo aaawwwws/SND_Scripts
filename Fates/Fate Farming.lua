@@ -99,7 +99,7 @@ configs:
     default: true
   Party Play Mode:
     description: PTプレイ時の動作を有効にします。PTメンバーがいる場合に自動で切り替えることもできます。
-    default: false
+    default: true
   Auto Detect Party Members:
     description: PTメンバーがいる場合に自動でPTプレイモードに切り替えます（Party Play Mode OFF時も有効）。
     default: true
