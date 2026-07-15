@@ -9143,21 +9143,34 @@ function ChocoboCheck()
         ChocoboLastCheckDebugAt = chocoboCheckDebugNow
     end
 
+    -- Once the 30-minute window is open, retry every 10 seconds until conditions
+    -- are right, so the summon actually happens instead of waiting another 30 min.
+    local now = os.clock()
+    local function DeferCheck()
+        if now - (ChocoboLastSummonAttemptAt or 0) >= (30 * 60) then
+            ChocoboLastSummonAttemptAt = now - (30 * 60) + 10
+        end
+    end
+
     if not SummonChocobo then
         if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: SummonChocobo=false") end
+        DeferCheck()
         return
     end
     if ChocoboSummonDisabled then
         if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: ChocoboSummonDisabled=true") end
+        DeferCheck()
         return
     end
     if DisableChocoboInParty and GetPartyPlayActive() then
         if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: party play active") end
+        DeferCheck()
         return
     end
     -- Skip summoning while in town/traveling; wait until we reach the farming zone.
     if SelectedZone ~= nil and Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
         if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: not in selected zone") end
+        DeferCheck()
         return
     end
     if Svc.Condition[CharacterCondition.inCombat]
@@ -9167,19 +9180,21 @@ function ChocoboCheck()
         or Svc.Condition[CharacterCondition.dead]
     then
         if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: busy/in combat/casting") end
+        DeferCheck()
         return
     end
 
     local isSummoned = IsChocoboSummoned()
     if isSummoned then
         if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: already summoned") end
+        -- Already out; use the normal 30-minute window for the next recheck.
+        ChocoboLastSummonAttemptAt = chocoboCheckDebugNow
         return
     end
 
     -- Detection APIs may be unreliable. To avoid wasting greens, only attempt
     -- a summon once every 30 minutes. This keeps the chocobo out as much as
     -- possible while keeping error/usage spam minimal.
-    local now = os.clock()
     if now - (ChocoboLastSummonAttemptAt or 0) < (30 * 60) then
         if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: on 30-minute cooldown") end
         return
@@ -9190,6 +9205,7 @@ function ChocoboCheck()
     -- travel between fates; wait until we are on the ground at the destination.
     if Svc.Condition[CharacterCondition.mounted] then
         if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: mounted, wait until dismounted") end
+        DeferCheck()
         return
     end
 
@@ -9198,6 +9214,7 @@ function ChocoboCheck()
         local isMoving = IPC.vnavmesh ~= nil and (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress())
         if isMoving then
             if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: pathing to next FATE") end
+            DeferCheck()
             return
         end
     end
@@ -9209,7 +9226,8 @@ function ChocoboCheck()
             or Svc.Condition[CharacterCondition.casting]
             or Svc.Condition[CharacterCondition.mounted]
         then
-            if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: became busy after dismount") end
+            if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: became busy before using item") end
+            DeferCheck()
             return
         end
 
@@ -9282,8 +9300,12 @@ function ChocoboCheck()
                 end
             end
         end
-    elseif ShouldAutoBuyGysahlGreens then
-        NeedsGysahlGreens = true
+    else
+        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: no Gysahl Greens") end
+        if ShouldAutoBuyGysahlGreens then
+            NeedsGysahlGreens = true
+        end
+        DeferCheck()
     end
 end
 
