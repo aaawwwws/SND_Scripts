@@ -55,6 +55,9 @@ configs:
   Tank Gearset for Level Sync:
     description: レベルシンクが必要なFATEに参加する際に自動で着替えるタンクのギアセット名または番号。空欄の場合は着替えません。
     default: ""
+  Normal FATE Gearset:
+    description: 通常FATE（レベルシンク不要）で自動で着替えるギアセット名または番号。空欄の場合はメインクラスのギアセットのままです。
+    default: ""
   Max melee distance:
     description: 近接ジョブ時の目標戦闘距離です。
     default: 2.5
@@ -4746,18 +4749,19 @@ function WaitForContinuation()
         Dalamud.Log("State Change: Ready")
     else
         Dalamud.Log("WaitForContinuation Else")
-        if BossFatesClass ~= nil then
-            local currentClass = Player.Job.Id
-            Dalamud.Log("WaitForContinuation " .. CurrentFate.fateName)
-            if not Player.IsPlayerOccupied then
-                if CurrentFate.continuationIsBoss and currentClass ~= BossFatesClass.classId then
-                    Dalamud.Log("WaitForContinuation SwitchToBoss")
-                    yield("/gs change " .. BossFatesClass.className)
-                elseif not CurrentFate.continuationIsBoss and currentClass ~= MainClass.classId then
-                    Dalamud.Log("WaitForContinuation SwitchToMain")
-                    yield("/gs change " .. MainClass.className)
-                end
-            end
+        local desired = MainClass and MainClass.Name or nil
+        if CurrentFate.continuationIsBoss and BossFatesClass ~= nil then
+            desired = BossFatesClass.className
+        elseif LevelSyncTankGearset ~= nil and LevelSyncTankGearset ~= "" and NeedsLevelSyncForFate(CurrentFate) then
+            desired = LevelSyncTankGearset
+        elseif NormalFateGearset ~= nil and NormalFateGearset ~= "" then
+            desired = NormalFateGearset
+        end
+        if not Player.IsPlayerOccupied and desired ~= nil and CurrentlyEquippedGearset ~= desired then
+            Dalamud.Log("WaitForContinuation switch to " .. desired)
+            yield("/gs change " .. desired)
+            yield("/wait 1.5")
+            CurrentlyEquippedGearset = desired
         end
 
         yield("/wait 1")
@@ -5116,32 +5120,9 @@ function MoveToFate()
         end
     end
 
-    -- change to tank gearset for level-synced FATEs if configured
-    local needsLevelSync = NeedsLevelSyncForFate(CurrentFate)
-    if needsLevelSync and LevelSyncTankGearset ~= nil and LevelSyncTankGearset ~= "" then
-        if not LevelSyncGearsetActive then
-            yield("/gs change " .. LevelSyncTankGearset)
-            yield("/wait 1.5")
-            LevelSyncGearsetActive = true
-            return
-        end
-    elseif LevelSyncGearsetActive then
-        yield("/gs change " .. MainClass.Name)
-        yield("/wait 1.5")
-        LevelSyncGearsetActive = false
+    -- Gearset handling (level-sync tank, normal gearset, boss class, main class)
+    if EnsureCorrectGearsetForFate(CurrentFate) then
         return
-    end
-
-    -- change to secondary class if its a boss fate
-    if BossFatesClass ~= nil then
-        local currentClass = Player.Job.Id
-        if CurrentFate.isBossFate and currentClass ~= BossFatesClass.classId then
-            yield("/gs change " .. BossFatesClass.className)
-            return
-        elseif not CurrentFate.isBossFate and currentClass ~= MainClass.classId then
-            yield("/gs change " .. MainClass.Name)
-            return
-        end
     end
 
     local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
@@ -6140,6 +6121,42 @@ function TurnOffCombatMods()
     end
 end
 
+function GetDesiredGearsetForFate(fate)
+    if fate == nil then
+        return MainClass and MainClass.Name or nil
+    end
+    local needsLevelSync = NeedsLevelSyncForFate(fate)
+    if needsLevelSync and LevelSyncTankGearset ~= nil and LevelSyncTankGearset ~= "" then
+        return LevelSyncTankGearset
+    end
+    if fate.isBossFate and BossFatesClass ~= nil then
+        return BossFatesClass.className
+    end
+    if NormalFateGearset ~= nil and NormalFateGearset ~= "" then
+        return NormalFateGearset
+    end
+    return MainClass and MainClass.Name or nil
+end
+
+function EnsureCorrectGearsetForFate(fate)
+    local desired = GetDesiredGearsetForFate(fate)
+    if desired == nil or desired == "" then
+        desired = MainClass and MainClass.Name or nil
+    end
+    if desired == nil or CurrentlyEquippedGearset == desired then
+        return false
+    end
+    if Player.IsBusy then
+        Dalamud.Log("[FATE] Gearset switch delayed: player is busy")
+        return false
+    end
+    yield("/gs change " .. desired)
+    yield("/wait 1.5")
+    CurrentlyEquippedGearset = desired
+    Dalamud.Log("[FATE] Switched to gearset: " .. desired)
+    return true
+end
+
 function HandleUnexpectedCombat()
     Dalamud.Log("[FATE] HandleUnexpectedCombat entered. inCombat=" ..
         tostring(Svc.Condition[CharacterCondition.inCombat]) ..
@@ -6238,39 +6255,13 @@ function DoFate()
     end
     EnsureFateTimingEntry(CurrentFate)
     NoteFateCombatStart(CurrentFate)
-    local currentClass = Player.Job
-    local needsLevelSync = NeedsLevelSyncForFate(CurrentFate)
 
-    -- Switch to a tank gearset for level-synced FATEs if configured.
-    if needsLevelSync and LevelSyncTankGearset ~= nil and LevelSyncTankGearset ~= "" and not Player.IsBusy then
-        if not LevelSyncGearsetActive then
-            TurnOffCombatMods()
-            yield("/gs change " .. LevelSyncTankGearset)
-            yield("/wait 1.5")
-            LevelSyncGearsetActive = true
-            return
-        end
-    elseif LevelSyncGearsetActive and not Player.IsBusy then
-        -- Level sync no longer needed; swap back to the main class gearset.
+    -- Gearset handling (level-sync tank, normal gearset, boss class, main class)
+    if EnsureCorrectGearsetForFate(CurrentFate) then
         TurnOffCombatMods()
-        yield("/gs change " .. MainClass.Name)
-        yield("/wait 1.5")
-        LevelSyncGearsetActive = false
         return
     end
 
-    -- switch classes (mostly for continutation fates that pop you directly into the next one)
-    if CurrentFate.isBossFate and BossFatesClass ~= nil and currentClass ~= BossFatesClass.classId and not Player.IsBusy then
-        TurnOffCombatMods()
-        yield("/gs change " .. BossFatesClass.className)
-        yield("/wait 1")
-        return
-    elseif not CurrentFate.isBossFate and BossFatesClass ~= nil and currentClass ~= MainClass.classId and not Player.IsBusy then
-        TurnOffCombatMods()
-        yield("/gs change " .. MainClass.className)
-        yield("/wait 1")
-        return
-    end
     local doFateNow = os.clock()
     if CombatStartBoostFateId ~= CurrentFate.fateId then
         CombatStartBoostFateId = CurrentFate.fateId
@@ -9657,6 +9648,7 @@ function FateFarming:Run()
     BossModPresetMissingWarned            = false
     LastProcessedState                    = nil
     LevelSyncGearsetActive                = false
+    CurrentlyEquippedGearset              = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
@@ -9852,6 +9844,7 @@ function FateFarming:Run()
     SummonChocobo                   = Config.Get("Summon Chocobo?")
     ShouldAutoBuyGysahlGreens       = Config.Get("Auto-buy Gysahl Greens?")
     LevelSyncTankGearset            = Config.Get("Tank Gearset for Level Sync")
+    NormalFateGearset               = Config.Get("Normal FATE Gearset")
 
     -- Party Play settings
     PartyPlayMode                   = Config.Get("Party Play Mode")
@@ -10270,7 +10263,12 @@ function FateFarming:Run()
                     AcceptTeleportOfferLocation("")
                 end
 
-                State()
+                local stateOk, stateErr = pcall(State)
+                if not stateOk then
+                    Dalamud.Log("[FATE] State handler error: " .. tostring(stateErr))
+                    yield("/echo [FATE] State handler error, resetting to ready: " .. tostring(stateErr))
+                    State = CharacterState.ready
+                end
             end
         end
         yield("/wait " .. tostring(MainLoopWaitSeconds or 0.25))
@@ -10292,4 +10290,7 @@ end
 --#endregion Main
 
 local app = FateFarming:new()
-app:Run()
+local runOk, runErr = pcall(function() app:Run() end)
+if not runOk then
+    yield("/echo [FATE] Fatal script error: " .. tostring(runErr))
+end
