@@ -9186,13 +9186,18 @@ function ChocoboCheck()
     end
     ChocoboLastSummonAttemptAt = now
 
-    -- Dismount if mounted (items can't be used while mounted)
+    -- Don't summon while mounted. Dismounting just to use greens slows down
+    -- travel between fates; wait until we are on the ground at the destination.
     if Svc.Condition[CharacterCondition.mounted] then
-        SafeYield("/ac dismount")
-        yield("/wait " .. tostring(FastCombatPacing and 1.5 or 4))
-        -- Check if dismounted successfully
-        if Svc.Condition[CharacterCondition.mounted] then
-            yield("/echo [FATE] Failed to dismount, cannot summon chocobo")
+        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: mounted, wait until dismounted") end
+        return
+    end
+
+    -- Don't summon while actively pathing to the next FATE.
+    if State == CharacterState.moveToFate then
+        local isMoving = IPC.vnavmesh ~= nil and (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress())
+        if isMoving then
+            if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: pathing to next FATE") end
             return
         end
     end
