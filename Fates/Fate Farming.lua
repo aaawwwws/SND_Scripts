@@ -120,7 +120,7 @@ configs:
     default: true
   Auto-buy Gysahl Greens?:
     description: ギサールの野菜が切れた際、リムサ・ロミンサで購入します。
-    default: true
+    default: false
   Save active FATE data?:
     description: 出現中FATEの情報をJSONLに保存する
     default: true
