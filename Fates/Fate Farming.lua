@@ -9104,10 +9104,17 @@ function ChocoboCheck()
     end
     -- If no chocobo-detection APIs are available, don't spam /item errors.
     -- Object-table fallback is too unreliable on its own in this environment.
-    if (Svc == nil or Svc.Buddies == nil) and SndGameUtils == nil then
+    local buddiesApiOk = false
+    if Svc and Svc.Buddies then
+        local accessOk = pcall(function() return Svc.Buddies.Companion end)
+        if accessOk then
+            buddiesApiOk = true
+        end
+    end
+    if not buddiesApiOk and SndGameUtils == nil then
         if (ChocoboSummonDisabled ~= true) then
             ChocoboSummonDisabled = true
-            yield("/echo [FATE] Chocobo detection unavailable (Buddies and SndGameUtils missing). Disabling auto-summon.")
+            yield("/echo [FATE] Chocobo detection unavailable (Buddy API and SndGameUtils missing). Disabling auto-summon.")
         end
         return
     end
