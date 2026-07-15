@@ -7672,9 +7672,20 @@ function HandleMovementStuck(targetPosition)
     end
 
     local movedEnough = true
+    local horizontalDistance = 0
+    local verticalDistance = 0
     if MoveStuckLastPosition ~= nil then
-        movedEnough = DistanceBetweenFlat(playerPos, MoveStuckLastPosition) >= stuckThreshold
+        horizontalDistance = DistanceBetweenFlat(playerPos, MoveStuckLastPosition)
+        verticalDistance = math.abs(playerPos.Y - MoveStuckLastPosition.Y)
+        movedEnough = horizontalDistance >= stuckThreshold
     end
+
+    -- Detect Z-axis only movement (e.g. hopping against a wall or floating in place).
+    -- This is usually not real progress, so treat it as stuck and skip the gentle
+    -- sidestep recovery, going straight to teleport/zoneswitch.
+    local zAxisOnlyMovement = (MoveStuckLastPosition ~= nil)
+        and (horizontalDistance < stuckThreshold)
+        and (verticalDistance > stuckThreshold * 1.5)
 
     local madeTargetProgress = false
     if distanceToTarget ~= nil and MoveStuckLastDistanceToTarget ~= nil then
@@ -7690,6 +7701,10 @@ function HandleMovementStuck(targetPosition)
     end
 
     MoveStuckCount = MoveStuckCount + 1
+    if zAxisOnlyMovement then
+        Dalamud.Log("[FATE] Z-axis only movement detected. Accelerating stuck recovery.")
+        MoveStuckCount = math.max(MoveStuckCount, 2)
+    end
     Dalamud.Log("[FATE] Movement stuck detected. Stage #" .. tostring(MoveStuckCount) .. (isSolutionNine and " (Solution Nine)" or ""))
 
     SafeYield("/vnav stop")
