@@ -10312,8 +10312,7 @@ end
 
 --#endregion Main
 
-local app = FateFarming:new()
-local runOk, runErr = pcall(function() app:Run() end)
+local runOk, runErr = pcall(function() FateFarming:new():Run() end)
 if not runOk then
     yield("/echo [FATE] Fatal script error: " .. tostring(runErr))
 end
