@@ -4992,28 +4992,19 @@ function InitialSetup()
 
     -- 2. Teleport to configured starting zone.
     if InitialSetupTeleportZone ~= nil and InitialSetupTeleportZone ~= "" then
-        if InitialSetupTeleportStartAt == nil then
-            InitialSetupTeleportStartAt = os.clock()
+        if InitialSetupLastTerritoryType == nil then
             InitialSetupLastTerritoryType = Svc.ClientState.TerritoryType
+        end
+        if Svc.ClientState.TerritoryType == InitialSetupLastTerritoryType then
+            -- Wait for any active teleport to finish before trying again.
+            if Svc.Condition[CharacterCondition.betweenAreas] then
+                return
+            end
             Dalamud.Log("[FATE] Initial setup: teleporting to " .. InitialSetupTeleportZone)
             TeleportTo(InitialSetupTeleportZone)
             return
         end
-
-        -- Wait for the teleport cast/travel to finish.
-        if Svc.Condition[CharacterCondition.betweenAreas] then
-            return
-        end
-
-        -- Some clients update TerritoryType very slowly after a teleport. Use a
-        -- generous grace period and then assume arrival rather than looping.
-        local elapsed = os.clock() - InitialSetupTeleportStartAt
-        if elapsed < 10 then
-            return
-        end
-
-        Dalamud.Log("[FATE] Initial setup: teleport grace period elapsed, assuming arrival")
-        InitialSetupTeleportStartAt = nil
+        Dalamud.Log("[FATE] Initial setup: arrived in new zone")
         InitialSetupLastTerritoryType = nil
 
         -- Align SelectedZone with the initial setup zone so zone-dependent
@@ -9834,9 +9825,6 @@ function FateFarming:Run()
     GearsetSwitchRetryCount               = 0
     LastMoveToFateId                      = nil
     InitialSetupLastTerritoryType         = nil
-    InitialSetupArrivalWaitUntil          = nil
-    InitialSetupLastPosition              = nil
-    InitialSetupTeleportStartAt           = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
