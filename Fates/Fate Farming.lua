@@ -5104,6 +5104,10 @@ function MiddleOfFateDismount()
     ResetMiddleDismountState()
     -- Apply tank stance once before combat actually starts.
     TankStanceCheck()
+    -- Try to summon chocobo while we are dismounted and before combat starts.
+    if SummonChocobo and not ChocoboSummonDisabled then
+        ChocoboCheck()
+    end
     State = CharacterState.doFate
     Dalamud.Log("[FATE] State Change: DoFate")
 end
