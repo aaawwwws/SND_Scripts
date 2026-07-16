@@ -5029,14 +5029,61 @@ function InitialSetup()
     -- 3. Summon chocobo.
     Dalamud.Log("[FATE] Initial setup: SummonChocoboOnStart=" .. tostring(SummonChocoboOnStart) ..
         " SummonChocobo=" .. tostring(SummonChocobo))
-    if SummonChocoboOnStart and SummonChocobo then
+    if SummonChocoboOnStart and SummonChocobo and not InitialSetupChocoboSummonDone then
         Dalamud.Log("[FATE] Initial setup: attempting chocobo summon")
-        ChocoboCheck()
+        if SummonChocoboInSetup() then
+            InitialSetupChocoboSummonDone = true
+        else
+            return -- wait for next tick (e.g. after dismount)
+        end
     end
 
     -- 4. Done.
     Dalamud.Log("[FATE] Initial setup complete")
     State = CharacterState.ready
+end
+
+function SummonChocoboInSetup()
+    -- Unconditionally dismount if mounted so the summon can go through.
+    if Svc.Condition[CharacterCondition.mounted]
+        or Svc.Condition[CharacterCondition.flying]
+        or Svc.Condition[CharacterCondition.mounting57]
+        or Svc.Condition[CharacterCondition.mounting64]
+    then
+        Dalamud.Log("[FATE] Initial setup: dismounting to summon chocobo")
+        Dismount(true)
+        return false
+    end
+
+    if Svc.Condition[CharacterCondition.inCombat]
+        or Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.occupied]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or Svc.Condition[CharacterCondition.dead]
+    then
+        Dalamud.Log("[FATE] Initial setup: waiting for safe state before summoning chocobo")
+        return false
+    end
+
+    local itemCount = Inventory.GetItemCount(4868)
+    if itemCount == 0 then
+        Dalamud.Log("[FATE] Initial setup: no Gysahl Greens available")
+        yield("/echo [FATE] 初期設定: ギサールの野菜がありません")
+        return true -- done (failed)
+    end
+
+    Dalamud.Log("[FATE] Initial setup: using Gysahl Greens (count: " .. tostring(itemCount) .. ")")
+    yield("/echo [FATE] 初期設定: チョコボを召喚します")
+
+    local greens = LANG.actions["Gysahl Greens"]
+    if SafeYield('/item "' .. greens .. '"') then
+        yield("/wait 1.5")
+        yield("/echo [FATE] 初期設定: チョコボ召喚コマンドを実行しました")
+    else
+        yield("/echo [FATE] 初期設定: チョコボ召喚コマンドが失敗しました")
+    end
+
+    return true
 end
 
 function Dismount(force)
@@ -9881,6 +9928,7 @@ function FateFarming:Run()
     InitialSetupLastTerritoryType         = nil
     InitialSetupTeleportStartAt           = nil
     InitialSetupTeleportDone              = false
+    InitialSetupChocoboSummonDone         = false
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
