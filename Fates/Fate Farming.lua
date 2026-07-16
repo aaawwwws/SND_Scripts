@@ -8362,6 +8362,11 @@ function HasTwistOfFateBuff()
 end
 
 function TankStanceCheck()
+    -- Never adjust stance during active combat to avoid toggle flicker.
+    if Svc.Condition[CharacterCondition.inCombat] then
+        return
+    end
+
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
         (Player ~= nil and Player.Available == true and Player)
@@ -8410,40 +8415,28 @@ function TankStanceCheck()
     if stanceSkill == nil or stanceStatusId == nil then return end
 
     -- Tank stances are toggles: casting while active removes them.
-    -- Verify the status is truly missing (with a short re-check) before casting.
+    -- Keep this check lightweight: one quick re-check is enough to avoid a
+    -- stale read, and we only act once per fate to prevent combat flicker.
     local function StanceIsActive()
         return HasStatusId(stanceStatusId)
     end
 
-    -- Already attempted /ac for this fate. If the stance is still active, do
-    -- nothing; if it was toggled off afterwards (e.g. by Wrath), try once more.
+    if StanceIsActive() then
+        return
+    end
+
     if TankStanceAcAttemptedForFate ~= nil and CurrentFate ~= nil
         and TankStanceAcAttemptedForFate == CurrentFate.fateId then
-        if StanceIsActive() then
-            return
-        end
-        -- Wrath/RSR may have toggled it off; allow one retry.
-        TankStanceAcAttemptedForFate = nil
+        return
+    end
+
+    yield("/wait 0.1")
+    if StanceIsActive() then
+        return
     end
 
     if CurrentFate ~= nil then
         TankStanceAcAttemptedForFate = CurrentFate.fateId
-    end
-
-    -- Avoid a single stale status read toggling the stance off. Require the
-    -- status to be missing on multiple checks spaced slightly apart.
-    local missingChecks = 0
-    for i = 1, 3 do
-        if not StanceIsActive() then
-            missingChecks = missingChecks + 1
-        end
-        if i < 3 then
-            yield("/wait 0.15")
-        end
-    end
-    if missingChecks < 2 then
-        Dalamud.Log("[FATE] Tank stance already active for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
-        return
     end
 
     Dalamud.Log("[FATE] Tank stance missing (" .. tostring(stanceSkill) .. "), activating.")
@@ -8453,24 +8446,12 @@ function TankStanceCheck()
         Dalamud.Log("[FATE] Tank stance /ac command failed (possibly invalid action name or wrong job). Skipping.")
         return
     end
-    yield("/wait 1.5")
+    yield("/wait 0.5")
 
     if StanceIsActive() then
         Dalamud.Log("[FATE] Tank stance activated for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
     else
-        -- The /ac may have failed, or a rotation plugin toggled it off again.
-        -- Try once more after a brief wait, but never loop.
-        Dalamud.Log("[FATE] Tank stance not detected after /ac; retrying once.")
-        yield("/wait 1.0")
-        if not StanceIsActive() then
-            yield(cmd)
-            yield("/wait 1.5")
-        end
-        if StanceIsActive() then
-            Dalamud.Log("[FATE] Tank stance activated on retry for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
-        else
-            Dalamud.Log("[FATE] Tank stance not detected after retry; will not retry this fate.")
-        end
+        Dalamud.Log("[FATE] Tank stance not detected after /ac; will not retry this fate.")
     end
 end
 
