@@ -5075,6 +5075,8 @@ function MiddleOfFateDismount()
     end
 
     ResetMiddleDismountState()
+    -- Apply tank stance once before combat actually starts.
+    TankStanceCheck()
     State = CharacterState.doFate
     Dalamud.Log("[FATE] State Change: DoFate")
 end
