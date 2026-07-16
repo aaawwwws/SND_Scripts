@@ -4991,7 +4991,7 @@ function InitialSetup()
     end
 
     -- 2. Teleport to configured starting zone.
-    if InitialSetupTeleportZone ~= nil and InitialSetupTeleportZone ~= "" then
+    if InitialSetupTeleportZone ~= nil and InitialSetupTeleportZone ~= "" and not InitialSetupTeleportDone then
         if InitialSetupTeleportStartAt == nil then
             InitialSetupTeleportStartAt = os.clock()
             InitialSetupLastTerritoryType = Svc.ClientState.TerritoryType
@@ -5015,6 +5015,7 @@ function InitialSetup()
         Dalamud.Log("[FATE] Initial setup: teleport grace period elapsed, assuming arrival")
         InitialSetupTeleportStartAt = nil
         InitialSetupLastTerritoryType = nil
+        InitialSetupTeleportDone = true
 
         -- Align SelectedZone with the initial setup zone so zone-dependent
         -- checks (like chocobo summon) pass after teleporting.
@@ -9861,6 +9862,7 @@ function FateFarming:Run()
     LastMoveToFateId                      = nil
     InitialSetupLastTerritoryType         = nil
     InitialSetupTeleportStartAt           = nil
+    InitialSetupTeleportDone              = false
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
