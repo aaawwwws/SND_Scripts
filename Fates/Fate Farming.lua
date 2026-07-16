@@ -58,6 +58,15 @@ configs:
   Normal FATE Gearset:
     description: 通常FATE（レベルシンク不要）で自動で着替えるギアセット名または番号。空欄の場合はメインクラスのギアセットのままです。
     default: "dps"
+  Initial setup teleport zone:
+    description: 開始時にテレポートするゾーンのエーテライト名（例：リビングメモリー）。空欄で無効。
+    default: "リビングメモリー"
+  Summon chocobo on start?:
+    description: 開始時にチョコボ召喚を試行します。
+    default: true
+  Switch to normal gearset on start?:
+    description: 開始時にNormal FATE Gearsetに着替えます。
+    default: true
   Max melee distance:
     description: 近接ジョブ時の目標戦闘距離です。
     default: 2.5
@@ -4948,6 +4957,51 @@ function MountState()
     end
 end
 
+function InitialSetup()
+    -- 1. Switch to normal FATE gearset first.
+    if SwitchToNormalGearsetOnStart and NormalFateGearset ~= nil and NormalFateGearset ~= ""
+        and CurrentlyEquippedGearset ~= NormalFateGearset then
+        if Player.IsBusy then
+            Dalamud.Log("[FATE] Initial setup: waiting for player to be idle")
+            return
+        end
+        Dalamud.Log("[FATE] Initial setup: switching to normal gearset")
+        local ok = SafeYield("/gs change " .. NormalFateGearset)
+        yield("/wait 1.5")
+        if ok then
+            CurrentlyEquippedGearset = NormalFateGearset
+            Dalamud.Log("[FATE] Initial setup: switched to normal gearset")
+        else
+            Dalamud.Log("[FATE] Initial setup: gearset switch failed, continuing")
+        end
+        return
+    end
+
+    -- 2. Teleport to configured starting zone.
+    if InitialSetupTeleportZone ~= nil and InitialSetupTeleportZone ~= "" then
+        if InitialSetupLastTerritoryType == nil then
+            InitialSetupLastTerritoryType = Svc.ClientState.TerritoryType
+        end
+        if Svc.ClientState.TerritoryType == InitialSetupLastTerritoryType then
+            Dalamud.Log("[FATE] Initial setup: teleporting to " .. InitialSetupTeleportZone)
+            TeleportTo(InitialSetupTeleportZone)
+            return
+        end
+        Dalamud.Log("[FATE] Initial setup: arrived in new zone")
+        InitialSetupLastTerritoryType = nil
+    end
+
+    -- 3. Summon chocobo.
+    if SummonChocoboOnStart and SummonChocobo then
+        Dalamud.Log("[FATE] Initial setup: attempting chocobo summon")
+        ChocoboCheck()
+    end
+
+    -- 4. Done.
+    Dalamud.Log("[FATE] Initial setup complete")
+    State = CharacterState.ready
+end
+
 function Dismount(force)
     local now = os.clock()
     local dismountRetryCooldown = DismountRetryCooldownSeconds or 0.8
@@ -9484,6 +9538,7 @@ function FateFarming:Run()
 
     CharacterState = {
         ready                  = Ready,
+        initialSetup           = InitialSetup,
         dead                   = HandleDeath,
         unexpectedCombat       = HandleUnexpectedCombat,
         mounting               = MountState,
@@ -9754,6 +9809,7 @@ function FateFarming:Run()
     CurrentlyEquippedGearset              = nil
     GearsetSwitchRetryCount               = 0
     LastMoveToFateId                      = nil
+    InitialSetupLastTerritoryType         = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
@@ -9950,6 +10006,9 @@ function FateFarming:Run()
     ShouldAutoBuyGysahlGreens       = Config.Get("Auto-buy Gysahl Greens?")
     LevelSyncTankGearset            = Config.Get("Tank Gearset for Level Sync")
     NormalFateGearset               = Config.Get("Normal FATE Gearset")
+    InitialSetupTeleportZone        = Config.Get("Initial setup teleport zone")
+    SummonChocoboOnStart            = Config.Get("Summon chocobo on start?")
+    SwitchToNormalGearsetOnStart    = Config.Get("Switch to normal gearset on start?")
 
     -- Party Play settings
     PartyPlayMode                   = Config.Get("Party Play Mode")
@@ -10102,7 +10161,7 @@ function FateFarming:Run()
     Dalamud.Log("[FATE] Starting fate farming script.")
     Dalamud.Log("[FATE] Initializing character state...")
 
-    State = CharacterState.ready
+    State = CharacterState.initialSetup
     CurrentFate = nil
 
     if CompanionScriptMode then
@@ -10157,6 +10216,7 @@ function FateFarming:Run()
                         else
                             local navBusy = IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()
                             local stateBlocksIdleRecovery = State == CharacterState.dead
+                                or State == CharacterState.initialSetup
                                 or State == CharacterState.waitForContinuation
                                 or State == CharacterState.collectionsFateTurnIn
                                 or State == CharacterState.processRetainers
