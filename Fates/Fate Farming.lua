@@ -4994,6 +4994,7 @@ function InitialSetup()
     if InitialSetupTeleportZone ~= nil and InitialSetupTeleportZone ~= "" then
         if InitialSetupLastTerritoryType == nil then
             InitialSetupLastTerritoryType = Svc.ClientState.TerritoryType
+            InitialSetupLastPosition = GetLocalPlayerPosition()
         end
         if Svc.ClientState.TerritoryType == InitialSetupLastTerritoryType then
             -- Wait for any active teleport to finish and give TerritoryType time
@@ -5003,19 +5004,34 @@ function InitialSetup()
                 return
             end
             if InitialSetupArrivalWaitUntil == nil then
-                InitialSetupArrivalWaitUntil = os.clock() + 2.5
+                InitialSetupArrivalWaitUntil = os.clock() + 5.0
             end
             if os.clock() < InitialSetupArrivalWaitUntil then
                 return
             end
             InitialSetupArrivalWaitUntil = nil
-            Dalamud.Log("[FATE] Initial setup: teleporting to " .. InitialSetupTeleportZone)
-            TeleportTo(InitialSetupTeleportZone)
-            return
+            -- If TerritoryType still hasn't changed, check whether the player
+            -- position has moved significantly (some teleports update position
+            -- before TerritoryType in the API).
+            local currentPos = GetLocalPlayerPosition()
+            local positionChanged = InitialSetupLastPosition ~= nil and currentPos ~= nil
+                and DistanceBetween(InitialSetupLastPosition, currentPos) > 10
+            if positionChanged then
+                Dalamud.Log("[FATE] Initial setup: arrived in new zone (by position)")
+                InitialSetupLastTerritoryType = nil
+                InitialSetupLastPosition = nil
+            else
+                Dalamud.Log("[FATE] Initial setup: teleporting to " .. InitialSetupTeleportZone)
+                TeleportTo(InitialSetupTeleportZone)
+                return
+            end
         end
-        Dalamud.Log("[FATE] Initial setup: arrived in new zone")
+        if Svc.ClientState.TerritoryType ~= InitialSetupLastTerritoryType then
+            Dalamud.Log("[FATE] Initial setup: arrived in new zone")
+        end
         InitialSetupLastTerritoryType = nil
         InitialSetupArrivalWaitUntil = nil
+        InitialSetupLastPosition = nil
 
         -- Align SelectedZone with the initial setup zone so zone-dependent
         -- checks (like chocobo summon) pass after teleporting.
@@ -9836,6 +9852,7 @@ function FateFarming:Run()
     LastMoveToFateId                      = nil
     InitialSetupLastTerritoryType         = nil
     InitialSetupArrivalWaitUntil          = nil
+    InitialSetupLastPosition              = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
