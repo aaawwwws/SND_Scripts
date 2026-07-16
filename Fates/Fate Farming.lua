@@ -5102,6 +5102,14 @@ function MiddleOfFateDismount()
     end
 
     ResetMiddleDismountState()
+
+    -- Wait for dismount to finish before applying stance/summon checks.
+    local dismountWaitStart = os.clock()
+    while Svc.Condition[CharacterCondition.mounted]
+        and os.clock() - dismountWaitStart < 3 do
+        yield("/wait 0.2")
+    end
+
     -- Apply tank stance once before combat actually starts.
     TankStanceCheck()
     -- Try to summon chocobo while we are dismounted and before combat starts.
