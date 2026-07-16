@@ -25,8 +25,8 @@ configs:
     is_choice: true
     choices: ["Any", "Wrath", "RotationSolver","BossMod", "BossModReborn"]
   Use Wrath IPC?:
-    description: Wrath Combo を IPC 経由で制御します（推奨）。ON にするとゾーン変更後の自動タンクスタンスなども Wrath に委譲されます。
-    default: true
+    description: Wrath Combo を IPC 経由で制御します。ON にするとゾーン変更後の自動タンクスタンスなども Wrath に委譲されます。OFF の場合は /wrath コマンドを使用します。
+    default: false
   Dodging Plugin:
     description: 使用する回避プラグインを選択します。Rotation Plugin が BMR/VBM の場合はそちらが優先されます。
     default: "BossModReborn"
@@ -64,7 +64,7 @@ configs:
     default: "dps"
   Auto-enable tank stance?:
     description: タンクジョブ時にタンクスタンスを自動でONにします。OFFの場合は手動または回しプラグインに任せます。
-    default: false
+    default: true
   Initial setup teleport zone:
     description: 開始時にテレポートするゾーンのエーテライト名（例：リビング・メモリー）。空欄で無効。
     default: "リビング・メモリー"
