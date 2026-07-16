@@ -9264,7 +9264,9 @@ function ChocoboCheck()
         " SummonChocobo=" .. tostring(SummonChocobo) ..
         " lastAttempt=" .. tostring(ChocoboLastSummonAttemptAt)
     Dalamud.Log(summary)
-    if State == CharacterState.ready or State == CharacterState.initialSetup then
+    if State == CharacterState.ready
+        or State == CharacterState.initialSetup
+        or State == CharacterState.MiddleOfFateDismount then
         yield("/echo " .. summary)
     end
 
@@ -9282,25 +9284,34 @@ function ChocoboCheck()
             ChocoboLastSummonAttemptAt = now - (30 * 60) + 10
         end
     end
+    local function EchoSkip(reason)
+        local msg = "[FATE] ChocoboCheck skip: " .. reason
+        Dalamud.Log(msg)
+        if State == CharacterState.ready
+            or State == CharacterState.initialSetup
+            or State == CharacterState.MiddleOfFateDismount then
+            yield("/echo " .. msg)
+        end
+    end
 
     if not SummonChocobo then
-        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: SummonChocobo=false") end
+        EchoSkip("SummonChocobo=false")
         DeferCheck()
         return
     end
     if ChocoboSummonDisabled then
-        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: ChocoboSummonDisabled=true") end
+        EchoSkip("ChocoboSummonDisabled=true")
         DeferCheck()
         return
     end
     if DisableChocoboInParty and GetPartyPlayActive() then
-        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: party play active") end
+        EchoSkip("party play active")
         DeferCheck()
         return
     end
     -- Skip summoning while in town/traveling; wait until we reach the farming zone.
     if SelectedZone ~= nil and Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
-        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: not in selected zone") end
+        EchoSkip("not in selected zone")
         DeferCheck()
         return
     end
@@ -9310,14 +9321,14 @@ function ChocoboCheck()
         or Svc.Condition[CharacterCondition.betweenAreas]
         or Svc.Condition[CharacterCondition.dead]
     then
-        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: busy/in combat/casting") end
+        EchoSkip("busy/in combat/casting")
         DeferCheck()
         return
     end
 
     local isSummoned = IsChocoboSummoned()
     if isSummoned then
-        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: already summoned") end
+        EchoSkip("already summoned")
         -- Already out; use the normal 30-minute window for the next recheck.
         ChocoboLastSummonAttemptAt = chocoboCheckDebugNow
         return
@@ -9327,7 +9338,7 @@ function ChocoboCheck()
     -- a summon once every 30 minutes. This keeps the chocobo out as much as
     -- possible while keeping error/usage spam minimal.
     if now - (ChocoboLastSummonAttemptAt or 0) < (30 * 60) then
-        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: on 30-minute cooldown") end
+        EchoSkip("on 30-minute cooldown")
         return
     end
     ChocoboLastSummonAttemptAt = now
@@ -9335,7 +9346,7 @@ function ChocoboCheck()
     -- Don't summon while mounted. Dismounting just to use greens slows down
     -- travel between fates; wait until we are on the ground at the destination.
     if Svc.Condition[CharacterCondition.mounted] then
-        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: mounted, wait until dismounted") end
+        EchoSkip("mounted, wait until dismounted")
         DeferCheck()
         return
     end
@@ -9344,7 +9355,7 @@ function ChocoboCheck()
     if State == CharacterState.moveToFate then
         local isMoving = IPC.vnavmesh ~= nil and (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress())
         if isMoving then
-            if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: pathing to next FATE") end
+            EchoSkip("pathing to next FATE")
             DeferCheck()
             return
         end
@@ -9357,7 +9368,7 @@ function ChocoboCheck()
             or Svc.Condition[CharacterCondition.casting]
             or Svc.Condition[CharacterCondition.mounted]
         then
-            if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: became busy before using item") end
+            EchoSkip("became busy before using item")
             DeferCheck()
             return
         end
@@ -9432,8 +9443,7 @@ function ChocoboCheck()
             end
         end
     else
-        Dalamud.Log("[FATE] ChocoboCheck skip: no Gysahl Greens (auto-buy is " ..
-            tostring(ShouldAutoBuyGysahlGreens) .. ")")
+        EchoSkip("no Gysahl Greens (auto-buy is " .. tostring(ShouldAutoBuyGysahlGreens) .. ")")
         if ShouldAutoBuyGysahlGreens then
             NeedsGysahlGreens = true
         end
