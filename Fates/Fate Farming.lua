@@ -9291,9 +9291,9 @@ function ChocoboCheck()
                         tostring(ChocoboSummonFailureCount) .. ")")
                 end
                 -- /item failed. This usually means the chocobo is already
-                -- summoned or the item is on cooldown. Wait the full 30-minute
-                -- duration before retrying to avoid error spam.
-                ChocoboLastSummonAttemptAt = os.clock() + (30 * 60) - 30
+                -- summoned or the item is on cooldown. Retry after 1 minute so
+                -- we re-summon quickly once the buff actually expires.
+                ChocoboLastSummonAttemptAt = os.clock() + (1 * 60)
                 if ChocoboSummonFailureCount >= 10 then
                     ChocoboSummonDisabled = true
                     yield("/echo [FATE] Chocobo summon failed 10 times. Disabling auto-summon for this session.")
