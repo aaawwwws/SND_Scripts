@@ -6285,17 +6285,26 @@ function EnsureCorrectGearsetForFate(fate)
         CurrentlyEquippedGearset = desired
         GearsetSwitchRetryCount = 0
         Dalamud.Log("[FATE] Switched to gearset: " .. desired)
-        return true
-        else
-            GearsetSwitchRetryCount = (GearsetSwitchRetryCount or 0) + 1
-            if GearsetSwitchRetryCount >= 5 then
-                Dalamud.Log("[FATE] Gearset switch failed 5 times for " .. desired .. ", giving up")
-                -- Do not mark as equipped; we will retry when the target fate changes.
-                GearsetSwitchRetryCount = 0
+        -- If we just switched to the tank gearset, dismount so we can apply
+        -- tank stance and summon chocobo before re-mounting.
+        if desired == LevelSyncTankGearset and Svc.Condition[CharacterCondition.mounted] then
+            Dismount(true)
+            yield("/wait 1.0")
+            TankStanceCheck()
+            if SummonChocobo and not ChocoboSummonDisabled then
+                ChocoboCheck()
             end
-            return false
         end
-
+        return true
+    else
+        GearsetSwitchRetryCount = (GearsetSwitchRetryCount or 0) + 1
+        if GearsetSwitchRetryCount >= 5 then
+            Dalamud.Log("[FATE] Gearset switch failed 5 times for " .. desired .. ", giving up")
+            -- Do not mark as equipped; we will retry when the target fate changes.
+            GearsetSwitchRetryCount = 0
+        end
+        return false
+    end
 end
 
 function HandleUnexpectedCombat()
