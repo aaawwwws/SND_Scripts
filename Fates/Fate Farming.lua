@@ -9220,10 +9220,14 @@ end
 -- ============================================================
 
 function ChocoboCheck()
-    Dalamud.Log("[FATE] ChocoboCheck called state=" .. tostring(State) ..
+    local summary = "[FATE] ChocoboCheck called state=" .. tostring(State) ..
         " territory=" .. tostring(Svc.ClientState.TerritoryType) ..
         " SummonChocobo=" .. tostring(SummonChocobo) ..
-        " lastAttempt=" .. tostring(ChocoboLastSummonAttemptAt))
+        " lastAttempt=" .. tostring(ChocoboLastSummonAttemptAt)
+    Dalamud.Log(summary)
+    if State == CharacterState.ready or State == CharacterState.initialSetup then
+        yield("/echo " .. summary)
+    end
 
     local chocoboCheckDebugNow = os.clock()
     local shouldDebugChocoboCheck = (ChocoboLastCheckDebugAt or 0) + 30 < chocoboCheckDebugNow
