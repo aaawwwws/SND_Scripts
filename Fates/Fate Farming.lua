@@ -59,8 +59,8 @@ configs:
     description: 通常FATE（レベルシンク不要）で自動で着替えるギアセット名または番号。空欄の場合はメインクラスのギアセットのままです。
     default: "dps"
   Initial setup teleport zone:
-    description: 開始時にテレポートするゾーンのエーテライト名（例：リビングメモリー）。空欄で無効。
-    default: "リビングメモリー"
+    description: 開始時にテレポートするゾーンのエーテライト名（例：リビング・メモリー）。空欄で無効。
+    default: "リビング・メモリー"
   Summon chocobo on start?:
     description: 開始時にチョコボ召喚を試行します。
     default: true
