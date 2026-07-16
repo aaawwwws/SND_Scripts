@@ -5294,6 +5294,10 @@ function MoveToFate()
         end
         if shouldSwitchFate then
             SafeYield("/vnav stop")
+            if CurrentFate == nil or NextFate == nil or CurrentFate.fateId ~= NextFate.fateId then
+                TankStanceAcAttemptedForFate = nil
+                TankStanceAcAttemptedAt = 0
+            end
             CurrentFate = NextFate
             ResetNoCombatRecoveryState()
             ResetMeleeEngageRecoveryState()
@@ -6391,7 +6395,12 @@ function HandleUnexpectedCombat()
     local nearestFate = Fates.GetNearestFate()
     local nearestProgress = nearestFate and nearestFate.Progress or nil
     if InActiveFate() and nearestProgress ~= nil and nearestProgress < 100 then
-        CurrentFate = BuildFateTable(nearestFate)
+        local builtFate = BuildFateTable(nearestFate)
+        if CurrentFate == nil or builtFate == nil or CurrentFate.fateId ~= builtFate.fateId then
+            TankStanceAcAttemptedForFate = nil
+            TankStanceAcAttemptedAt = 0
+        end
+        CurrentFate = builtFate
         State = CharacterState.doFate
         Dalamud.Log("[FATE] State Change: DoFate")
         return
@@ -7694,6 +7703,10 @@ function Ready()
         return
     end
 
+    if CurrentFate == nil or NextFate == nil or CurrentFate.fateId ~= NextFate.fateId then
+        TankStanceAcAttemptedForFate = nil
+        TankStanceAcAttemptedAt = 0
+    end
     CurrentFate = NextFate
     ResetNoCombatRecoveryState()
     ResetMeleeEngageRecoveryState()
@@ -8536,12 +8549,30 @@ function TankStanceCheck()
         return HasStatusId(stanceStatusId)
     end
 
-    if StanceIsActive() then
+    local active = StanceIsActive()
+    local stateName = State ~= nil and tostring(State) or "nil"
+    local fateId = CurrentFate ~= nil and tostring(CurrentFate.fateId) or "nil"
+    local summary = "[FATE] TankStanceCheck state=" .. stateName ..
+        " job=" .. tostring(jobId) .. " stance=" .. tostring(stanceSkill) ..
+        " active=" .. tostring(active) .. " fate=" .. fateId ..
+        " attempted=" .. tostring(TankStanceAcAttemptedForFate)
+    Dalamud.Log(summary)
+    yield("/echo " .. summary)
+
+    if active then
         return
     end
 
     if TankStanceAcAttemptedForFate ~= nil and CurrentFate ~= nil
         and TankStanceAcAttemptedForFate == CurrentFate.fateId then
+        return
+    end
+
+    -- Global cooldown to stop rapid double-toggles when CurrentFate is nil or
+    -- when multiple callers fire in quick succession.
+    local now = os.clock()
+    if TankStanceAcAttemptedAt ~= nil and (now - TankStanceAcAttemptedAt) < 5 then
+        Dalamud.Log("[FATE] Tank stance toggle skipped: on 5s cooldown")
         return
     end
 
@@ -8553,8 +8584,10 @@ function TankStanceCheck()
     if CurrentFate ~= nil then
         TankStanceAcAttemptedForFate = CurrentFate.fateId
     end
+    TankStanceAcAttemptedAt = now
 
     Dalamud.Log("[FATE] Tank stance missing (" .. tostring(stanceSkill) .. "), activating.")
+    yield("/echo [FATE] Tank stance missing, activating " .. tostring(stanceSkill))
     local cmd = "/ac \"" .. tostring(stanceSkill) .. "\""
     local ok = pcall(function() yield(cmd) end)
     if not ok then
@@ -8565,8 +8598,10 @@ function TankStanceCheck()
 
     if StanceIsActive() then
         Dalamud.Log("[FATE] Tank stance activated for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
+        yield("/echo [FATE] Tank stance activated")
     else
         Dalamud.Log("[FATE] Tank stance not detected after /ac; will not retry this fate.")
+        yield("/echo [FATE] Tank stance not detected after /ac")
     end
 end
 
@@ -9929,6 +9964,8 @@ function FateFarming:Run()
     InitialSetupTeleportStartAt           = nil
     InitialSetupTeleportDone              = false
     InitialSetupChocoboSummonDone         = false
+    TankStanceAcAttemptedForFate          = nil
+    TankStanceAcAttemptedAt               = 0
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
