@@ -294,7 +294,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション,水の迷宮の夢,我々の貢物,千年の孤独"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション,水の迷宮の夢,我々の貢物,千年の孤独,不死の人"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -9319,7 +9319,7 @@ function ChocoboCheck()
             return
         end
 
-        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck: attempting to summon (Greens: " .. tostring(itemCount) .. ")") end
+        Dalamud.Log("[FATE] ChocoboCheck: attempting to summon (Greens: " .. tostring(itemCount) .. ")")
         yield("/echo [FATE] Chocobo not summoned, attempting to summon... (Greens: " .. tostring(itemCount) .. ")")
 
         -- Wait a moment for any ongoing state transitions (dismount, combat drop,
@@ -9389,7 +9389,8 @@ function ChocoboCheck()
             end
         end
     else
-        if shouldDebugChocoboCheck then Dalamud.Log("[FATE] ChocoboCheck skip: no Gysahl Greens") end
+        Dalamud.Log("[FATE] ChocoboCheck skip: no Gysahl Greens (auto-buy is " ..
+            tostring(ShouldAutoBuyGysahlGreens) .. ")")
         if ShouldAutoBuyGysahlGreens then
             NeedsGysahlGreens = true
         end
