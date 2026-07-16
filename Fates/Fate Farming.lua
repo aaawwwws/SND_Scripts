@@ -4028,6 +4028,19 @@ function GetAetheryteInZoneByName(zoneId, aetheryteName)
     return nil
 end
 
+function GetZoneIdByAetheryteName(aetheryteName)
+    if aetheryteName == nil or aetheryteName == "" then
+        return nil
+    end
+    for _, zone in ipairs(FatesData) do
+        local match = GetAetheryteInZoneByName(zone.zoneId, aetheryteName)
+        if match ~= nil then
+            return zone.zoneId
+        end
+    end
+    return nil
+end
+
 function DistanceFromClosestAetheryteToPoint(vec3, teleportTimePenalty)
     local closestAetheryte = nil
     local closestTravelDistance = math.maxinteger
@@ -4989,9 +5002,19 @@ function InitialSetup()
         end
         Dalamud.Log("[FATE] Initial setup: arrived in new zone")
         InitialSetupLastTerritoryType = nil
+
+        -- Align SelectedZone with the initial setup zone so zone-dependent
+        -- checks (like chocobo summon) pass after teleporting.
+        local setupZoneId = GetZoneIdByAetheryteName(InitialSetupTeleportZone)
+        if setupZoneId ~= nil and (SelectedZone == nil or SelectedZone.zoneId ~= setupZoneId) then
+            SelectedZone = BuildZoneData(setupZoneId)
+            Dalamud.Log("[FATE] Initial setup: aligned selected zone to " .. InitialSetupTeleportZone)
+        end
     end
 
     -- 3. Summon chocobo.
+    Dalamud.Log("[FATE] Initial setup: SummonChocoboOnStart=" .. tostring(SummonChocoboOnStart) ..
+        " SummonChocobo=" .. tostring(SummonChocobo))
     if SummonChocoboOnStart and SummonChocobo then
         Dalamud.Log("[FATE] Initial setup: attempting chocobo summon")
         ChocoboCheck()
@@ -9193,6 +9216,11 @@ end
 -- ============================================================
 
 function ChocoboCheck()
+    Dalamud.Log("[FATE] ChocoboCheck called state=" .. tostring(State) ..
+        " territory=" .. tostring(Svc.ClientState.TerritoryType) ..
+        " SummonChocobo=" .. tostring(SummonChocobo) ..
+        " lastAttempt=" .. tostring(ChocoboLastSummonAttemptAt))
+
     local chocoboCheckDebugNow = os.clock()
     local shouldDebugChocoboCheck = (ChocoboLastCheckDebugAt or 0) + 30 < chocoboCheckDebugNow
     if shouldDebugChocoboCheck then
@@ -9322,7 +9350,7 @@ function ChocoboCheck()
         end
 
         local used = TryUseGysahlGreens()
-        yield("/wait 5")
+        yield("/wait 2")
 
         -- Check if summoning worked
         if IsChocoboSummoned() then
@@ -9347,9 +9375,9 @@ function ChocoboCheck()
                         tostring(ChocoboSummonFailureCount) .. ")")
                 end
                 -- /item failed. This usually means the chocobo is already
-                -- summoned or the item is on cooldown. Retry after 1 minute so
+                -- summoned or the item is on cooldown. Retry after 30 seconds so
                 -- we re-summon quickly once the buff actually expires.
-                ChocoboLastSummonAttemptAt = os.clock() + (1 * 60)
+                ChocoboLastSummonAttemptAt = os.clock() + 30
                 if ChocoboSummonFailureCount >= 10 then
                     ChocoboSummonDisabled = true
                     yield("/echo [FATE] Chocobo summon failed 10 times. Disabling auto-summon for this session.")
