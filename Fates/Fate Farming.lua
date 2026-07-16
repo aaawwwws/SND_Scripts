@@ -6242,10 +6242,8 @@ function TurnOnCombatMods(rotationMode)
         elseif RotationPlugin == "VBM" then
             ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "combat-on")
         elseif RotationPlugin == "Wrath" then
-            if WrathAutoEnabled ~= true then
-                SafeYield("/wrath auto")
-                WrathAutoEnabled = true
-            end
+            SafeYield("/wrath auto on")
+            WrathAutoEnabled = true
             MarkWrathAutoPulse(os.clock())
         end
 
@@ -6296,7 +6294,8 @@ function TurnOffCombatMods()
         elseif RotationPlugin == "VBM" then
             IPC.BossMod.ClearActive()
         elseif RotationPlugin == "Wrath" then
-            -- /wrath auto is toggle-only; do not toggle here to avoid accidental OFF.
+            SafeYield("/wrath auto off")
+            WrathAutoEnabled = false
             ResetWrathKeepAliveState()
         end
 
@@ -10027,7 +10026,6 @@ function FateFarming:Run()
     WrathKeepAliveNoCastSince             = 0
     WrathKeepAliveLastTargetSignature     = nil
     WrathKeepAliveFateId                  = nil
-    WrathAutoEnabled                      = true
     LastMountCommandAt                    = 0
     LastDismountCommandAt                 = 0
     FateTimingById                        = {}
