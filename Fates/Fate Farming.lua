@@ -6464,10 +6464,12 @@ function TurnOffCombatMods()
         elseif RotationPlugin == "Wrath" then
             if UseWrathIPC == true then
                 DisableWrathAutoRotation()
+                WrathAutoEnabled = false
             end
             -- /wrath auto is toggle-only; do not toggle here to avoid accidental OFF.
+            -- When not using IPC, leave WrathAutoEnabled alone so the next TurnOn
+            -- does not accidentally toggle Wrath back off.
             ResetWrathKeepAliveState()
-            WrathAutoEnabled = false
         end
 
         -- turn off BMR so you dont start following other mobs
