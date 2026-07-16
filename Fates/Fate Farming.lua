@@ -4996,12 +4996,26 @@ function InitialSetup()
             InitialSetupLastTerritoryType = Svc.ClientState.TerritoryType
         end
         if Svc.ClientState.TerritoryType == InitialSetupLastTerritoryType then
+            -- Wait for any active teleport to finish and give TerritoryType time
+            -- to update before deciding we need to teleport again.
+            if Svc.Condition[CharacterCondition.betweenAreas] then
+                InitialSetupArrivalWaitUntil = nil
+                return
+            end
+            if InitialSetupArrivalWaitUntil == nil then
+                InitialSetupArrivalWaitUntil = os.clock() + 2.5
+            end
+            if os.clock() < InitialSetupArrivalWaitUntil then
+                return
+            end
+            InitialSetupArrivalWaitUntil = nil
             Dalamud.Log("[FATE] Initial setup: teleporting to " .. InitialSetupTeleportZone)
             TeleportTo(InitialSetupTeleportZone)
             return
         end
         Dalamud.Log("[FATE] Initial setup: arrived in new zone")
         InitialSetupLastTerritoryType = nil
+        InitialSetupArrivalWaitUntil = nil
 
         -- Align SelectedZone with the initial setup zone so zone-dependent
         -- checks (like chocobo summon) pass after teleporting.
@@ -9821,6 +9835,7 @@ function FateFarming:Run()
     GearsetSwitchRetryCount               = 0
     LastMoveToFateId                      = nil
     InitialSetupLastTerritoryType         = nil
+    InitialSetupArrivalWaitUntil          = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
