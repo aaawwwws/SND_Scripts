@@ -5069,6 +5069,15 @@ function MoveToFate()
         return
     end
 
+    -- Reset gearset tracking when the target fate changes so we don't skip
+    -- switching to the normal/boss/tank gearset.
+    local currentFateId = CurrentFate ~= nil and CurrentFate.fateId or nil
+    if currentFateId ~= LastMoveToFateId then
+        LastMoveToFateId = currentFateId
+        CurrentlyEquippedGearset = nil
+        Dalamud.Log("[FATE] Target fate changed, resetting gearset tracking")
+    end
+
     if CurrentFate ~= nil and not IsFateActive(CurrentFate.fateObject) then
         Dalamud.Log("[FATE] Next Fate is dead, selecting new Fate.")
         SafeYield("/vnav stop")
@@ -6190,15 +6199,16 @@ function EnsureCorrectGearsetForFate(fate)
         GearsetSwitchRetryCount = 0
         Dalamud.Log("[FATE] Switched to gearset: " .. desired)
         return true
-    else
-        GearsetSwitchRetryCount = (GearsetSwitchRetryCount or 0) + 1
-        if GearsetSwitchRetryCount >= 5 then
-            Dalamud.Log("[FATE] Gearset switch failed 5 times for " .. desired .. ", giving up")
-            CurrentlyEquippedGearset = desired
-            GearsetSwitchRetryCount = 0
+        else
+            GearsetSwitchRetryCount = (GearsetSwitchRetryCount or 0) + 1
+            if GearsetSwitchRetryCount >= 5 then
+                Dalamud.Log("[FATE] Gearset switch failed 5 times for " .. desired .. ", giving up")
+                -- Do not mark as equipped; we will retry when the target fate changes.
+                GearsetSwitchRetryCount = 0
+            end
+            return false
         end
-        return false
-    end
+
 end
 
 function HandleUnexpectedCombat()
@@ -9743,6 +9753,7 @@ function FateFarming:Run()
     LevelSyncGearsetActive                = false
     CurrentlyEquippedGearset              = nil
     GearsetSwitchRetryCount               = 0
+    LastMoveToFateId                      = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
