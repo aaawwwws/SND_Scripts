@@ -17,12 +17,16 @@ plugin_dependencies:
 - Lifestream
 - vnavmesh
 - TextAdvance
+- WrathCombo
 configs:
   Rotation Plugin:
     description: 使用する回しプラグインを選択します。
     default: "Wrath"
     is_choice: true
     choices: ["Any", "Wrath", "RotationSolver","BossMod", "BossModReborn"]
+  Use Wrath IPC?:
+    description: Wrath Combo を IPC 経由で制御します（推奨）。ON にするとゾーン変更後の自動タンクスタンスなども Wrath に委譲されます。
+    default: true
   Dodging Plugin:
     description: 使用する回避プラグインを選択します。Rotation Plugin が BMR/VBM の場合はそちらが優先されます。
     default: "BossModReborn"
@@ -6220,6 +6224,158 @@ function MaybeRearmWrathAuto()
     end
 end
 
+-- ============================================================
+-- Wrath Combo IPC helpers
+-- ============================================================
+
+function WrathIPCReady()
+    return IPC ~= nil and IPC.WrathCombo ~= nil and
+        type(IPC.WrathCombo.IPCReady) == "function" and IPC.WrathCombo.IPCReady()
+end
+
+function GetWrathLeaseID()
+    if WrathLeaseID ~= nil then return WrathLeaseID end
+    if not WrathIPCReady() then
+        Dalamud.Log("[FATE] Wrath IPC not ready; cannot register lease")
+        return nil
+    end
+    local ok, lease = pcall(function() return IPC.WrathCombo.Register("Fate Farming") end)
+    if not ok or lease == nil then
+        Dalamud.Log("[FATE] Failed to register Wrath IPC lease")
+        return nil
+    end
+    WrathLeaseID = lease
+    Dalamud.Log("[FATE] Registered Wrath IPC lease: " .. tostring(lease))
+    return lease
+end
+
+function ReleaseWrathControl()
+    if WrathLeaseID ~= nil and IPC ~= nil and IPC.WrathCombo ~= nil and
+        type(IPC.WrathCombo.ReleaseControl) == "function" then
+        local ok = pcall(function() IPC.WrathCombo.ReleaseControl(WrathLeaseID) end)
+        if ok then
+            Dalamud.Log("[FATE] Released Wrath IPC lease: " .. tostring(WrathLeaseID))
+        else
+            Dalamud.Log("[FATE] Failed to release Wrath IPC lease: " .. tostring(WrathLeaseID))
+        end
+        WrathLeaseID = nil
+    end
+end
+
+function AutoRotationConfigOptionValue(name)
+    if AutoRotationConfigOption ~= nil and AutoRotationConfigOption[name] ~= nil then
+        return AutoRotationConfigOption[name]
+    end
+    local fallback = {
+        InCombatOnly = 0,
+        DPSRotationMode = 1,
+        HealerRotationMode = 2,
+        FATEPriority = 3,
+        QuestPriority = 4,
+        SingleTargetHPP = 5,
+        AoETargetHPP = 6,
+        SingleTargetRegenHPP = 7,
+        ManageKardia = 8,
+        AutoRez = 9,
+        AutoRezDPSJobs = 10,
+        AutoCleanse = 11,
+        IncludeNPCs = 12,
+        OnlyAttackInCombat = 13,
+        OrbwalkerIntegration = 14,
+        AutoRezOutOfParty = 15,
+        DPSAoETargets = 16,
+        SingleTargetExcogHPP = 17,
+        AutoRezDPSJobsHealersOnly = 18,
+        DPSAlwaysHardTarget = 19,
+        HealerAlwaysHardTarget = 20,
+        BypassQuest = 21,
+        BypassFATE = 22,
+        IgnoreRangeInBoss = 23,
+        UnTargetAndDisableForPenalty = 24,
+        IncludeShields = 25,
+    }
+    return fallback[name]
+end
+
+function SetWrathAutoRotationState(enabled)
+    local lease = GetWrathLeaseID()
+    if lease == nil then return false end
+    local ok, result = pcall(function()
+        return IPC.WrathCombo.SetAutoRotationState(lease, enabled)
+    end)
+    if not ok then
+        Dalamud.Log("[FATE] Wrath SetAutoRotationState error: " .. tostring(result))
+        return false
+    end
+    Dalamud.Log("[FATE] Wrath SetAutoRotationState(" .. tostring(enabled) .. ") -> " .. tostring(result))
+    return result == 0 or result == 1
+end
+
+function ReadyWrathCurrentJob()
+    local lease = GetWrathLeaseID()
+    if lease == nil then return false end
+    local ok, result = pcall(function()
+        return IPC.WrathCombo.SetCurrentJobAutoRotationReady(lease)
+    end)
+    if not ok then
+        Dalamud.Log("[FATE] Wrath SetCurrentJobAutoRotationReady error: " .. tostring(result))
+        return false
+    end
+    Dalamud.Log("[FATE] Wrath SetCurrentJobAutoRotationReady -> " .. tostring(result))
+    return result == 0 or result == 1
+end
+
+function ConfigureWrathAutoRotation()
+    local lease = GetWrathLeaseID()
+    if lease == nil then return false end
+
+    local function SetConfig(name, value)
+        local opt = AutoRotationConfigOptionValue(name)
+        if opt == nil then
+            Dalamud.Log("[FATE] Unknown Wrath AutoRotation config: " .. name)
+            return false
+        end
+        local ok, result = pcall(function()
+            return IPC.WrathCombo.SetAutoRotationConfigState(lease, opt, value)
+        end)
+        if not ok then
+            Dalamud.Log("[FATE] Wrath SetAutoRotationConfigState(" .. name .. ") error: " .. tostring(result))
+            return false
+        end
+        Dalamud.Log("[FATE] Wrath SetAutoRotationConfigState(" .. name .. "=" .. tostring(value) .. ") -> " .. tostring(result))
+        return result == 0 or result == 1
+    end
+
+    -- Let Wrath attack outside of strict combat so FATE pulling works.
+    SetConfig("InCombatOnly", false)
+    -- FATE priority lets Wrath prefer FATE mobs.
+    SetConfig("FATEPriority", true)
+    -- Bypass FATE restriction on InCombatOnly.
+    SetConfig("BypassFATE", true)
+    -- Allow pre-emptive attacks on FATE mobs.
+    SetConfig("OnlyAttackInCombat", false)
+
+    return true
+end
+
+function EnableWrathAutoRotation()
+    if not WrathIPCReady() then
+        Dalamud.Log("[FATE] Wrath IPC not ready, falling back to /wrath auto")
+        return false
+    end
+    if SetWrathAutoRotationState(true) then
+        ConfigureWrathAutoRotation()
+        ReadyWrathCurrentJob()
+        return true
+    end
+    return false
+end
+
+function DisableWrathAutoRotation()
+    if not WrathIPCReady() then return false end
+    return SetWrathAutoRotationState(false)
+end
+
 function TurnOnCombatMods(rotationMode)
     if not CombatModsOn then
         CombatModsOn = true
@@ -6238,9 +6394,19 @@ function TurnOnCombatMods(rotationMode)
         elseif RotationPlugin == "VBM" then
             ActivateBossModPreset(RotationAoePreset, RotationSingleTargetPreset, RotationHoldBuffPreset, "combat-on")
         elseif RotationPlugin == "Wrath" then
-            if WrathAutoEnabled ~= true then
-                SafeYield("/wrath auto")
-                WrathAutoEnabled = true
+            if UseWrathIPC == true then
+                if EnableWrathAutoRotation() then
+                    WrathAutoEnabled = true
+                elseif WrathAutoEnabled ~= true then
+                    -- Fallback to chat toggle if IPC fails.
+                    SafeYield("/wrath auto")
+                    WrathAutoEnabled = true
+                end
+            else
+                if WrathAutoEnabled ~= true then
+                    SafeYield("/wrath auto")
+                    WrathAutoEnabled = true
+                end
             end
             MarkWrathAutoPulse(os.clock())
         end
@@ -6292,8 +6458,12 @@ function TurnOffCombatMods()
         elseif RotationPlugin == "VBM" then
             IPC.BossMod.ClearActive()
         elseif RotationPlugin == "Wrath" then
+            if UseWrathIPC == true then
+                DisableWrathAutoRotation()
+            end
             -- /wrath auto is toggle-only; do not toggle here to avoid accidental OFF.
             ResetWrathKeepAliveState()
+            WrathAutoEnabled = false
         end
 
         -- turn off BMR so you dont start following other mobs
@@ -8493,6 +8663,12 @@ function HasTwistOfFateBuff()
 end
 
 function TankStanceCheck()
+    -- When using Wrath via IPC, its StancePartner handles tank stance after
+    -- territory changes. Do not interfere from the script side.
+    if UseWrathIPC == true then
+        return
+    end
+
     -- Allow users to disable the script's own tank stance management entirely,
     -- e.g. when their rotation plugin already handles it.
     if AutoEnableTankStance ~= true then
@@ -9975,6 +10151,7 @@ function FateFarming:Run()
     InitialSetupChocoboSummonDone         = false
     TankStanceAcAttemptedForFate          = nil
     TankStanceAcAttemptedAt               = 0
+    WrathLeaseID                          = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
@@ -10054,6 +10231,7 @@ function FateFarming:Run()
         IgnoreBigForlornOnly = true
     end
     -- Rotation plugin
+    UseWrathIPC                       = Config.Get("Use Wrath IPC?")
     local configRotationPlugin = string.lower(Config.Get("Rotation Plugin"))
     if configRotationPlugin == "any" then
         if HasPlugin("WrathCombo") then
@@ -10607,6 +10785,7 @@ function FateFarming:Run()
     if SessionStopReason == nil then
         SetStopReason("StopScript flag set")
     end
+    ReleaseWrathControl()
     SafeYield("/vnav stop")
     WriteFateResultSummaryCsv(true)
     PrintSessionSummary()
