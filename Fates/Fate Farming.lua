@@ -6813,6 +6813,10 @@ function DoFate()
                 State = CharacterState.doFate
                 Dalamud.Log("[FATE] State Change: DoFate (same-spot new fate, fateId=" .. tostring(CurrentFate.fateId) .. ")")
             else
+                -- Refresh chocobo before mounting/moving to the next FATE.
+                if SummonChocobo and not ChocoboSummonDisabled then
+                    ChocoboCheck()
+                end
                 CurrentFate = nil
                 NextFate = nil
                 State = CharacterState.ready
