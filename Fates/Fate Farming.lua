@@ -8345,31 +8345,40 @@ function TankStanceCheck()
 
     if stanceSkill == nil or stanceStatusId == nil then return end
 
-    -- Already attempted /ac for this fate; never retry to avoid toggle flicker.
-    if TankStanceAcAttemptedForFate ~= nil and CurrentFate ~= nil
-        and TankStanceAcAttemptedForFate == CurrentFate.fateId then
-        return
-    end
-
-    if CurrentFate ~= nil then
-        TankStanceAcAttemptedForFate = CurrentFate.fateId
-    end
-
     -- Tank stances are toggles: casting while active removes them.
     -- Verify the status is truly missing (with a short re-check) before casting.
     local function StanceIsActive()
         return HasStatusId(stanceStatusId)
     end
 
-    if StanceIsActive() then
-        Dalamud.Log("[FATE] Tank stance already active for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
-        return
+    -- Already attempted /ac for this fate. If the stance is still active, do
+    -- nothing; if it was toggled off afterwards (e.g. by Wrath), try once more.
+    if TankStanceAcAttemptedForFate ~= nil and CurrentFate ~= nil
+        and TankStanceAcAttemptedForFate == CurrentFate.fateId then
+        if StanceIsActive() then
+            return
+        end
+        -- Wrath/RSR may have toggled it off; allow one retry.
+        TankStanceAcAttemptedForFate = nil
     end
 
-    -- First read may be stale right after combat/zone transitions; re-verify.
-    yield("/wait 0.5")
-    if StanceIsActive() then
-        Dalamud.Log("[FATE] Tank stance detected on re-check for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
+    if CurrentFate ~= nil then
+        TankStanceAcAttemptedForFate = CurrentFate.fateId
+    end
+
+    -- Avoid a single stale status read toggling the stance off. Require the
+    -- status to be missing on multiple checks spaced slightly apart.
+    local missingChecks = 0
+    for i = 1, 3 do
+        if not StanceIsActive() then
+            missingChecks = missingChecks + 1
+        end
+        if i < 3 then
+            yield("/wait 0.15")
+        end
+    end
+    if missingChecks < 2 then
+        Dalamud.Log("[FATE] Tank stance already active for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
         return
     end
 
