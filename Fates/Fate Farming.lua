@@ -7854,7 +7854,9 @@ function HandleExchangeMovementStuck()
         else
             retryTarget = SelectedBicolorExchangeData.position
         end
-        IPC.vnavmesh.PathfindAndMoveTo(retryTarget, false)
+        -- Solution Nine has many vertical walls/ramps; use flying when available.
+        local canFlyInSolutionNine = isSolutionNineRoute and Player.CanFly == true
+        IPC.vnavmesh.PathfindAndMoveTo(retryTarget, canFlyInSolutionNine)
 
         if ExchangeMoveStuckCount >= maxRepathAttempts then
             Dalamud.Log("[FATE] Exchange pathing still stuck. Returning to aetheryte and retrying.")
@@ -7933,9 +7935,20 @@ function ExecuteBicolorExchange()
             SafeYield("/callback TelepotTown false -1")
         elseif GetDistanceToPoint(SelectedBicolorExchangeData.position) > 5 then
             Dalamud.Log("Distance to shopkeep is too far. Calculating route from current position.")
+            -- Solution Nine has many vertical walls and ramps; force mount and fly
+            -- to avoid getting stuck on geometry.
+            if IsSolutionNineZone() and not Svc.Condition[CharacterCondition.mounted]
+                and not Svc.Condition[CharacterCondition.inCombat]
+                and not Svc.Condition[CharacterCondition.casting]
+                and not Svc.Condition[CharacterCondition.occupied]
+            then
+                Mount()
+                yield("/wait " .. tostring(FastCombatPacing and 0.8 or 2.5))
+                return
+            end
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
                 local flyOk, canFly = pcall(function()
-                    return Player.CanFly and SelectedZone ~= nil and SelectedZone.flying
+                    return Player.CanFly and (SelectedZone ~= nil and SelectedZone.flying or IsSolutionNineZone())
                 end)
                 IPC.vnavmesh.PathfindAndMoveTo(SelectedBicolorExchangeData.position, flyOk and canFly)
             end
