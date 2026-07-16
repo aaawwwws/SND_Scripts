@@ -5090,6 +5090,10 @@ function SummonChocoboInSetup()
         yield("/echo [FATE] 初期設定: チョコボ召喚コマンドが失敗しました")
     end
 
+    -- Record the attempt so the normal 30-minute cooldown applies even when
+    -- summoned via the unconditional initial-setup path.
+    ChocoboLastSummonAttemptAt = os.clock()
+
     return true
 end
 
