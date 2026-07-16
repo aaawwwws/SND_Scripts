@@ -4992,19 +4992,28 @@ function InitialSetup()
 
     -- 2. Teleport to configured starting zone.
     if InitialSetupTeleportZone ~= nil and InitialSetupTeleportZone ~= "" then
-        if InitialSetupLastTerritoryType == nil then
+        if InitialSetupTeleportStartAt == nil then
+            InitialSetupTeleportStartAt = os.clock()
             InitialSetupLastTerritoryType = Svc.ClientState.TerritoryType
-        end
-        if Svc.ClientState.TerritoryType == InitialSetupLastTerritoryType then
-            -- Wait for any active teleport to finish before trying again.
-            if Svc.Condition[CharacterCondition.betweenAreas] then
-                return
-            end
             Dalamud.Log("[FATE] Initial setup: teleporting to " .. InitialSetupTeleportZone)
             TeleportTo(InitialSetupTeleportZone)
             return
         end
-        Dalamud.Log("[FATE] Initial setup: arrived in new zone")
+
+        -- Wait for the teleport cast/travel to finish.
+        if Svc.Condition[CharacterCondition.betweenAreas] then
+            return
+        end
+
+        -- Some clients update TerritoryType very slowly after a teleport. Use a
+        -- short grace period and then assume arrival rather than looping forever.
+        local elapsed = os.clock() - InitialSetupTeleportStartAt
+        if elapsed < 3 then
+            return
+        end
+
+        Dalamud.Log("[FATE] Initial setup: teleport grace period elapsed, assuming arrival")
+        InitialSetupTeleportStartAt = nil
         InitialSetupLastTerritoryType = nil
 
         -- Align SelectedZone with the initial setup zone so zone-dependent
@@ -9851,6 +9860,7 @@ function FateFarming:Run()
     GearsetSwitchRetryCount               = 0
     LastMoveToFateId                      = nil
     InitialSetupLastTerritoryType         = nil
+    InitialSetupTeleportStartAt           = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
