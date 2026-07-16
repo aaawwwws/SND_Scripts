@@ -58,6 +58,9 @@ configs:
   Normal FATE Gearset:
     description: 通常FATE（レベルシンク不要）で自動で着替えるギアセット名または番号。空欄の場合はメインクラスのギアセットのままです。
     default: "dps"
+  Auto-enable tank stance?:
+    description: タンクジョブ時にタンクスタンスを自動でONにします。OFFの場合は手動または回しプラグインに任せます。
+    default: false
   Initial setup teleport zone:
     description: 開始時にテレポートするゾーンのエーテライト名（例：リビング・メモリー）。空欄で無効。
     default: "リビング・メモリー"
@@ -8490,6 +8493,12 @@ function HasTwistOfFateBuff()
 end
 
 function TankStanceCheck()
+    -- Allow users to disable the script's own tank stance management entirely,
+    -- e.g. when their rotation plugin already handles it.
+    if AutoEnableTankStance ~= true then
+        return
+    end
+
     -- Never adjust stance during active combat to avoid toggle flicker.
     if Svc.Condition[CharacterCondition.inCombat] then
         return
@@ -10162,6 +10171,7 @@ function FateFarming:Run()
     ShouldAutoBuyGysahlGreens       = Config.Get("Auto-buy Gysahl Greens?")
     LevelSyncTankGearset            = Config.Get("Tank Gearset for Level Sync")
     NormalFateGearset               = Config.Get("Normal FATE Gearset")
+    AutoEnableTankStance            = Config.Get("Auto-enable tank stance?")
     InitialSetupTeleportZone        = Config.Get("Initial setup teleport zone")
     SummonChocoboOnStart            = Config.Get("Summon chocobo on start?")
     SwitchToNormalGearsetOnStart    = Config.Get("Switch to normal gearset on start?")
