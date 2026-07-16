@@ -7445,7 +7445,6 @@ function Ready()
 
     FoodCheck()
     PotionCheck()
-    ChocoboCheck()
     SprintCheck()
 
     -- Only reset combat-mod tracking when the state changes. Resetting it every
@@ -7498,6 +7497,11 @@ function Ready()
         State = CharacterState.gcTurnIn
         Dalamud.Log("[FATE] State Change: GCTurnIn")
         return
+    end
+
+    -- Refresh chocobo before teleporting to a different zone or mounting up.
+    if SummonChocobo and not ChocoboSummonDisabled then
+        ChocoboCheck()
     end
 
     if Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
