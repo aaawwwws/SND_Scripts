@@ -10339,6 +10339,7 @@ function FateFarming:Run()
 
     Dalamud.Log("[FATE-FIXED] Entering main loop...")
     while not StopScript do
+        local frameOk, frameErr = pcall(function()
         local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
             (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
             (Player ~= nil and Player.Available == true and Player)
@@ -10599,10 +10600,16 @@ function FateFarming:Run()
                 local stateOk, stateErr = pcall(State)
                 if not stateOk then
                     Dalamud.Log("[FATE] State handler error: " .. tostring(stateErr))
-                    yield("/echo [FATE] State handler error, resetting to ready: " .. tostring(stateErr))
                     State = CharacterState.ready
+                    SafeYield("/echo [FATE] State handler error, resetting to ready: " .. tostring(stateErr))
                 end
             end
+        end
+        end)
+        if not frameOk then
+            Dalamud.Log("[FATE] Frame error: " .. tostring(frameErr))
+            State = CharacterState.ready
+            SafeYield("/echo [FATE] Frame error, continuing: " .. tostring(frameErr))
         end
         yield("/wait " .. tostring(MainLoopWaitSeconds or 0.25))
     end
@@ -10624,5 +10631,5 @@ end
 
 local runOk, runErr = pcall(function() FateFarming:new():Run() end)
 if not runOk then
-    yield("/echo [FATE] Fatal script error: " .. tostring(runErr))
+    SafeYield("/echo [FATE] Fatal script error: " .. tostring(runErr))
 end
