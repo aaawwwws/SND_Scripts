@@ -302,7 +302,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション,水の迷宮の夢,我々の貢物,千年の孤独,不死の人"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション,水の迷宮の夢,我々の貢物,千年の孤独,不死の人,奸臣、大寒心"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -1352,34 +1352,6 @@ FatesData = {
             },
             blacklistedFates = {
                 "Plumbers Don't Fear Slimes", --Causing Script to crash
-                "空飛ぶ鍋奉行「ペルペルイーター」",
-                "怪力の大食漢「マイティ・マイプ」",
-                "踊る山火「ラカクウルク」",
-                "薬屋のひと仕事",
-                "血濡れの爪「ミユールル」",
-                "種の期限",
-                "恐怖！ キノコ魔物",
-                "落ち石拾い",
-                "メモリーズ",
-                "人鳥細工",
-                "モグラ退治",
-                "マイカ・ザ・ムー：大団円",
-                "人生がときめく片づけの技法",
-                "気まぐれロボット",
-                "道を視る青年",
-                "カナルタウンでやすらかに",
-                "逃走テレメトリー",
-                "ブロークンボットダイアリー",
-                "マイカ・ザ・ムー：出発進行",
-                "人狼伝説",
-                "コーヒーを巡る冒険",
-                "巨獣めざめる",
-                "ポゼッション",
-                "水の迷宮の夢",
-                "我々の貢物",
-                "千年の孤独",
-                "不死の人",
-                "奸臣、大寒心",
             }
         }
     }
@@ -8179,10 +8151,14 @@ function ExecuteBicolorExchange()
         elseif GetDistanceToPoint(SelectedBicolorExchangeData.position) > 5 then
             Dalamud.Log("Distance to shopkeep is too far. Calculating route from current position.")
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                local flyOk, canFly = pcall(function()
-                    return Player.CanFly and SelectedZone ~= nil and SelectedZone.flying
-                end)
-                IPC.vnavmesh.PathfindAndMoveTo(SelectedBicolorExchangeData.position, flyOk and canFly)
+                local useFly = false
+                if not IsSolutionNineZone() then
+                    local flyOk, canFly = pcall(function()
+                        return Player.CanFly and SelectedZone ~= nil and SelectedZone.flying
+                    end)
+                    useFly = flyOk and canFly
+                end
+                IPC.vnavmesh.PathfindAndMoveTo(SelectedBicolorExchangeData.position, useFly)
             end
             HandleExchangeMovementStuck()
         else
