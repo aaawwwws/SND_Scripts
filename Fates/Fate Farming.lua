@@ -4633,7 +4633,10 @@ function TeleportTo(aetheryteName)
             return false
         end
     end
-    yield("/wait 1")
+    -- In Solution Nine (Nexus Arcade), start pathing to Beryl immediately without the post-teleport wait.
+    if Svc.ClientState.TerritoryType ~= 1186 then
+        yield("/wait 1")
+    end
     LastTeleportTimeStamp = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
     MarkTeleportSuccess(aetheryteName)
     HasFlownUpYet = false
