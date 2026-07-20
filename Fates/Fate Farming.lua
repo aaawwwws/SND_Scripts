@@ -4633,9 +4633,9 @@ function TeleportTo(aetheryteName)
             return false
         end
     end
-    -- In Solution Nine (Nexus Arcade), start pathing to Beryl immediately without the post-teleport wait.
-    if Svc.ClientState.TerritoryType ~= 1186 then
-        yield("/wait 1")
+    -- In Solution Nine (Nexus Arcade), wait 5 seconds after arrival before pathing to Beryl.
+    if Svc.ClientState.TerritoryType == 1186 then
+        yield("/wait 5")
     end
     LastTeleportTimeStamp = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
     MarkTeleportSuccess(aetheryteName)
@@ -8150,16 +8150,6 @@ function ExecuteBicolorExchange()
             Dalamud.Log("TelepotTown open")
             SafeYield("/callback TelepotTown false -1")
         elseif GetDistanceToPoint(SelectedBicolorExchangeData.position) > 5 then
-            -- Wait until the player has actually arrived near Nexus Arcade before pathing to Beryl.
-            -- Without this, pathing can start from the main aetheryte while the /li teleport is still in progress.
-            if SelectedBicolorExchangeData.zoneId == 1186 then
-                local distanceToNexusArcade = GetDistanceToPoint(Vector3(-158, 0, -10))
-                if distanceToNexusArcade > 20 then
-                    Dalamud.Log("[FATE] Solution Nine exchange: waiting to arrive near Nexus Arcade before pathfinding to Beryl (distance: " .. tostring(distanceToNexusArcade) .. ")")
-                    yield("/wait 0.5")
-                    return
-                end
-            end
             Dalamud.Log("Distance to shopkeep is too far. Calculating route from current position.")
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
                 local useFly = false
