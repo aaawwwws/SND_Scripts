@@ -1495,6 +1495,7 @@ function GetLangTable(lang)
                     zoneName = "ソリューション・ナイン",
                     zoneId = 1186,
                     aetheryteName = "ネクサスアーケード",
+                    miniAethernet = { name = "ネクサスアーケード" },
                     position = Vector3(-198.655, 0.922, -6.678),
                     shopItems = {
                         ["Turali Bicolor Gemstone Voucher"] = { itemName = "バイカラージェム納品証【黄金】", itemIndex = 6, price = 100 },
@@ -1576,6 +1577,7 @@ function GetLangTable(lang)
                     zoneName = "Solution Nine",
                     zoneId = 1186,
                     aetheryteName = "Nexus Arcade",
+                    miniAethernet = { name = "Nexus Arcade" },
                     position = Vector3(-198.655, 0.922, -6.678),
                     shopItems = {
                         ["Turali Bicolor Gemstone Voucher"] = { itemName = "Turali Bicolor Gemstone Voucher", itemIndex = 7, price = 100 },
@@ -8128,10 +8130,6 @@ function ExecuteBicolorExchange()
                 SelectedBicolorExchangeData.position
             )
             local shouldUseMiniAethernet = distanceToShop > (miniToShopDistance + 10)
-            local solutionNineThreshold = 25
-            if SelectedBicolorExchangeData.zoneId == 1186 and distanceToShop > solutionNineThreshold then
-                shouldUseMiniAethernet = true
-            end
             if shouldUseMiniAethernet then
                 Dalamud.Log("[FATE] Exchange route: using aetheryte first, then pathfinding.")
                 ResetExchangeMovementStuckState()
