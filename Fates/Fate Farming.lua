@@ -4405,13 +4405,26 @@ local function TryLocalAetheryteShortcut(destinationName)
     if destinationName == nil or destinationName == "" then
         return false
     end
+    local candidates = BuildTeleportNameCandidates(destinationName)
+    -- Try Lifestream IPC method first.
     if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.AethernetTeleport) == "function" then
-        for _, candidateName in ipairs(BuildTeleportNameCandidates(destinationName)) do
+        for _, candidateName in ipairs(candidates) do
             local ok, result = pcall(function()
                 return IPC.Lifestream.AethernetTeleport(candidateName)
             end)
             if ok and result == true then
                 return WaitForTeleportStart(3.5, candidateName)
+            end
+        end
+    end
+    -- Fallback to the /li chat command (e.g. /li ネクサスアーケード).
+    for _, candidateName in ipairs(candidates) do
+        local escaped = tostring(candidateName):gsub('"', "")
+        if escaped ~= "" then
+            Dalamud.Log("[FATE] Trying /li fallback for local aetheryte: " .. escaped)
+            SafeYield("/li " .. escaped)
+            if WaitForTeleportStart(3.5, escaped) then
+                return true
             end
         end
     end
