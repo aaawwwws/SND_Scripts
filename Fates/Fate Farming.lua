@@ -133,6 +133,11 @@ configs:
   Auto-buy Gysahl Greens?:
     description: ギサールの野菜が切れた際、リムサ・ロミンサで購入します。
     default: false
+  Bicolor exchange threshold:
+    description: バイカラージェムがこの数以上になったら自動交換に行きます。0で無効。
+    default: 1400
+    min: 0
+    max: 2000
   Save active FATE data?:
     description: 出現中FATEの情報をJSONLに保存する
     default: true
@@ -1489,8 +1494,7 @@ function GetLangTable(lang)
                     shopKeepName = "広域交易商 ベリル",
                     zoneName = "ソリューション・ナイン",
                     zoneId = 1186,
-                    aetheryteName = "ソリューション・ナイン",
-                    miniAethernet = { name = "ネクサスアーケード" },
+                    aetheryteName = "ネクサスアーケード",
                     position = Vector3(-198.655, 0.922, -6.678),
                     shopItems = {
                         ["Turali Bicolor Gemstone Voucher"] = { itemName = "バイカラージェム納品証【黄金】", itemIndex = 6, price = 100 },
@@ -1571,8 +1575,7 @@ function GetLangTable(lang)
                     shopKeepName = "Beryl",
                     zoneName = "Solution Nine",
                     zoneId = 1186,
-                    aetheryteName = "Solution Nine",
-                    miniAethernet = { name = "Nexus Arcade" },
+                    aetheryteName = "Nexus Arcade",
                     position = Vector3(-198.655, 0.922, -6.678),
                     shopItems = {
                         ["Turali Bicolor Gemstone Voucher"] = { itemName = "Turali Bicolor Gemstone Voucher", itemIndex = 7, price = 100 },
@@ -4405,26 +4408,13 @@ local function TryLocalAetheryteShortcut(destinationName)
     if destinationName == nil or destinationName == "" then
         return false
     end
-    local candidates = BuildTeleportNameCandidates(destinationName)
-    -- Try Lifestream IPC method first.
     if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.AethernetTeleport) == "function" then
-        for _, candidateName in ipairs(candidates) do
+        for _, candidateName in ipairs(BuildTeleportNameCandidates(destinationName)) do
             local ok, result = pcall(function()
                 return IPC.Lifestream.AethernetTeleport(candidateName)
             end)
             if ok and result == true then
                 return WaitForTeleportStart(3.5, candidateName)
-            end
-        end
-    end
-    -- Fallback to the /li chat command (e.g. /li ネクサスアーケード).
-    for _, candidateName in ipairs(candidates) do
-        local escaped = tostring(candidateName):gsub('"', "")
-        if escaped ~= "" then
-            Dalamud.Log("[FATE] Trying /li fallback for local aetheryte: " .. escaped)
-            SafeYield("/li " .. escaped)
-            if WaitForTeleportStart(3.5, escaped) then
-                return true
             end
         end
     end
@@ -4449,6 +4439,22 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
     local startTimeout = FastCombatPacing and 5.0 or 6.5
     for _ = 1, attempts do
         yield(liCommand)
+        if WaitForTeleportStart(startTimeout, escapedName) then
+            return true
+        end
+        if IsLifestreamBusySafe() then
+            WaitForLifestreamBusyClear(8)
+            if Svc.Condition[CharacterCondition.casting] or Svc.Condition[CharacterCondition.betweenAreas] then
+                return true
+            end
+        end
+        yield("/wait 0.25")
+    end
+
+    -- Fallback: try as a mini-aetheryte name (e.g. /li ネクサスアーケード).
+    local localCommand = "/li " .. escapedName
+    for _ = 1, attempts do
+        yield(localCommand)
         if WaitForTeleportStart(startTimeout, escapedName) then
             return true
         end
@@ -9960,7 +9966,7 @@ function FateFarming:Run()
     MoveStuckLastDistanceToTarget         = nil
     MainClass                             = Player.Job
     BossFatesClass                        = nil
-    BicolorGemExchangeThreshold           = 1400
+    BicolorGemExchangeThreshold           = Config.Get("Bicolor exchange threshold")
     ClusterMoveLastRefresh                = 0
     ClusterMoveCachedFateId               = nil
     ClusterMoveCachedPosition             = nil
