@@ -5329,7 +5329,8 @@ function MoveToFate()
             if CurrentFate == nil or NextFate == nil or CurrentFate.fateId ~= NextFate.fateId then
                 TankStanceAcAttemptedForFate = nil
                 TankStanceAcAttemptCount = nil
-                TankStanceAcAttemptedAt = 0
+                -- Do NOT reset TankStanceAcAttemptedAt here; it is the global
+                -- last-stance-/ac time and must persist across FATE changes.
             end
             CurrentFate = NextFate
             ResetNoCombatRecoveryState()
@@ -6431,7 +6432,8 @@ function HandleUnexpectedCombat()
         if CurrentFate == nil or builtFate == nil or CurrentFate.fateId ~= builtFate.fateId then
             TankStanceAcAttemptedForFate = nil
             TankStanceAcAttemptCount = nil
-            TankStanceAcAttemptedAt = 0
+            -- Do NOT reset TankStanceAcAttemptedAt here; it is the global
+            -- last-stance-/ac time and must persist across FATE changes.
         end
         CurrentFate = builtFate
         State = CharacterState.doFate
@@ -7739,7 +7741,8 @@ function Ready()
     if CurrentFate == nil or NextFate == nil or CurrentFate.fateId ~= NextFate.fateId then
         TankStanceAcAttemptedForFate = nil
         TankStanceAcAttemptCount = nil
-        TankStanceAcAttemptedAt = 0
+        -- Do NOT reset TankStanceAcAttemptedAt here; it is the global
+        -- last-stance-/ac time and must persist across FATE changes.
     end
     CurrentFate = NextFate
     ResetNoCombatRecoveryState()
@@ -8621,28 +8624,38 @@ function TankStanceCheck()
     end
 
     -- Global cooldown to stop rapid double-toggles when CurrentFate is nil or
-    -- when multiple callers fire in quick succession.
-    if TankStanceAcAttemptedAt ~= nil and (now - TankStanceAcAttemptedAt) < 5 then
-        Dalamud.Log("[FATE] Tank stance toggle skipped: on 5s cooldown")
+    -- when multiple callers fire in quick succession. FFXIV's stance toggle has a
+    -- ~3s lockout, so enforce at least 3s between actual /ac attempts.
+    if TankStanceAcAttemptedAt ~= nil and (now - TankStanceAcAttemptedAt) < 3 then
+        Dalamud.Log("[FATE] Tank stance toggle skipped: on 3s global cooldown")
         return
     end
 
-    yield("/wait 0.1")
-    if StanceIsActive() then
-        return
+    -- Debounce: re-check for a short window to avoid stale status reads that
+    -- could make us issue /ac while the stance is actually active.
+    local recheckStart = os.clock()
+    while os.clock() - recheckStart < 0.3 do
+        yield("/wait 0.1")
+        if StanceIsActive() then
+            return
+        end
     end
 
     if CurrentFate ~= nil then
         TankStanceAcAttemptedForFate = CurrentFate.fateId
         TankStanceAcAttemptCount = (TankStanceAcAttemptCount or 0) + 1
     end
-    TankStanceAcAttemptedAt = now
 
     local attemptNumber = TankStanceAcAttemptCount or 1
     Dalamud.Log("[FATE] Tank stance missing (" .. tostring(stanceSkill) .. "), activating (attempt " .. tostring(attemptNumber) .. ").")
     yield("/echo [FATE] Tank stance missing, activating " .. tostring(stanceSkill))
     local cmd = "/ac \"" .. tostring(stanceSkill) .. "\""
     local ok = pcall(function() yield(cmd) end)
+
+    -- Record the actual time the /ac was executed, not the start of this check.
+    -- This is used by the global cooldown above and must not be reset on FATE changes.
+    TankStanceAcAttemptedAt = os.clock()
+
     if not ok then
         Dalamud.Log("[FATE] Tank stance /ac command failed (possibly invalid action name or wrong job). Skipping.")
         return
