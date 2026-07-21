@@ -618,8 +618,9 @@ SessionStuckZoneSwitchCount = nil
 SessionStopReason = nil
 FoodAutoUseDisabled = nil
 PotionAutoUseDisabled = nil
-TankStanceAcAttemptedForFate = nil
-LifestreamBusyWarned = nil
+    TankStanceAcAttemptedForFate = nil
+    TankStanceAcAttemptCount = nil
+    LifestreamBusyWarned = nil
 VnavReadyCheckWarned = nil
 NativeItemCommandDisabled = nil
 NativeItemCommandWarned = nil
@@ -5327,6 +5328,7 @@ function MoveToFate()
             SafeYield("/vnav stop")
             if CurrentFate == nil or NextFate == nil or CurrentFate.fateId ~= NextFate.fateId then
                 TankStanceAcAttemptedForFate = nil
+                TankStanceAcAttemptCount = nil
                 TankStanceAcAttemptedAt = 0
             end
             CurrentFate = NextFate
@@ -6428,6 +6430,7 @@ function HandleUnexpectedCombat()
         local builtFate = BuildFateTable(nearestFate)
         if CurrentFate == nil or builtFate == nil or CurrentFate.fateId ~= builtFate.fateId then
             TankStanceAcAttemptedForFate = nil
+            TankStanceAcAttemptCount = nil
             TankStanceAcAttemptedAt = 0
         end
         CurrentFate = builtFate
@@ -7735,6 +7738,7 @@ function Ready()
 
     if CurrentFate == nil or NextFate == nil or CurrentFate.fateId ~= NextFate.fateId then
         TankStanceAcAttemptedForFate = nil
+        TankStanceAcAttemptCount = nil
         TankStanceAcAttemptedAt = 0
     end
     CurrentFate = NextFate
@@ -8591,7 +8595,8 @@ function TankStanceCheck()
     local summary = "[FATE] TankStanceCheck state=" .. stateName ..
         " job=" .. tostring(jobId) .. " stance=" .. tostring(stanceSkill) ..
         " active=" .. tostring(active) .. " fate=" .. fateId ..
-        " attempted=" .. tostring(TankStanceAcAttemptedForFate)
+        " attempted=" .. tostring(TankStanceAcAttemptedForFate) ..
+        " count=" .. tostring(TankStanceAcAttemptCount or 0)
     Dalamud.Log(summary)
     yield("/echo " .. summary)
 
@@ -8599,14 +8604,24 @@ function TankStanceCheck()
         return
     end
 
+    local now = os.clock()
+
     if TankStanceAcAttemptedForFate ~= nil and CurrentFate ~= nil
         and TankStanceAcAttemptedForFate == CurrentFate.fateId then
-        return
+        -- Retry up to 2 more times (max 3 total) for the same fate, waiting at least 10s between attempts.
+        local attempts = TankStanceAcAttemptCount or 0
+        if attempts >= 3 then
+            Dalamud.Log("[FATE] Tank stance toggle skipped: already attempted max retries for fate #" .. tostring(CurrentFate.fateId))
+            return
+        end
+        if TankStanceAcAttemptedAt ~= nil and (now - TankStanceAcAttemptedAt) < 10 then
+            Dalamud.Log("[FATE] Tank stance toggle skipped: on 10s same-fate retry cooldown")
+            return
+        end
     end
 
     -- Global cooldown to stop rapid double-toggles when CurrentFate is nil or
     -- when multiple callers fire in quick succession.
-    local now = os.clock()
     if TankStanceAcAttemptedAt ~= nil and (now - TankStanceAcAttemptedAt) < 5 then
         Dalamud.Log("[FATE] Tank stance toggle skipped: on 5s cooldown")
         return
@@ -8619,10 +8634,12 @@ function TankStanceCheck()
 
     if CurrentFate ~= nil then
         TankStanceAcAttemptedForFate = CurrentFate.fateId
+        TankStanceAcAttemptCount = (TankStanceAcAttemptCount or 0) + 1
     end
     TankStanceAcAttemptedAt = now
 
-    Dalamud.Log("[FATE] Tank stance missing (" .. tostring(stanceSkill) .. "), activating.")
+    local attemptNumber = TankStanceAcAttemptCount or 1
+    Dalamud.Log("[FATE] Tank stance missing (" .. tostring(stanceSkill) .. "), activating (attempt " .. tostring(attemptNumber) .. ").")
     yield("/echo [FATE] Tank stance missing, activating " .. tostring(stanceSkill))
     local cmd = "/ac \"" .. tostring(stanceSkill) .. "\""
     local ok = pcall(function() yield(cmd) end)
@@ -8630,14 +8647,15 @@ function TankStanceCheck()
         Dalamud.Log("[FATE] Tank stance /ac command failed (possibly invalid action name or wrong job). Skipping.")
         return
     end
-    yield("/wait 0.5")
+    yield("/wait 1.5")
 
     if StanceIsActive() then
         Dalamud.Log("[FATE] Tank stance activated for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
         yield("/echo [FATE] Tank stance activated")
     else
-        Dalamud.Log("[FATE] Tank stance not detected after /ac; will not retry this fate.")
-        yield("/echo [FATE] Tank stance not detected after /ac")
+        local remaining = math.max(0, 3 - (TankStanceAcAttemptCount or 1))
+        Dalamud.Log("[FATE] Tank stance not detected after /ac; retries remaining this fate: " .. tostring(remaining) .. ".")
+        yield("/echo [FATE] Tank stance not detected after /ac, retries remaining: " .. tostring(remaining))
     end
 end
 
@@ -10001,6 +10019,7 @@ function FateFarming:Run()
     InitialSetupTeleportDone              = false
     InitialSetupChocoboSummonDone         = false
     TankStanceAcAttemptedForFate          = nil
+    TankStanceAcAttemptCount              = nil
     TankStanceAcAttemptedAt               = 0
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
