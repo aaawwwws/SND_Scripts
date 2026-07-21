@@ -4296,7 +4296,10 @@ local function BuildTeleportNameCandidates(name)
         { "Yak T'el", "Yak Tel", "ヤクテル", "ヤク・テル" },
         { "Shaaloani", "シャーローニ荒野", "シャーローニ" },
         { "Heritage Found", "ヘリテージ・ファウンド", "ヘリテージファウンド" },
-        { "Living Memory", "リビング・メモリー", "リビングメモリー" }
+        { "Living Memory", "リビング・メモリー", "リビングメモリー" },
+        { "Hhusatahwi", "フーサタイ宿場町" },
+        { "Sheshenewzo", "シェシェネ青燐泉" },
+        { "Mehwahiz", "メワヘイゾーン" }
     }
     for _, aliasGroup in ipairs(aliasGroups) do
         local matched = false
@@ -4574,6 +4577,7 @@ function TeleportTo(aetheryteName)
     local attemptedById = false
     local attemptedByActionId = false
     local attemptedByLiName = false
+    local liStartTimeout = FastCombatPacing and 4.5 or 6.0
 
     if resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Teleport) == "function" then
         attemptedById = true
@@ -4581,8 +4585,7 @@ function TeleportTo(aetheryteName)
             IPC.Lifestream.Teleport(resolvedId, 0)
         end)
         if ok then
-            local startTimeout = FastCombatPacing and 4.5 or 6.0
-            teleportStarted = WaitForTeleportStart(startTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName)
+            teleportStarted = WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName)
         end
     end
 
@@ -4598,6 +4601,28 @@ function TeleportTo(aetheryteName)
                 teleportStarted = true
                 break
             end
+        end
+    end
+
+    -- Fallback: Lifestream may fail to resolve Japanese aetheryte names.
+    -- If we have a valid aetheryte ID, try teleporting by ID via chat command.
+    if not teleportStarted and resolvedId ~= nil then
+        attemptedByLiName = true
+        local liIdCommand = "/li tp " .. tostring(resolvedId)
+        for _ = 1, 2 do
+            yield(liIdCommand)
+            if WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName) then
+                teleportStarted = true
+                break
+            end
+            if IsLifestreamBusySafe() then
+                WaitForLifestreamBusyClear(8)
+                if Svc.Condition[CharacterCondition.casting] or Svc.Condition[CharacterCondition.betweenAreas] then
+                    teleportStarted = true
+                    break
+                end
+            end
+            yield("/wait 0.25")
         end
     end
 
