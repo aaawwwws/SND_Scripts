@@ -8660,7 +8660,10 @@ function TankStanceCheck()
         Dalamud.Log("[FATE] Tank stance /ac command failed (possibly invalid action name or wrong job). Skipping.")
         return
     end
-    yield("/wait 1.5")
+    -- Tank stance toggles have a ~3s lockout and the status can take a moment
+    -- to register. Wait long enough that we do not mis-read "still off" as a
+    -- failed toggle and accidentally double-tap it on the next retry.
+    yield("/wait 3.0")
 
     if StanceIsActive() then
         Dalamud.Log("[FATE] Tank stance activated for fate #" .. tostring(CurrentFate and CurrentFate.fateId) .. ".")
