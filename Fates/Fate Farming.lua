@@ -8567,6 +8567,14 @@ function TankStanceCheck()
     end
     if not isTank then return end
 
+    -- For level-sync fates, wait until level sync actually applies before casting
+    -- the stance. Casting it before sync causes it to be stripped when the sync
+    -- kicks in, so we defer until Player.IsLevelSynced is true.
+    if CurrentFate ~= nil and NeedsLevelSyncForFate(CurrentFate) and Player.IsLevelSynced ~= true then
+        Dalamud.Log("[FATE] Tank stance deferred until level sync is active for fate #" .. tostring(CurrentFate.fateId) .. ".")
+        return
+    end
+
     local stanceSkill = nil
     local stanceStatusId = nil
     if jobId == ClassList.pld.classId then
