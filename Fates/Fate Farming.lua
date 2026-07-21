@@ -8675,6 +8675,45 @@ function TankStanceCheck()
     end
 end
 
+function HandleLevelSyncTankStance()
+    -- Re-apply tank stance after level sync removes it.
+    if AutoEnableTankStance ~= true then return end
+    if Svc.Condition[CharacterCondition.inCombat] then return end
+    if CurrentFate == nil then
+        TankStanceLevelSyncWasActive = false
+        return
+    end
+    if not NeedsLevelSyncForFate(CurrentFate) then
+        TankStanceLevelSyncWasActive = false
+        return
+    end
+
+    local isSynced = Player.IsLevelSynced == true
+    if isSynced and not TankStanceLevelSyncWasActive then
+        -- Level sync just kicked in; stance was likely removed. Reset the
+        -- per-fate attempt counter so TankStanceCheck can re-apply it.
+        TankStanceAcAttemptedForFate = nil
+        TankStanceAcAttemptCount = 0
+        TankStanceLevelSyncHandledForFate = nil
+        Dalamud.Log("[FATE] Level sync detected for fate #" .. tostring(CurrentFate.fateId) ..
+            "; resetting tank stance attempts.")
+        if Echo == "all" then
+            yield("/echo [FATE] Level sync detected, rechecking tank stance")
+        end
+    end
+    TankStanceLevelSyncWasActive = isSynced
+
+    if isSynced and TankStanceLevelSyncHandledForFate ~= CurrentFate.fateId then
+        local now = os.clock()
+        if TankStanceAcAttemptedAt == nil or (now - TankStanceAcAttemptedAt) >= 3 then
+            TankStanceCheck()
+            if TankStanceAcAttemptedForFate == CurrentFate.fateId then
+                TankStanceLevelSyncHandledForFate = CurrentFate.fateId
+            end
+        end
+    end
+end
+
 function ResetBonusBuffHoldWindow()
     BonusBuffNoEligibleSince = 0
     BonusBuffHoldWindowExpiredAnnounced = false
@@ -10037,6 +10076,8 @@ function FateFarming:Run()
     TankStanceAcAttemptedForFate          = nil
     TankStanceAcAttemptCount              = nil
     TankStanceAcAttemptedAt               = 0
+    TankStanceLevelSyncHandledForFate     = nil
+    TankStanceLevelSyncWasActive          = false
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
@@ -10662,6 +10703,9 @@ function FateFarming:Run()
                     State = CharacterState.ready
                     SafeYield("/echo [FATE] State handler error, resetting to ready: " .. tostring(stateErr))
                 end
+
+                -- Re-apply tank stance if level sync removed it.
+                HandleLevelSyncTankStance()
             end
         end
         end)
