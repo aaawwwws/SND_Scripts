@@ -1473,7 +1473,7 @@ function GetLangTable(lang)
                 ["Bootshine"] = "ブートシャイン",
                 ["Spinning Edge"] = "スピニングエッジ",
                 ["Slice"] = "スライス",
-                ["Steel Fangs"] = "スティールファングス",
+                ["Steel Fangs"] = "壱の牙【咬創】",
                 ["Hell's Ingress"] = "ヘルズイングレス",
                 ["Plunge"] = "プランジカット",
                 ["Rough Divide"] = "ラフディバイド",
