@@ -4831,7 +4831,7 @@ function WaitForContinuation()
         end
         if not Player.IsPlayerOccupied and desired ~= nil and CurrentlyEquippedGearset ~= desired then
             Dalamud.Log("WaitForContinuation switch to " .. desired)
-            local ok = SafeYield("/gs change " .. desired)
+            local ok = SafeYield("/gs change \"" .. desired .. "\"")
             yield("/wait 1.5")
             if ok then
                 CurrentlyEquippedGearset = desired
@@ -5006,7 +5006,7 @@ function InitialSetup()
             return
         end
         Dalamud.Log("[FATE] Initial setup: switching to normal gearset")
-        local ok = SafeYield("/gs change " .. NormalFateGearset)
+        local ok = SafeYield("/gs change \"" .. NormalFateGearset .. "\"")
         yield("/wait 1.5")
         if ok then
             CurrentlyEquippedGearset = NormalFateGearset
@@ -6378,7 +6378,7 @@ function EnsureCorrectGearsetForFate(fate)
         end
         return false
     end
-    local ok = SafeYield("/gs change " .. desired)
+    local ok = SafeYield("/gs change \"" .. desired .. "\"")
     yield("/wait 1.5")
     if ok then
         CurrentlyEquippedGearset = desired
@@ -10645,7 +10645,7 @@ function FateFarming:Run()
     PrintSessionSummary()
 
     if Player.Job.Id ~= MainClass.Id then
-        SafeYield("/gs change " .. MainClass.Name)
+        SafeYield("/gs change \"" .. MainClass.Name .. "\"")
     end
 
     yield("/echo [Fate] Loop Ended !!")
