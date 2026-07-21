@@ -8575,6 +8575,17 @@ function TankStanceCheck()
         return
     end
 
+    -- Even after IsLevelSynced becomes true, the server may still be settling
+    -- the sync. Wait a short moment before casting the stance to avoid it being
+    -- stripped by the tail end of the sync.
+    if CurrentFate ~= nil and NeedsLevelSyncForFate(CurrentFate) and Player.IsLevelSynced == true then
+        local detectedAt = TankStanceLevelSyncDetectedAt or 0
+        if (os.clock() - detectedAt) < 1.0 then
+            Dalamud.Log("[FATE] Tank stance deferred until level sync has settled for fate #" .. tostring(CurrentFate.fateId) .. ".")
+            return
+        end
+    end
+
     local stanceSkill = nil
     local stanceStatusId = nil
     if jobId == ClassList.pld.classId then
@@ -8700,6 +8711,7 @@ function HandleLevelSyncTankStance()
     if isSynced and not TankStanceLevelSyncWasActive then
         -- Level sync just kicked in; stance was likely removed. Reset the
         -- per-fate attempt counter so TankStanceCheck can re-apply it.
+        TankStanceLevelSyncDetectedAt = os.clock()
         TankStanceAcAttemptedForFate = nil
         TankStanceAcAttemptCount = 0
         TankStanceLevelSyncHandledForFate = nil
@@ -8709,14 +8721,20 @@ function HandleLevelSyncTankStance()
             yield("/echo [FATE] Level sync detected, rechecking tank stance")
         end
     end
+    if not isSynced then
+        TankStanceLevelSyncDetectedAt = nil
+    end
     TankStanceLevelSyncWasActive = isSynced
 
     if isSynced and TankStanceLevelSyncHandledForFate ~= CurrentFate.fateId then
         local now = os.clock()
-        if TankStanceAcAttemptedAt == nil or (now - TankStanceAcAttemptedAt) >= 3 then
-            TankStanceCheck()
-            if TankStanceAcAttemptedForFate == CurrentFate.fateId then
-                TankStanceLevelSyncHandledForFate = CurrentFate.fateId
+        local detectedAt = TankStanceLevelSyncDetectedAt or now
+        if (now - detectedAt) >= 1.0 then
+            if TankStanceAcAttemptedAt == nil or (now - TankStanceAcAttemptedAt) >= 3 then
+                TankStanceCheck()
+                if TankStanceAcAttemptedForFate == CurrentFate.fateId then
+                    TankStanceLevelSyncHandledForFate = CurrentFate.fateId
+                end
             end
         end
     end
@@ -10086,6 +10104,7 @@ function FateFarming:Run()
     TankStanceAcAttemptedAt               = 0
     TankStanceLevelSyncHandledForFate     = nil
     TankStanceLevelSyncWasActive          = false
+    TankStanceLevelSyncDetectedAt         = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     LastLevelSyncAttemptAt                = 0
