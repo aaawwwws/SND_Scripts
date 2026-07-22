@@ -7636,12 +7636,29 @@ function Ready()
 
     if Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
         if not SelectedZone or not SelectedZone.aetheryteList or #SelectedZone.aetheryteList == 0 then
-            local msg = "ERROR: No aetheryte found for selected zone. Cannot teleport. Stopping script."
-            yield("/echo [FATE] " .. msg)
-            SendDiscordMessage(msg)
-            SetStopReason(msg)
-            StopScript = true
-            return
+            -- Aetheryte list may not be populated yet (e.g. right after a zone switch).
+            -- Wait briefly and rebuild the zone data before giving up.
+            local retryStart = os.clock()
+            local recovered = false
+            while os.clock() - retryStart < 5 do
+                Dalamud.Log("[FATE] No aetheryte found for selected zone, waiting for aetheryte list to populate...")
+                yield("/wait 0.5")
+                if SelectedZone ~= nil and SelectedZone.zoneId ~= nil then
+                    SelectedZone = BuildZoneData(SelectedZone.zoneId)
+                end
+                if SelectedZone ~= nil and SelectedZone.aetheryteList ~= nil and #SelectedZone.aetheryteList > 0 then
+                    recovered = true
+                    break
+                end
+            end
+            if not recovered then
+                local msg = "[FATE] No aetheryte found for selected zone. Switching to next zone as recovery."
+                yield("/echo [FATE] " .. msg)
+                SendDiscordMessage(msg)
+                RecordZoneUnresponsiveSkip(SelectedZone and SelectedZone.zoneId, "no_aetheryte")
+                SelectNextDawntrailZone()
+                return
+            end
         end
         local teleSuccess, attemptedNames = TeleportToSelectedZoneAetheryte()
         if teleSuccess == false then
