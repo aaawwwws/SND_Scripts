@@ -4299,7 +4299,21 @@ local function BuildTeleportNameCandidates(name)
         { "Living Memory", "リビング・メモリー", "リビングメモリー" },
         { "Hhusatahwi", "フーサタイ宿場町" },
         { "Sheshenewzo", "シェシェネ青燐泉" },
-        { "Mehwahiz", "メワヘイゾーン" }
+        { "Mehwahiz", "メワヘイゾーン" },
+        { "Wachunpelo", "ワチュン・ペロ", "ワチュンペロ" },
+        { "Worlar's Echo", "ウォーラーの残響", "ウォーラーズエコー" },
+        { "Ok'hanu", "オク・ハヌ", "オクハヌ" },
+        { "Many Fires", "メニー・ファイアーズ", "メニーファイアーズ" },
+        { "Earthenshire", "アーシャン・シャイア", "アーシャンシャイア" },
+        { "Dock Poga", "ドック・ポガ", "ドックポガ" },
+        { "Mamook", "マムーク" },
+        { "Vril", "ヴリトラ" },
+        { "The Outskirts", "アウトスカート" },
+        { "Tender Valley", "テンダー・ヴァレー", "テンダーヴァレー" },
+        { "The Pillion", "ピリオン" },
+        { "The Stellarium", "ステラリウム" },
+        { "The Cytoyard", "サイトヤード" },
+        { "YTM-00751", "YTM-00751" }
     }
     for _, aliasGroup in ipairs(aliasGroups) do
         local matched = false
