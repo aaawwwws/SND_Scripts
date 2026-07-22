@@ -7649,14 +7649,26 @@ function Ready()
             if attempted == "" then
                 attempted = "none"
             end
-            local msg = "ERROR: Teleportation failed for selected zone (attempted: " ..
-                attempted .. "). Stopping script."
+            TeleportZoneRecoveryAttempts = (TeleportZoneRecoveryAttempts or 0) + 1
+            if (TeleportZoneRecoveryAttempts or 0) >= 5 then
+                local msg = "ERROR: Teleportation failed for selected zone (attempted: " ..
+                    attempted .. "). Recovery attempts exhausted. Stopping script."
+                yield("/echo [FATE] " .. msg)
+                SendDiscordMessage(msg)
+                SetStopReason(msg)
+                StopScript = true
+                return
+            end
+            local msg = "[FATE] Teleportation failed for selected zone (attempted: " ..
+                attempted .. "). Switching to next zone as recovery."
             yield("/echo [FATE] " .. msg)
             SendDiscordMessage(msg)
-            SetStopReason(msg)
-            StopScript = true
+            RecordZoneUnresponsiveSkip(SelectedZone and SelectedZone.zoneId, "teleport_failed")
+            SelectNextDawntrailZone()
             return
         end
+        -- Reset recovery counter on success.
+        TeleportZoneRecoveryAttempts = 0
         Dalamud.Log("[FATE] Teleport Back to Farming Zone")
         return
     end
@@ -10146,6 +10158,7 @@ function FateFarming:Run()
     TankStanceLevelSyncDetectedAt         = nil
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
+    TeleportZoneRecoveryAttempts          = 0
     LastLevelSyncAttemptAt                = 0
     LevelSyncFailureCount                 = 0
     LevelSyncNextAttemptAt                = 0
