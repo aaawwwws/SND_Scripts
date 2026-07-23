@@ -8659,8 +8659,10 @@ function TankStanceCheck()
 
     -- Even after IsLevelSynced becomes true, the server may still be settling
     -- the sync. Wait a short moment before casting the stance to avoid it being
-    -- stripped by the tail end of the sync.
-    if CurrentFate ~= nil and NeedsLevelSyncForFate(CurrentFate) and Player.IsLevelSynced == true then
+    -- stripped by the tail end of the sync. Use only the sync flag here, not
+    -- NeedsLevelSyncForFate, because Player.Job.Level may update later than the
+    -- sync flag and incorrectly disable this guard.
+    if CurrentFate ~= nil and Player.IsLevelSynced == true then
         local detectedAt = TankStanceLevelSyncDetectedAt or 0
         if (os.clock() - detectedAt) < 1.5 then
             Dalamud.Log("[FATE] Tank stance deferred until level sync has settled for fate #" .. tostring(CurrentFate.fateId) .. ".")
@@ -8782,10 +8784,6 @@ function HandleLevelSyncTankStance()
     if Svc.Condition[CharacterCondition.inCombat] then return end
     if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then return end
     if CurrentFate == nil then
-        TankStanceLevelSyncWasActive = false
-        return
-    end
-    if not NeedsLevelSyncForFate(CurrentFate) then
         TankStanceLevelSyncWasActive = false
         return
     end
