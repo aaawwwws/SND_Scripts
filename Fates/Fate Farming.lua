@@ -8615,6 +8615,11 @@ function TankStanceCheck()
         return
     end
 
+    -- Cannot cast tank stance while mounted or flying.
+    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then
+        return
+    end
+
     local lp = (ClientState ~= nil and ClientState.LocalPlayer) or
         (Svc ~= nil and Svc.ClientState ~= nil and Svc.ClientState.LocalPlayer) or
         (Player ~= nil and Player.Available == true and Player)
@@ -8657,7 +8662,7 @@ function TankStanceCheck()
     -- stripped by the tail end of the sync.
     if CurrentFate ~= nil and NeedsLevelSyncForFate(CurrentFate) and Player.IsLevelSynced == true then
         local detectedAt = TankStanceLevelSyncDetectedAt or 0
-        if (os.clock() - detectedAt) < 1.0 then
+        if (os.clock() - detectedAt) < 1.5 then
             Dalamud.Log("[FATE] Tank stance deferred until level sync has settled for fate #" .. tostring(CurrentFate.fateId) .. ".")
             return
         end
@@ -8707,14 +8712,14 @@ function TankStanceCheck()
 
     if TankStanceAcAttemptedForFate ~= nil and CurrentFate ~= nil
         and TankStanceAcAttemptedForFate == CurrentFate.fateId then
-        -- Retry up to 2 more times (max 3 total) for the same fate, waiting at least 10s between attempts.
+        -- Retry up to 2 more times (max 3 total) for the same fate, waiting at least 5s between attempts.
         local attempts = TankStanceAcAttemptCount or 0
         if attempts >= 3 then
             Dalamud.Log("[FATE] Tank stance toggle skipped: already attempted max retries for fate #" .. tostring(CurrentFate.fateId))
             return
         end
-        if TankStanceAcAttemptedAt ~= nil and (now - TankStanceAcAttemptedAt) < 10 then
-            Dalamud.Log("[FATE] Tank stance toggle skipped: on 10s same-fate retry cooldown")
+        if TankStanceAcAttemptedAt ~= nil and (now - TankStanceAcAttemptedAt) < 5 then
+            Dalamud.Log("[FATE] Tank stance toggle skipped: on 5s same-fate retry cooldown")
             return
         end
     end
@@ -8775,6 +8780,7 @@ function HandleLevelSyncTankStance()
     -- Re-apply tank stance after level sync removes it.
     if AutoEnableTankStance ~= true then return end
     if Svc.Condition[CharacterCondition.inCombat] then return end
+    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then return end
     if CurrentFate == nil then
         TankStanceLevelSyncWasActive = false
         return
@@ -8806,7 +8812,8 @@ function HandleLevelSyncTankStance()
     if isSynced and TankStanceLevelSyncHandledForFate ~= CurrentFate.fateId then
         local now = os.clock()
         local detectedAt = TankStanceLevelSyncDetectedAt or now
-        if (now - detectedAt) >= 1.0 then
+        -- Give level sync a little longer to settle before casting the stance.
+        if (now - detectedAt) >= 1.5 then
             if TankStanceAcAttemptedAt == nil or (now - TankStanceAcAttemptedAt) >= 3 then
                 TankStanceCheck()
                 if TankStanceAcAttemptedForFate == CurrentFate.fateId then
