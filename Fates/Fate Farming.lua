@@ -6351,39 +6351,45 @@ function TurnOffCombatMods()
     if CombatModsOn then
         Dalamud.Log("[FATE] Turning off combat mods")
         CombatModsOn = false
+    end
 
-        if RotationPlugin == "RSR" then
-            SafeYield("/rotation off")
-            Dalamud.Log("[FATE] TurnOffCombatMods /rotation off")
-        elseif RotationPlugin == "BMR" then
-            IPC.BossMod.ClearActive()
-        elseif RotationPlugin == "VBM" then
-            IPC.BossMod.ClearActive()
-        elseif RotationPlugin == "Wrath" then
-            SafeYield("/wrath auto off")
-            WrathAutoEnabled = false
-            ResetWrathKeepAliveState()
-        end
+    if RotationPlugin == "RSR" then
+        SafeYield("/rotation off")
+        Dalamud.Log("[FATE] TurnOffCombatMods /rotation off")
+    elseif RotationPlugin == "BMR" then
+        local ok = pcall(function() IPC.BossMod.ClearActive() end)
+        if not ok then Dalamud.Log("[FATE] Failed to clear BMR preset.") end
+    elseif RotationPlugin == "VBM" then
+        local ok = pcall(function() IPC.BossMod.ClearActive() end)
+        if not ok then Dalamud.Log("[FATE] Failed to clear VBM preset.") end
+    elseif RotationPlugin == "Wrath" then
+        -- Send twice with a short delay in case the first command is dropped
+        -- or Wrath is in a state where it ignores the toggle.
+        SafeYield("/wrath auto off")
+        yield("/wait 0.3")
+        SafeYield("/wrath auto off")
+        WrathAutoEnabled = false
+        ResetWrathKeepAliveState()
+    end
 
-        -- turn off BMR so you dont start following other mobs
-        if AiDodgingOn then
-            if DodgingPlugin == "BMR" then
-                SafeYield("/bmrai off")
-                SafeYield("/bmrai followtarget off")
-                SafeYield("/bmrai followcombat off")
-                SafeYield("/bmrai followoutofcombat off")
-            elseif DodgingPlugin == "VBM" then
-                SafeYield("/vbm ai off")
-                --[[vbm ai doesn't support these options.
-                SafeYield("/vbmai followtarget off")
-                SafeYield("/vbmai followcombat off")
-                SafeYield("/vbmai followoutofcombat off")
-                if RotationPlugin ~= "VBM" then
-                    SafeYield("/vbmai ForbidActions off") --This Enables VBM AI Auto-Target
-                end]]
-            end
-            AiDodgingOn = false
+    -- turn off BMR so you dont start following other mobs
+    if AiDodgingOn then
+        if DodgingPlugin == "BMR" then
+            SafeYield("/bmrai off")
+            SafeYield("/bmrai followtarget off")
+            SafeYield("/bmrai followcombat off")
+            SafeYield("/bmrai followoutofcombat off")
+        elseif DodgingPlugin == "VBM" then
+            SafeYield("/vbm ai off")
+            --[[vbm ai doesn't support these options.
+            SafeYield("/vbmai followtarget off")
+            SafeYield("/vbmai followcombat off")
+            SafeYield("/vbmai followoutofcombat off")
+            if RotationPlugin ~= "VBM" then
+                SafeYield("/vbmai ForbidActions off") --This Enables VBM AI Auto-Target
+            end]]
         end
+        AiDodgingOn = false
     end
 end
 
@@ -6925,9 +6931,12 @@ function DoFate()
         else
             DidFate = true
             Dalamud.Log("[FATE] No continuation for " .. CurrentFate.fateName)
+            -- Turn off combat mods immediately so Wrath/BMR don't attack nearby
+            -- non-FATE mobs during the post-FATE wait.
+            TurnOffCombatMods()
+            ClearTarget()
             local randomWait = GetPostFateWaitSeconds()
             yield("/wait " .. randomWait)
-            TurnOffCombatMods()
             ForlornMarked = false
             MovingAnnouncementLock = false
             ResetTargetAcquireWatchdog()
@@ -10802,6 +10811,18 @@ function FateFarming:Run()
 
                 -- Re-apply tank stance if level sync removed it.
                 HandleLevelSyncTankStance()
+
+                -- Safety: make sure Wrath auto is disabled when we are not in an
+                -- active FATE combat state. This prevents the rotation from attacking
+                -- random nearby mobs after a FATE ends if the off command was missed.
+                if RotationPlugin == "Wrath" and WrathAutoEnabled == true
+                    and CurrentFate == nil
+                    and State ~= CharacterState.doFate
+                    and State ~= CharacterState.unexpectedCombat
+                then
+                    Dalamud.Log("[FATE] Safety: Wrath auto still enabled with no active FATE, turning off.")
+                    TurnOffCombatMods()
+                end
             end
         end
         end)
