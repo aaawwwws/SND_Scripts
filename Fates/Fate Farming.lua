@@ -5038,13 +5038,26 @@ function MountState()
 end
 
 function InitialSetup()
-    -- 1. Switch to normal FATE gearset first.
-    if SwitchToNormalGearsetOnStart and NormalFateGearset ~= nil and NormalFateGearset ~= ""
-        and CurrentlyEquippedGearset ~= NormalFateGearset then
-        if Player.IsBusy then
+    -- If the player is busy (e.g. in combat or moving) at script start, waiting
+    -- forever blocks the whole macro. Give it a short grace period, then fall
+    -- through to the normal state machine so it can handle combat/idle recovery.
+    if Player.IsBusy then
+        if InitialSetupBusySince == nil then
+            InitialSetupBusySince = os.clock()
+        end
+        if os.clock() - InitialSetupBusySince < 10 then
             Dalamud.Log("[FATE] Initial setup: waiting for player to be idle")
             return
         end
+        Dalamud.Log("[FATE] Initial setup: player still busy after 10s, skipping initial setup")
+        State = CharacterState.ready
+        return
+    end
+    InitialSetupBusySince = nil
+
+    -- 1. Switch to normal FATE gearset first.
+    if SwitchToNormalGearsetOnStart and NormalFateGearset ~= nil and NormalFateGearset ~= ""
+        and CurrentlyEquippedGearset ~= NormalFateGearset then
         Dalamud.Log("[FATE] Initial setup: switching to normal gearset")
         local ok = SafeYield("/gs change \"" .. NormalFateGearset .. "\"")
         yield("/wait 1.5")
@@ -10198,6 +10211,7 @@ function FateFarming:Run()
     InitialSetupTeleportStartAt           = nil
     InitialSetupTeleportDone              = false
     InitialSetupChocoboSummonDone         = false
+    InitialSetupBusySince                 = nil
     TankStanceAcAttemptedForFate          = nil
     TankStanceAcAttemptCount              = nil
     TankStanceAcAttemptedAt               = 0
