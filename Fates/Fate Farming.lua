@@ -8001,11 +8001,28 @@ function HandleMovementStuck(targetPosition)
             math.max(0.8, stuckThreshold * 0.25)
     end
 
-    if movedEnough or madeTargetProgress then
+    -- Only reset the stuck counter when we are close enough or clearly making
+    -- progress toward the target. Moving in place (e.g. wiggling against a wall)
+    -- should not reset the counter, otherwise we never trigger recovery.
+    if distanceToTarget ~= nil and distanceToTarget <= math.max(5, stuckThreshold * 1.5) then
         MoveStuckCount = 0
         MoveStuckLastPosition = playerPos
         MoveStuckLastDistanceToTarget = distanceToTarget
         return false
+    end
+
+    if madeTargetProgress then
+        MoveStuckCount = 0
+        MoveStuckLastPosition = playerPos
+        MoveStuckLastDistanceToTarget = distanceToTarget
+        return false
+    end
+
+    -- Update the reference position when we move, but keep the counter so that
+    -- repeated directionless wiggling still escalates to recovery.
+    if movedEnough then
+        MoveStuckLastPosition = playerPos
+        MoveStuckLastDistanceToTarget = distanceToTarget
     end
 
     MoveStuckCount = MoveStuckCount + 1
