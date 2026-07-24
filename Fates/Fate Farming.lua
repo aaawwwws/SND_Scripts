@@ -1472,7 +1472,7 @@ function GetLangTable(lang)
                 ["Hakaze"] = "刃風",
                 ["True Thrust"] = "トゥルースラスト",
                 ["Bootshine"] = "ブートシャイン",
-                ["Spinning Edge"] = "スピニングエッジ",
+                ["Spinning Edge"] = "スピンエッジ",
                 ["Slice"] = "スライス",
                 ["Steel Fangs"] = "壱の牙【咬創】",
                 ["Hell's Ingress"] = "ヘルズイングレス",
