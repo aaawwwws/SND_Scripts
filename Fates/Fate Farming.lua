@@ -4457,7 +4457,9 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
         return false
     end
 
-    local liCommand = '/li tp "' .. escapedName .. '"'
+    -- Lifestream's command parser does not strip surrounding quotes; including
+    -- them causes destination matching to fail ("Living Memory" vs Living Memory).
+    local liCommand = '/li tp ' .. escapedName
     local attempts = 2
     local startTimeout = FastCombatPacing and 5.0 or 6.5
     for _ = 1, attempts do
@@ -4475,7 +4477,7 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
     end
 
     -- Fallback: try as a mini-aetheryte name (e.g. /li ネクサスアーケード).
-    local localCommand = '/li "' .. escapedName .. '"'
+    local localCommand = '/li ' .. escapedName
     for _ = 1, attempts do
         yield(localCommand)
         if WaitForTeleportStart(startTimeout, escapedName) then
@@ -4652,7 +4654,7 @@ function TeleportTo(aetheryteName)
     -- If we have a valid aetheryte ID, try teleporting by ID via chat command.
     if not teleportStarted and resolvedId ~= nil then
         attemptedByLiName = true
-        local liIdCommand = '/li tp "' .. tostring(resolvedId) .. '"'
+        local liIdCommand = '/li tp ' .. tostring(resolvedId)
         for _ = 1, 2 do
             yield(liIdCommand)
             if WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName, startTerritory) then
