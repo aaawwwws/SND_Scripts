@@ -64,6 +64,9 @@ configs:
   Initial setup teleport zone:
     description: 開始時にテレポートするゾーンのエーテライト名（例：リビング・メモリー）。空欄で無効。
     default: "リビング・メモリー"
+  Use Lifestream for teleport?:
+    description: Lifestream（/li tp）を使ったテレポートを試行します。OFFにするとネイティブテレポート（Actions.Teleport）のみを使用します。
+    default: true
   Summon chocobo on start?:
     description: 開始時にチョコボ召喚を試行します。
     default: true
@@ -4407,23 +4410,38 @@ end
 function WaitUntilTeleportUsable(timeoutSeconds)
     local startWait = os.clock()
     local timeout = tonumber(timeoutSeconds) or 6
+    local lastReason = nil
     while os.clock() - startWait < timeout do
-        local blocked = Svc.Condition[CharacterCondition.dead]
-            or Svc.Condition[CharacterCondition.inCombat]
-            or Svc.Condition[CharacterCondition.casting]
-            or Svc.Condition[CharacterCondition.betweenAreas]
-            or Svc.Condition[CharacterCondition.betweenAreasForDuty]
-            or Svc.Condition[CharacterCondition.boundByDuty34]
-            or Svc.Condition[CharacterCondition.boundByDuty56]
-            or Svc.Condition[CharacterCondition.occupied]
-            or Svc.Condition[CharacterCondition.occupiedInEvent]
-            or Svc.Condition[CharacterCondition.occupiedInQuestEvent]
-            or Svc.Condition[CharacterCondition.beingMoved]
-        if not blocked then
+        local reasons = {}
+        if Svc.Condition[CharacterCondition.dead] then table.insert(reasons, "dead") end
+        if Svc.Condition[CharacterCondition.inCombat] then table.insert(reasons, "inCombat") end
+        if Svc.Condition[CharacterCondition.casting] then table.insert(reasons, "casting") end
+        if Svc.Condition[CharacterCondition.betweenAreas] then table.insert(reasons, "betweenAreas") end
+        if Svc.Condition[CharacterCondition.betweenAreasForDuty] then table.insert(reasons, "betweenAreasForDuty") end
+        if Svc.Condition[CharacterCondition.boundByDuty34] then table.insert(reasons, "boundByDuty34") end
+        if Svc.Condition[CharacterCondition.boundByDuty56] then table.insert(reasons, "boundByDuty56") end
+        if Svc.Condition[CharacterCondition.occupied] then table.insert(reasons, "occupied") end
+        if Svc.Condition[CharacterCondition.occupiedInEvent] then table.insert(reasons, "occupiedInEvent") end
+        if Svc.Condition[CharacterCondition.occupiedInQuestEvent] then table.insert(reasons, "occupiedInQuestEvent") end
+        if Svc.Condition[CharacterCondition.beingMoved] then table.insert(reasons, "beingMoved") end
+        if Svc.Condition[CharacterCondition.mounted] then
+            table.insert(reasons, "mounted")
+            Dismount(true)
+        end
+        if Svc.Condition[CharacterCondition.mounting57] then table.insert(reasons, "mounting57") end
+        if Svc.Condition[CharacterCondition.mounting64] then table.insert(reasons, "mounting64") end
+
+        if #reasons == 0 then
             return true
+        end
+        local reason = table.concat(reasons, ",")
+        if reason ~= lastReason then
+            Dalamud.Log("[FATE] Teleport deferred: " .. reason)
+            lastReason = reason
         end
         yield("/wait 0.2")
     end
+    Dalamud.Log("[FATE] Teleport still not usable after " .. timeout .. "s")
     return false
 end
 
@@ -4500,22 +4518,34 @@ function TryNativeTeleportById(destinationId, destinationName)
         return false
     end
     if Actions == nil or type(Actions.Teleport) ~= "function" then
+        Dalamud.Log("[FATE] Actions.Teleport is not available.")
         return false
     end
     local startTerritory = Svc.ClientState.TerritoryType
-    local startTimeout = FastCombatPacing and 4.5 or 6.0
+    local startTimeout = FastCombatPacing and 8.0 or 10.0
     for attempt = 1, 3 do
-        local ok = pcall(function()
-            Actions.Teleport(destinationId)
+        -- Stop movement and ensure we are on the ground before casting.
+        SafeYield("/vnav stop")
+        if Svc.Condition[CharacterCondition.mounted] then
+            Dismount(true)
+        end
+        yield("/wait 0.5")
+        Dalamud.Log("[FATE] Calling Actions.Teleport(" .. tostring(destinationId) .. ") attempt " .. tostring(attempt))
+        local ok, result = pcall(function()
+            return Actions.Teleport(destinationId)
         end)
         if not ok then
+            Dalamud.Log("[FATE] Actions.Teleport threw an error: " .. tostring(result))
             return false
+        end
+        if result == false then
+            Dalamud.Log("[FATE] Actions.Teleport returned false (unusable state or invalid aetheryte).")
         end
         if WaitForTeleportStart(startTimeout, destinationName, startTerritory) then
             return true
         end
         Dalamud.Log("[FATE] Native teleport start not detected, retrying... (attempt " .. tostring(attempt) .. ")")
-        yield("/wait 0.5")
+        yield("/wait 1")
     end
     return false
 end
@@ -4613,13 +4643,21 @@ function TeleportTo(aetheryteName)
     local liStartTimeout = FastCombatPacing and 4.5 or 6.0
     local startTerritory = Svc.ClientState.TerritoryType
 
-    if resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Teleport) == "function" then
+    Dalamud.Log("[FATE] TeleportTo requested=" .. tostring(aetheryteName) ..
+        " resolvedName=" .. tostring(resolvedName) ..
+        " resolvedId=" .. tostring(resolvedId) ..
+        " lifestreamEnabled=" .. tostring(UseLifestreamForTeleport))
+
+    if UseLifestreamForTeleport ~= false and resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Teleport) == "function" then
         attemptedById = true
+        Dalamud.Log("[FATE] Trying Lifestream IPC.Teleport id=" .. tostring(resolvedId))
         local ok = pcall(function()
             IPC.Lifestream.Teleport(resolvedId, 0)
         end)
         if ok then
             teleportStarted = WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName, startTerritory)
+        else
+            Dalamud.Log("[FATE] Lifestream IPC.Teleport threw an error.")
         end
     end
 
@@ -4630,19 +4668,23 @@ function TeleportTo(aetheryteName)
 
     -- Some Lifestream versions expose ExecuteCommand("tp <id/name>") instead of
     -- the older Teleport IPC. Try the raw command before falling back to chat.
-    if not teleportStarted and resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil
+    if UseLifestreamForTeleport ~= false and not teleportStarted and resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil
         and type(IPC.Lifestream.ExecuteCommand) == "function" then
+        Dalamud.Log("[FATE] Trying Lifestream ExecuteCommand tp id=" .. tostring(resolvedId))
         local ok = pcall(function()
             IPC.Lifestream.ExecuteCommand("tp " .. tostring(resolvedId))
         end)
         if ok then
             teleportStarted = WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName, startTerritory)
+        else
+            Dalamud.Log("[FATE] Lifestream ExecuteCommand threw an error.")
         end
     end
 
-    if not teleportStarted then
+    if UseLifestreamForTeleport ~= false and not teleportStarted then
         for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
             attemptedByLiName = true
+            Dalamud.Log("[FATE] Trying Lifestream chat /li tp " .. tostring(candidateName))
             if TryLifestreamTeleportByPlaceName(candidateName) then
                 teleportStarted = true
                 break
@@ -4652,9 +4694,10 @@ function TeleportTo(aetheryteName)
 
     -- Fallback: Lifestream may fail to resolve Japanese aetheryte names.
     -- If we have a valid aetheryte ID, try teleporting by ID via chat command.
-    if not teleportStarted and resolvedId ~= nil then
+    if UseLifestreamForTeleport ~= false and not teleportStarted and resolvedId ~= nil then
         attemptedByLiName = true
         local liIdCommand = '/li tp ' .. tostring(resolvedId)
+        Dalamud.Log("[FATE] Trying Lifestream chat fallback " .. liIdCommand)
         for _ = 1, 2 do
             yield(liIdCommand)
             if WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName, startTerritory) then
@@ -10448,6 +10491,7 @@ function FateFarming:Run()
     NormalFateGearset               = Config.Get("Normal FATE Gearset")
     AutoEnableTankStance            = Config.Get("Auto-enable tank stance?")
     InitialSetupTeleportZone        = Config.Get("Initial setup teleport zone")
+    UseLifestreamForTeleport        = ParseBool(Config.Get("Use Lifestream for teleport?"), true)
     SummonChocoboOnStart            = Config.Get("Summon chocobo on start?")
     SwitchToNormalGearsetOnStart    = Config.Get("Switch to normal gearset on start?")
 
