@@ -4608,6 +4608,18 @@ function TeleportTo(aetheryteName)
         teleportStarted = TryNativeTeleportById(resolvedId, (resolvedName ~= "" and resolvedName) or aetheryteName)
     end
 
+    -- Some Lifestream versions expose ExecuteCommand("tp <id/name>") instead of
+    -- the older Teleport IPC. Try the raw command before falling back to chat.
+    if not teleportStarted and resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil
+        and type(IPC.Lifestream.ExecuteCommand) == "function" then
+        local ok = pcall(function()
+            IPC.Lifestream.ExecuteCommand("tp " .. tostring(resolvedId))
+        end)
+        if ok then
+            teleportStarted = WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName)
+        end
+    end
+
     if not teleportStarted then
         for _, candidateName in ipairs(BuildTeleportNameCandidates((resolvedName ~= "" and resolvedName) or aetheryteName)) do
             attemptedByLiName = true
@@ -4622,7 +4634,7 @@ function TeleportTo(aetheryteName)
     -- If we have a valid aetheryte ID, try teleporting by ID via chat command.
     if not teleportStarted and resolvedId ~= nil then
         attemptedByLiName = true
-        local liIdCommand = "/li tp " .. tostring(resolvedId)
+        local liIdCommand = '/li tp "' .. tostring(resolvedId) .. '"'
         for _ = 1, 2 do
             yield(liIdCommand)
             if WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName) then
