@@ -4373,12 +4373,15 @@ local function ResolveTeleportDestination(name)
     return tostring(name or ""), nil
 end
 
-local function WaitForTeleportStart(timeoutSeconds, destinationName)
+local function WaitForTeleportStart(timeoutSeconds, destinationName, startTerritory)
     local startWait = os.clock()
     local timeout = tonumber(timeoutSeconds) or 2
     while os.clock() - startWait < timeout do
         AcceptTeleportOfferLocation(destinationName)
         if Svc.Condition[CharacterCondition.casting] or Svc.Condition[CharacterCondition.betweenAreas] then
+            return true
+        end
+        if startTerritory ~= nil and Svc.ClientState.TerritoryType ~= startTerritory then
             return true
         end
         yield("/wait 0.1")
@@ -4503,8 +4506,9 @@ function TryNativeTeleportById(destinationId, destinationName)
     if not ok then
         return false
     end
+    local startTerritory = Svc.ClientState.TerritoryType
     local startTimeout = FastCombatPacing and 4.5 or 6.0
-    return WaitForTeleportStart(startTimeout, destinationName)
+    return WaitForTeleportStart(startTimeout, destinationName, startTerritory)
 end
 
 local function GetTeleportFailureEntry(destinationName)
@@ -4592,6 +4596,7 @@ function TeleportTo(aetheryteName)
     local attemptedByActionId = false
     local attemptedByLiName = false
     local liStartTimeout = FastCombatPacing and 4.5 or 6.0
+    local startTerritory = Svc.ClientState.TerritoryType
 
     if resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Teleport) == "function" then
         attemptedById = true
@@ -4599,7 +4604,7 @@ function TeleportTo(aetheryteName)
             IPC.Lifestream.Teleport(resolvedId, 0)
         end)
         if ok then
-            teleportStarted = WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName)
+            teleportStarted = WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName, startTerritory)
         end
     end
 
@@ -4616,7 +4621,7 @@ function TeleportTo(aetheryteName)
             IPC.Lifestream.ExecuteCommand("tp " .. tostring(resolvedId))
         end)
         if ok then
-            teleportStarted = WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName)
+            teleportStarted = WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName, startTerritory)
         end
     end
 
@@ -4637,7 +4642,7 @@ function TeleportTo(aetheryteName)
         local liIdCommand = '/li tp "' .. tostring(resolvedId) .. '"'
         for _ = 1, 2 do
             yield(liIdCommand)
-            if WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName) then
+            if WaitForTeleportStart(liStartTimeout, (resolvedName ~= "" and resolvedName) or aetheryteName, startTerritory) then
                 teleportStarted = true
                 break
             end
