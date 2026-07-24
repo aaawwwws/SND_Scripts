@@ -4454,7 +4454,7 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
         return false
     end
 
-    local liCommand = "/li tp " .. escapedName
+    local liCommand = '/li tp "' .. escapedName .. '"'
     local attempts = 2
     local startTimeout = FastCombatPacing and 5.0 or 6.5
     for _ = 1, attempts do
@@ -4472,7 +4472,7 @@ local function TryLifestreamTeleportByPlaceName(destinationName)
     end
 
     -- Fallback: try as a mini-aetheryte name (e.g. /li ネクサスアーケード).
-    local localCommand = "/li " .. escapedName
+    local localCommand = '/li "' .. escapedName .. '"'
     for _ = 1, attempts do
         yield(localCommand)
         if WaitForTeleportStart(startTimeout, escapedName) then
