@@ -6435,9 +6435,14 @@ function TurnOnCombatMods(rotationMode)
     end
 end
 
-function TurnOffCombatMods()
+function TurnOffCombatMods(reason)
+    local reasonText = ""
+    if reason ~= nil and tostring(reason) ~= "" then
+        reasonText = " (" .. tostring(reason) .. ")"
+    end
     if CombatModsOn then
-        Dalamud.Log("[FATE] Turning off combat mods")
+        Dalamud.Log("[FATE] Turning off combat mods" .. reasonText)
+        yield("/echo [FATE] Turning off combat mods" .. reasonText)
         CombatModsOn = false
     end
 
@@ -10342,6 +10347,7 @@ function FateFarming:Run()
     WrathKeepAliveNoCastSince             = 0
     WrathKeepAliveLastTargetSignature     = nil
     WrathKeepAliveFateId                  = nil
+    WrathSafetyNilFateStart               = nil
     LastMountCommandAt                    = 0
     LastDismountCommandAt                 = 0
     FateTimingById                        = {}
@@ -10927,13 +10933,22 @@ function FateFarming:Run()
                 -- Safety: make sure Wrath auto is disabled when we are not in an
                 -- active FATE combat state. This prevents the rotation from attacking
                 -- random nearby mobs after a FATE ends if the off command was missed.
+                -- Require CurrentFate to be missing for a couple of seconds so brief
+                -- flickers do not toggle Wrath off mid-FATE.
                 if RotationPlugin == "Wrath" and WrathAutoEnabled == true
                     and CurrentFate == nil
                     and State ~= CharacterState.doFate
                     and State ~= CharacterState.unexpectedCombat
                 then
-                    Dalamud.Log("[FATE] Safety: Wrath auto still enabled with no active FATE, turning off.")
-                    TurnOffCombatMods()
+                    if WrathSafetyNilFateStart == nil then
+                        WrathSafetyNilFateStart = os.clock()
+                    elseif os.clock() - WrathSafetyNilFateStart > 2 then
+                        Dalamud.Log("[FATE] Safety: Wrath auto still enabled with no active FATE for 2s, turning off.")
+                        TurnOffCombatMods("safety: no active FATE")
+                        WrathSafetyNilFateStart = nil
+                    end
+                else
+                    WrathSafetyNilFateStart = nil
                 end
             end
         end
