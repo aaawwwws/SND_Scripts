@@ -4500,15 +4500,22 @@ function TryNativeTeleportById(destinationId, destinationName)
     if Actions == nil or type(Actions.Teleport) ~= "function" then
         return false
     end
-    local ok = pcall(function()
-        Actions.Teleport(destinationId)
-    end)
-    if not ok then
-        return false
-    end
     local startTerritory = Svc.ClientState.TerritoryType
     local startTimeout = FastCombatPacing and 4.5 or 6.0
-    return WaitForTeleportStart(startTimeout, destinationName, startTerritory)
+    for attempt = 1, 3 do
+        local ok = pcall(function()
+            Actions.Teleport(destinationId)
+        end)
+        if not ok then
+            return false
+        end
+        if WaitForTeleportStart(startTimeout, destinationName, startTerritory) then
+            return true
+        end
+        Dalamud.Log("[FATE] Native teleport start not detected, retrying... (attempt " .. tostring(attempt) .. ")")
+        yield("/wait 0.5")
+    end
+    return false
 end
 
 local function GetTeleportFailureEntry(destinationName)
@@ -4561,7 +4568,13 @@ function TeleportTo(aetheryteName)
         SafeYield("/vnav stop")
         yield("/wait 0.2")
     end
-    WaitUntilTeleportUsable(6)
+    if not WaitUntilTeleportUsable(30) then
+        Dalamud.Log("[FATE] Teleport deferred: player is not in a usable state (combat/casting/moving).")
+        return false
+    end
+    SafeYield("/vnav stop")
+    yield("/wait 0.3")
+
     local blocked, blockEntry = IsTeleportDestinationBlocked(aetheryteName)
     if blocked then
         local now = os.clock()
