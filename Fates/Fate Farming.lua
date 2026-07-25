@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.17
+version: 3.1.18
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,13 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.18   修正: 騎乗中に敵に攻撃されるとその場から動かなくなる問題を修正。
+                原因: unexpectedCombat↔moveToFateの状態往復が毎ティック発生し、
+                MoveToFateが一度も実行されず移動コマンドが出なかった。
+                騎乗/飛行中はunexpectedCombatへの遷移をスキップ。
+                これはシンク必要FATEでInActiveFateにならず状態往復から抜けられず
+                レベルシンクできない問題の原因でもあった。
+                追加: UnexpectedCombatでシンク範囲内なら戦闘中でも/lsyncを試行。
     -> 3.1.17   修正: 戦闘中にスタック判定が誤発動し、FATEを放棄して別FATE/別
                 ゾーンへ向かう問題を修正。回避AIや動き回る敵との戦闘で
                 「10秒で0.8y接近」が達成できずスタック扱いされていた。
@@ -6715,6 +6722,20 @@ function HandleUnexpectedCombat()
         State = CharacterState.moveToFate
         return
     end
+
+    -- Level sync works even in combat. If we reached a sync-required FATE,
+    -- sync here so the normal flow (InActiveFate -> doFate) can resume
+    -- instead of fighting unsynced without ever joining the FATE.
+    if CurrentFate ~= nil
+        and IsLevelSyncPendingForCurrentFate()
+        and IsCurrentFateInSyncRange()
+        and not Svc.Condition[CharacterCondition.casting]
+    then
+        Dalamud.Log("[FATE] UnexpectedCombat: attempting /lsync at sync-required fate #" ..
+            tostring(CurrentFate.fateId))
+        SafeYield("/lsync")
+    end
+
     TurnOnCombatMods("manual")
     yield("/wait 0.3")
 
@@ -10991,6 +11012,10 @@ function FateFarming:Run()
                 and State ~= CharacterState.waitForContinuation
                 and State ~= CharacterState.collectionsFateTurnIn
                 and Svc.Condition[CharacterCondition.inCombat]
+                -- While mounted/flying, let movement states keep traveling:
+                -- flipping to unexpectedCombat here ping-pongs back to
+                -- moveToFate every tick, so no movement ever gets issued.
+                and not (Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying])
                 and (
                     not InActiveFate()
                     or (InActiveFate() and nearestFate ~= nil and IsCollectionsFate(nearestFate.Name) and nearestFate.Progress == 100)
