@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.13
+version: 3.1.14
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,10 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.14   修正: チョコボ召喚に成功しても「召喚を確認できません」が出続ける
+                問題を修正。原因: 検出スキャンのObjectKindにCompanion(9)が
+                含まれておらずチョコボにマッチしなかった（ミニオン誤検出防止の
+                ためIsTargetableも必須に）。検証待機を2秒→3秒に延長。
     -> 3.1.13   修正: FATE中に敵をターゲットしなくなる問題の追加修正。
                 修正: 別FATEのフォーローンを /target しては即クリアする
                 スラッシュで一切攻撃しない問題（フォーローンはクリア対象外に）。
@@ -5348,7 +5352,7 @@ function SummonChocoboInSetup()
 
     local greens = LANG.actions["Gysahl Greens"]
     if SafeYield('/item "' .. greens .. '"') then
-        yield("/wait 2")
+        yield("/wait 3")
         -- Verify the summon actually happened. SafeYield only means the chat
         -- command was dispatched, not that the item was used successfully.
         if IsChocoboSummoned() then
@@ -5359,7 +5363,9 @@ function SummonChocoboInSetup()
             ChocoboLastSummonAttemptAt = os.clock() - 30
             return true
         end
-        Dalamud.Log("[FATE] Initial setup: summon command sent but chocobo not detected")
+        Dalamud.Log("[FATE] Initial setup: summon command sent but chocobo not detected" ..
+            " (TimeLeft=" .. tostring(GetChocoboTimeRemaining()) ..
+            ", buddyObj=" .. tostring(CompanionObjectExists()) .. ")")
     else
         Dalamud.Log("[FATE] Initial setup: summon command failed to dispatch")
     end
@@ -9409,10 +9415,17 @@ local function CompanionObjectExists()
             local kindOk, kind = pcall(function() return obj.ObjectKind end)
             local nameOk, name = pcall(function() return obj.Name end)
             local objPosOk, pos = pcall(function() return obj.Position end)
-            if ownerOk and kindOk and nameOk and objPosOk and name ~= nil and tostring(name) ~= "" then
+            local targetableOk, targetable = pcall(function() return obj.IsTargetable end)
+            -- Minions are also ObjectKind 9 (Companion) but are not targetable;
+            -- the chocobo buddy is targetable, so require IsTargetable to
+            -- avoid detecting a minion as the chocobo.
+            if ownerOk and kindOk and nameOk and objPosOk and targetableOk and targetable == true
+                and name ~= nil and tostring(name) ~= "" then
                 local ownerMatches = owner == playerId or (goIdOk and owner == playerGoId)
                 local dist = DistanceBetweenFlat(playerPos, pos)
-                if ownerMatches and dist ~= nil and dist < 15 and (kind == 8 or kind == 11 or kind == 2) then
+                -- ObjectKind: 9 = Companion (chocobo buddy). 8/11/2 kept as
+                -- fallbacks for environments reporting the buddy differently.
+                if ownerMatches and dist ~= nil and dist < 15 and (kind == 9 or kind == 8 or kind == 11 or kind == 2) then
                     return true
                 end
             end
@@ -9900,7 +9913,7 @@ function ChocoboCheck()
         end
 
         local used = TryUseGysahlGreens()
-        yield("/wait 2")
+        yield("/wait 3")
 
         -- Check if summoning worked
         if IsChocoboSummoned() then
