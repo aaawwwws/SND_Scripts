@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.10
+version: 3.1.11
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,12 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.11   修正: FATE戦闘中に攻撃をやめることがある問題を修正。
+                原因: ターゲット取得はFATE円外の敵も拾うのに、クリア判定は
+                円の縁+3y（レベルシンク中は+0.5y）で即クリアしていたため、
+                「取得→即クリア」を毎フレーム繰り返し攻撃が停止していた。
+                取得上限とクリア判定にヒステリシスを持たせて統一
+                （engage境界+14y / クリア+16y、シンク待機中は+6/+8y）。
     -> 3.1.10   修正: /mount と /action コマンドの閉じ引用符不足を修正。
                 修正: HasContinuation チェックの論理ミスとスペルミスを修正。
                 改善: math.randomseed で乱数を初期化。
@@ -533,6 +539,8 @@ local
     GetCurrentFateMoveBoundaryBuffer,
     GetCurrentFateHardBoundaryBuffer,
     GetCurrentFateTargetRadiusPadding,
+    GetCurrentFateEngageBoundaryBuffer,
+    GetCurrentFateTargetClearMargin,
     IsPositionInsideCurrentFateBounds,
     ClampPositionToCurrentFateBounds,
     IsCurrentTargetInsideCurrentFateBounds,
@@ -1797,6 +1805,24 @@ function GetCurrentFateTargetRadiusPadding()
     return FateTargetRadiusPadding or 3
 end
 
+function GetCurrentFateEngageBoundaryBuffer()
+    -- How far outside the FATE circle a FATE enemy may be while still being
+    -- considered attackable. Enemies just outside the edge still give credit,
+    -- and a too-tight limit caused an acquire/clear thrash loop where the
+    -- script kept dropping its target and stopped attacking mid-FATE.
+    if IsLevelSyncPendingForCurrentFate() then
+        return FateLevelSyncEngageBoundaryBuffer or 6
+    end
+    return FateEngageBoundaryBuffer or 14
+end
+
+function GetCurrentFateTargetClearMargin()
+    -- Hysteresis: acquisition is capped at the engage boundary, so only drop
+    -- the current target once it is clearly beyond it (+2y). This prevents
+    -- edge-wobble from repeatedly clearing and re-acquiring the same target.
+    return GetCurrentFateEngageBoundaryBuffer() + 2
+end
+
 function IsLevelSyncPendingForCurrentFate()
     if CurrentFate == nil then
         return false
@@ -1892,12 +1918,20 @@ function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance, ig
                 local passesCombatFilter = (onlyUnengaged ~= true) or isUnengaged
                 local passesDistanceFilter = (maxDistance == nil) or (dist <= maxDistance)
                 local passesFateRadiusFilter = true
-                if not ignoreFateRadiusFilter and CurrentFate ~= nil and CurrentFate.fateId == objFateId and CurrentFate.position ~= nil then
+                if CurrentFate ~= nil and CurrentFate.fateId == objFateId and CurrentFate.position ~= nil then
                     local fateRadius = GetFateRadiusValue(CurrentFate, nil)
                     if fateRadius ~= nil and fateRadius > 0 then
-                        local fatePadding = GetCurrentFateTargetRadiusPadding()
+                        -- Even when the radius filter is "ignored" (fallback
+                        -- acquisition), cap candidates at the engage boundary.
+                        -- Otherwise we could acquire a target that the
+                        -- out-of-bounds check clears immediately, causing an
+                        -- acquire/clear loop where the player stops attacking.
+                        local radiusMargin = GetCurrentFateTargetRadiusPadding()
+                        if ignoreFateRadiusFilter then
+                            radiusMargin = GetCurrentFateEngageBoundaryBuffer()
+                        end
                         passesFateRadiusFilter =
-                            DistanceBetweenFlat(CurrentFate.position, obj.Position) <= (fateRadius + fatePadding)
+                            DistanceBetweenFlat(CurrentFate.position, obj.Position) <= (fateRadius + radiusMargin)
                     end
                 end
                 if passesCombatFilter and passesDistanceFilter and passesFateRadiusFilter then
@@ -1976,7 +2010,9 @@ function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallba
                         validDist = DistanceBetween(playerPos, ptTarget.Position) <= maxDistance
                     end
                 end
-                if validFate and validDist then
+                local withinFateBounds = IsPositionInsideCurrentFateBounds(ptTarget.Position,
+                    GetCurrentFateTargetClearMargin())
+                if validFate and validDist and withinFateBounds then
                     Svc.Targets.Target = ptTarget
                     return true
                 end
@@ -2278,7 +2314,7 @@ function MoveToTargetHitbox()
     if Svc.Targets.Target == nil then
         return
     end
-    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
+    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
         ClearTarget()
         return
     end
@@ -2298,7 +2334,7 @@ function MoveToTargetHitbox()
     local dir = Normalize(playerPos - targetPos)
     if dir:Length() == 0 then return end
     local ideal = targetPos + (dir * desiredRange)
-    local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, GetCurrentFateMoveBoundaryBuffer())
+    local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, GetCurrentFateEngageBoundaryBuffer())
     local newPos = IPC.vnavmesh.PointOnFloor(boundedIdeal, false, 1.5) or boundedIdeal
 
     -- Avoid reissuing tiny movement commands that cause 1px jitter at fate edges.
@@ -6088,7 +6124,7 @@ function TryForceCombatOpenOnTarget(now, targetDistanceFlat)
     if Svc.Targets.Target == nil or Svc.Targets.Target.IsDead then
         return false
     end
-    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
+    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
         return false
     end
 
@@ -7194,7 +7230,7 @@ function DoFate()
             and (os.clock() - ActivePullLastAttemptAt) < 1.5
         local hasValidPullTarget = Svc.Targets.Target ~= nil
             and not Svc.Targets.Target.IsDead
-            and IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer())
+            and IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())
 
         if not IsForlornTargetName(currentTargetName) and not (pullCooldownActive and hasValidPullTarget) then
             local leashSafeRadius = GetLeashSafeRetargetRadius()
@@ -7234,7 +7270,7 @@ function DoFate()
     if Svc.Targets.Target ~= nil then
         local wrappedTarget = EntityWrapper(Svc.Targets.Target)
         if wrappedTarget ~= nil and (wrappedTarget.FateId ~= CurrentFate.fateId
-                or not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer())) then
+                or not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())) then
             ClearTarget()
         end
     end
@@ -7245,7 +7281,7 @@ function DoFate()
             local wrappedTarget = EntityWrapper(Svc.Targets.Target)
             hasValidTarget = wrappedTarget ~= nil
                 and wrappedTarget.FateId == CurrentFate.fateId
-                and IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer())
+                and IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())
         end
 
         local now = os.clock()
@@ -7528,7 +7564,7 @@ function DoFate()
                     SafeYield("/vnav stop")
                     yield("/wait " .. stopBeforeInchWait)                                                                                                           -- short pause before inching closer
                 elseif (GetDistanceToTargetFlat() > (1 + GetTargetHitboxRadius() + GetPlayerHitboxRadius())) and not Svc.Condition[CharacterCondition.casting] then -- never move into hitbox
-                    if IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
+                    if IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
                         MoveToTargetHitbox()
                         yield("/wait " .. inchCloserWait) -- inch closer briefly
                     else
@@ -7615,7 +7651,7 @@ function DoFate()
                     yield("/wait " .. preApproachWaitInCombat)
                 end
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
-                    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
+                    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
                         ClearTarget()
                     else
                         MoveToTargetHitbox()
@@ -7623,7 +7659,7 @@ function DoFate()
                 end
             elseif meleeOrTank then
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
-                    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateMoveBoundaryBuffer()) then
+                    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
                         ClearTarget()
                     else
                         MoveToTargetHitbox()
@@ -10093,6 +10129,8 @@ function FateFarming:Run()
     FateLevelSyncTargetRadiusPadding      = 0.5
     FateLevelSyncBoundaryBuffer           = 2
     FateLevelSyncHardBoundaryBuffer       = 2.5
+    FateEngageBoundaryBuffer              = 14
+    FateLevelSyncEngageBoundaryBuffer     = 6
     LeashSafeRetargetBuffer               = 18
     LevelSyncInRangeBuffer                = 1.5
     LevelSyncForceCenterAfterFailures     = 2
