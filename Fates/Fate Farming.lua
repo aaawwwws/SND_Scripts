@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.18
+version: 3.1.19
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,12 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.19   修正: ゾーン切替テレポートが全滅して停止する問題への対策。
+                修正: テレポート開始時に戦闘モッドをOFF（Wrath auto等がテレポ
+                ート中に戦闘を開始しusable判定を30秒×全エーテライト分潰すのを防止）。
+                改善: テレポート失敗の理由（inCombat/mounted等）を/echoにも表示。
+                改善: 5回失敗時はスクリプト停止せず現在ゾーンで周回継続
+                （3回フォールバックしても駄目な場合のみ停止）。
     -> 3.1.18   修正: 騎乗中に敵に攻撃されるとその場から動かなくなる問題を修正。
                 原因: unexpectedCombat↔moveToFateの状態往復が毎ティック発生し、
                 MoveToFateが一度も実行されず移動コマンドが出なかった。
@@ -4567,7 +4573,7 @@ function WaitUntilTeleportUsable(timeoutSeconds)
         yield("/wait 0.2")
     end
     Dalamud.Log("[FATE] Teleport still not usable after " .. timeout .. "s")
-    return false
+    return false, lastReason
 end
 
 local function TryLocalAetheryteShortcut(destinationName)
@@ -4725,8 +4731,18 @@ function TeleportTo(aetheryteName)
         SafeYield("/vnav stop")
         yield("/wait 0.2")
     end
-    if not WaitUntilTeleportUsable(30) then
-        Dalamud.Log("[FATE] Teleport deferred: player is not in a usable state (combat/casting/moving).")
+    -- Combat mods (Wrath auto etc.) can drag us into combat mid-teleport,
+    -- which then fails the usable check. Turn them off before teleporting;
+    -- DoFate/UnexpectedCombat re-enable them when fighting resumes.
+    if CombatModsOn then
+        TurnOffCombatMods("teleport")
+    end
+    local usable, unusableReason = WaitUntilTeleportUsable(30)
+    if not usable then
+        local msg = "[FATE] Teleport deferred: player is not in a usable state (" ..
+            tostring(unusableReason or "unknown") .. ")."
+        Dalamud.Log(msg)
+        yield("/echo " .. msg)
         return false
     end
     SafeYield("/vnav stop")
@@ -7989,12 +8005,27 @@ function Ready()
             end
             TeleportZoneRecoveryAttempts = (TeleportZoneRecoveryAttempts or 0) + 1
             if (TeleportZoneRecoveryAttempts or 0) >= 5 then
-                local msg = "ERROR: Teleportation failed for selected zone (attempted: " ..
-                    attempted .. "). Recovery attempts exhausted. Stopping script."
+                -- Instead of stopping outright, fall back to farming the zone
+                -- we are physically in. Only stop if even that keeps failing.
+                TeleportFarmFallbackCount = (TeleportFarmFallbackCount or 0) + 1
+                if (TeleportFarmFallbackCount or 0) >= 3 then
+                    local msg = "ERROR: Teleportation failed for selected zone (attempted: " ..
+                        attempted .. "). Recovery attempts exhausted. Stopping script."
+                    yield("/echo [FATE] " .. msg)
+                    SendDiscordMessage(msg)
+                    SetStopReason(msg)
+                    StopScript = true
+                    return
+                end
+                local msg = "[FATE] Teleportation failed repeatedly. Farming current zone instead of stopping. (fallback " ..
+                    tostring(TeleportFarmFallbackCount) .. "/3)"
                 yield("/echo [FATE] " .. msg)
                 SendDiscordMessage(msg)
-                SetStopReason(msg)
-                StopScript = true
+                Dalamud.Log(msg)
+                TeleportZoneRecoveryAttempts = 0
+                SelectedZone = BuildZoneData(Svc.ClientState.TerritoryType)
+                CurrentFate = nil
+                NextFate = nil
                 return
             end
             local msg = "[FATE] Teleportation failed for selected zone (attempted: " ..
@@ -10453,6 +10484,7 @@ function FateFarming:Run()
     TeleportFailureByDestination          = {}
     TeleportFailureWarnedAt               = 0
     TeleportZoneRecoveryAttempts          = 0
+    TeleportFarmFallbackCount             = 0
     LastLevelSyncAttemptAt                = 0
     LevelSyncFailureCount                 = 0
     LevelSyncNextAttemptAt                = 0
