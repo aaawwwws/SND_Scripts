@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.11
+version: 3.1.12
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,13 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.12   修正: 初期設定で「チョコボ召喚コマンドを実行しました」と出るのに
+                実際は召喚されていないことがある問題を修正。
+                原因: コマンド送信後に召喚を検証しておらず、失敗時も定期チェックを
+                30分間ブロックしていた。召喚済み判定の事前確認・実行後の検証・
+                失敗時の再試行（セットアップ内3回＋周回中15秒後）を追加。
+                修正: ChocoboCheckのクールダウン計算の符号ミス
+                （成功時は期限30秒前・失敗時は30秒後に再試行されるよう修正）。
     -> 3.1.11   修正: FATE戦闘中に攻撃をやめることがある問題を修正。
                 原因: ターゲット取得はFATE円外の敵も拾うのに、クリア判定は
                 円の縁+3y（レベルシンク中は+0.5y）で即クリアしていたため、
@@ -5256,6 +5263,19 @@ function SummonChocoboInSetup()
         return false
     end
 
+    -- Don't waste a green if the companion is already out (e.g. still active
+    -- from before the script started). Using greens while summoned fails
+    -- silently, which previously looked like a "successful" summon.
+    if IsChocoboSummoned() then
+        Dalamud.Log("[FATE] Initial setup: chocobo already summoned, skipping")
+        yield("/echo [FATE] 初期設定: チョコボは既に召喚済みです")
+        if ChocoboSummonExpiresAt == nil then
+            ChocoboSummonExpiresAt = os.time() + (30 * 60)
+        end
+        ChocoboLastSummonAttemptAt = os.clock() - 30
+        return true
+    end
+
     local itemCount = Inventory.GetItemCount(4868)
     if itemCount == 0 then
         Dalamud.Log("[FATE] Initial setup: no Gysahl Greens available")
@@ -5268,16 +5288,33 @@ function SummonChocoboInSetup()
 
     local greens = LANG.actions["Gysahl Greens"]
     if SafeYield('/item "' .. greens .. '"') then
-        yield("/wait 1.5")
-        yield("/echo [FATE] 初期設定: チョコボ召喚コマンドを実行しました")
+        yield("/wait 2")
+        -- Verify the summon actually happened. SafeYield only means the chat
+        -- command was dispatched, not that the item was used successfully.
+        if IsChocoboSummoned() then
+            yield("/echo [FATE] 初期設定: チョコボ召喚コマンドを実行しました")
+            ChocoboSummonExpiresAt = os.time() + (30 * 60)
+            ChocoboSummonFailureCount = 0
+            -- Reopen the check window ~30s before the 30-minute duration ends.
+            ChocoboLastSummonAttemptAt = os.clock() - 30
+            return true
+        end
+        Dalamud.Log("[FATE] Initial setup: summon command sent but chocobo not detected")
     else
-        yield("/echo [FATE] 初期設定: チョコボ召喚コマンドが失敗しました")
+        Dalamud.Log("[FATE] Initial setup: summon command failed to dispatch")
     end
 
-    -- Record the attempt so the normal 30-minute cooldown applies even when
-    -- summoned via the unconditional initial-setup path.
-    ChocoboLastSummonAttemptAt = os.clock()
+    ChocoboSetupSummonAttempts = (ChocoboSetupSummonAttempts or 0) + 1
+    if ChocoboSetupSummonAttempts < 3 then
+        yield("/echo [FATE] 初期設定: 召喚を確認できません。再試行します (" ..
+            tostring(ChocoboSetupSummonAttempts) .. "/3)")
+        return false -- retry next tick
+    end
 
+    -- Give up in setup so farming can start; let ChocoboCheck retry shortly.
+    yield("/echo [FATE] 初期設定: チョコボ召喚を確認できません。周回中に再試行します")
+    ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
+    ChocoboLastSummonAttemptAt = os.clock() - (30 * 60) + 15 -- ChocoboCheck retries in ~15s
     return true
 end
 
@@ -9681,8 +9718,8 @@ function ChocoboCheck()
     local isSummoned = IsChocoboSummoned()
     if isSummoned then
         EchoSkip("already summoned")
-        -- Already out; use the normal 30-minute window for the next recheck.
-        ChocoboLastSummonAttemptAt = chocoboCheckDebugNow
+        -- Leave ChocoboLastSummonAttemptAt untouched so the window set by the
+        -- last actual summon attempt stays intact (reopens near expiration).
         return
     end
 
@@ -9769,13 +9806,15 @@ function ChocoboCheck()
             -- Gysahl Greens last 30 minutes; cache the expiration to avoid
             -- re-summoning when TimeLeft APIs are slow/unreliable.
             ChocoboSummonExpiresAt = os.time() + (30 * 60)
-            -- Don't attempt another summon until shortly before expiration.
-            ChocoboLastSummonAttemptAt = os.clock() + (30 * 60) - 30
+            -- Attempts are allowed when now - lastAttempt >= 30min, so setting
+            -- this 30s in the past reopens the window ~30s before expiration.
+            ChocoboLastSummonAttemptAt = os.clock() - 30
         else
             -- The command was sent but the summon is not detected. Treat this as a
-            -- failure so we retry quickly instead of waiting 30 minutes.
+            -- failure so we retry quickly instead of waiting 30 minutes:
+            -- lastAttempt 1770s in the past reopens the window in 30s.
             ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
-            ChocoboLastSummonAttemptAt = os.clock() + 30
+            ChocoboLastSummonAttemptAt = os.clock() - (30 * 60) + 30
             if ChocoboSummonFailureCount <= 3 then
                 yield("/echo [FATE] Failed to summon chocobo (attempt " ..
                     tostring(ChocoboSummonFailureCount) .. ")")
@@ -10165,6 +10204,7 @@ function FateFarming:Run()
     DidFate                               = false
     NeedsGysahlGreens                     = false
     ChocoboLastSummonAttemptAt            = 0
+    ChocoboSetupSummonAttempts            = 0
     ChocoboSummonFailureCount             = 0
     ChocoboSummonDisabled                 = false
     ChocoboSummonExpiresAt                = nil
