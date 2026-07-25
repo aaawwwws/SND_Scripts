@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.14
+version: 3.1.16
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,12 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.16   改善: チョコボ召喚の成功判定を検出APIから「ギサールの野菜が
+                消費されたか」に変更。消費=成功として30分間は状態をスクリプト側で
+                管理するため、検出APIが不安定な環境でも誤判定しなくなる。
+    -> 3.1.15   修正: "attempt to call a nil value (global 'CompanionObjectExists')"
+                エラーを修正。local functionの前方参照不可が原因のため、
+                前方宣言リストに登録。
     -> 3.1.14   修正: チョコボ召喚に成功しても「召喚を確認できません」が出続ける
                 問題を修正。原因: 検出スキャンのObjectKindにCompanion(9)が
                 含まれておらずチョコボにマッチしなかった（ミニオン誤検出防止の
@@ -602,7 +608,8 @@ local
     IsVnavmeshReadySafe,
     IsVnavmeshMovingSafe,
     TargetNearestEngagedEnemy,
-    ShouldKeepCurrentTargetForSelfDefense
+    ShouldKeepCurrentTargetForSelfDefense,
+    CompanionObjectExists
 
 -- Party Play related globals (moved out of local limit)
 GetPartyMemberCount = nil
@@ -5350,12 +5357,15 @@ function SummonChocoboInSetup()
     Dalamud.Log("[FATE] Initial setup: using Gysahl Greens (count: " .. tostring(itemCount) .. ")")
     yield("/echo [FATE] 初期設定: チョコボを召喚します")
 
+    -- Success is determined by the green actually being consumed: buddy
+    -- detection APIs (Svc.Buddies/object scan/status) are unreliable in some
+    -- environments, but the inventory count always reflects a successful use.
+    local greensBefore = Inventory.GetItemCount(4868)
     local greens = LANG.actions["Gysahl Greens"]
     if SafeYield('/item "' .. greens .. '"') then
         yield("/wait 3")
-        -- Verify the summon actually happened. SafeYield only means the chat
-        -- command was dispatched, not that the item was used successfully.
-        if IsChocoboSummoned() then
+        local greensAfter = Inventory.GetItemCount(4868)
+        if greensAfter < greensBefore or IsChocoboSummoned() then
             yield("/echo [FATE] 初期設定: チョコボ召喚コマンドを実行しました")
             ChocoboSummonExpiresAt = os.time() + (30 * 60)
             ChocoboSummonFailureCount = 0
@@ -5363,8 +5373,10 @@ function SummonChocoboInSetup()
             ChocoboLastSummonAttemptAt = os.clock() - 30
             return true
         end
-        Dalamud.Log("[FATE] Initial setup: summon command sent but chocobo not detected" ..
-            " (TimeLeft=" .. tostring(GetChocoboTimeRemaining()) ..
+        Dalamud.Log("[FATE] Initial setup: summon command sent but green not consumed" ..
+            " (before=" .. tostring(greensBefore) ..
+            ", after=" .. tostring(greensAfter) ..
+            ", TimeLeft=" .. tostring(GetChocoboTimeRemaining()) ..
             ", buddyObj=" .. tostring(CompanionObjectExists()) .. ")")
     else
         Dalamud.Log("[FATE] Initial setup: summon command failed to dispatch")
@@ -9390,7 +9402,7 @@ function GetChocoboTimeRemaining()
     return -1
 end
 
-local function CompanionObjectExists()
+function CompanionObjectExists()
     if not (Svc and Svc.Objects and Svc.ClientState and Svc.ClientState.LocalPlayer) then
         return false
     end
@@ -9912,11 +9924,15 @@ function ChocoboCheck()
             return false
         end
 
+        -- Success is determined by the green actually being consumed; buddy
+        -- detection APIs are unreliable in some environments.
+        local greensBefore = Inventory.GetItemCount(4868)
         local used = TryUseGysahlGreens()
         yield("/wait 3")
 
         -- Check if summoning worked
-        if IsChocoboSummoned() then
+        local greensAfter = Inventory.GetItemCount(4868)
+        if (used and greensAfter < greensBefore) or IsChocoboSummoned() then
             yield("/echo [FATE] Chocobo summoned successfully")
             ChocoboSummonFailureCount = 0
             -- Gysahl Greens last 30 minutes; cache the expiration to avoid
@@ -9926,9 +9942,14 @@ function ChocoboCheck()
             -- this 30s in the past reopens the window ~30s before expiration.
             ChocoboLastSummonAttemptAt = os.clock() - 30
         else
-            -- The command was sent but the summon is not detected. Treat this as a
-            -- failure so we retry quickly instead of waiting 30 minutes:
+            -- The command was sent but the green was not consumed and the
+            -- summon is not detected. Treat this as a failure so we retry
+            -- quickly instead of waiting 30 minutes:
             -- lastAttempt 1770s in the past reopens the window in 30s.
+            Dalamud.Log("[FATE] ChocoboCheck: summon not confirmed" ..
+                " (used=" .. tostring(used) ..
+                ", before=" .. tostring(greensBefore) ..
+                ", after=" .. tostring(greensAfter) .. ")")
             ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
             ChocoboLastSummonAttemptAt = os.clock() - (30 * 60) + 30
             if ChocoboSummonFailureCount <= 3 then
