@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.16
+version: 3.1.17
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,10 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.17   修正: 戦闘中にスタック判定が誤発動し、FATEを放棄して別FATE/別
+                ゾーンへ向かう問題を修正。回避AIや動き回る敵との戦闘で
+                「10秒で0.8y接近」が達成できずスタック扱いされていた。
+                戦闘中に生存ターゲットがある間はスタック判定を無効化。
     -> 3.1.16   改善: チョコボ召喚の成功判定を検出APIから「ギサールの野菜が
                 消費されたか」に変更。消費=成功として30分間は状態をスクリプト側で
                 管理するため、検出APIが不安定な環境でも誤判定しなくなる。
@@ -8227,6 +8231,17 @@ end
 
 function HandleMovementStuck(targetPosition)
     if EnableStagedAntiStuck ~= true then
+        return false
+    end
+
+    -- While fighting a live target, "no movement" almost always means dodging,
+    -- kiting or holding range -- not being stuck. Escalating to the
+    -- aetheryte/zone-switch recovery here abandoned FATEs mid-combat.
+    if Svc.Condition[CharacterCondition.inCombat]
+        and Svc.Targets.Target ~= nil
+        and not Svc.Targets.Target.IsDead
+    then
+        ResetMovementStuckState()
         return false
     end
 
