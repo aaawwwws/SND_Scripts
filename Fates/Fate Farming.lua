@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.12
+version: 3.1.13
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,13 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.13   修正: FATE中に敵をターゲットしなくなる問題の追加修正。
+                修正: 別FATEのフォーローンを /target しては即クリアする
+                スラッシュで一切攻撃しない問題（フォーローンはクリア対象外に）。
+                追加: セルフディフェンス。FATEタグ無しの敵（FateId 0の増援等）に
+                殴られている時は、3秒後に交戦中の敵を自衛ターゲットとして攻撃。
+                修正: 戦闘中にゾーンテレポートを試行して失敗しゾーンを切り替え
+                続ける問題。戦闘中はまず敵を倒してからテレポートする。
     -> 3.1.12   修正: 初期設定で「チョコボ召喚コマンドを実行しました」と出るのに
                 実際は召喚されていないことがある問題を修正。
                 原因: コマンド送信後に召喚を検証しておらず、失敗時も定期チェックを
@@ -589,7 +596,9 @@ local
     IsLifestreamBusySafe,
     ValidateRequiredIpc,
     IsVnavmeshReadySafe,
-    IsVnavmeshMovingSafe
+    IsVnavmeshMovingSafe,
+    TargetNearestEngagedEnemy,
+    ShouldKeepCurrentTargetForSelfDefense
 
 -- Party Play related globals (moved out of local limit)
 GetPartyMemberCount = nil
@@ -2322,7 +2331,11 @@ function MoveToTargetHitbox()
         return
     end
     if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
-        ClearTarget()
+        -- Self-defense: stay on an engaged attacker without pathing out of
+        -- bounds; only drop targets that are not fighting us.
+        if not ShouldKeepCurrentTargetForSelfDefense(EntityWrapper(Svc.Targets.Target)) then
+            ClearTarget()
+        end
         return
     end
 
@@ -3972,6 +3985,53 @@ function TargetNearestAttackingEnemy()
         end
     end
     return false
+end
+
+function TargetNearestEngagedEnemy(maxDist)
+    -- Self-defense fallback: target the nearest hostile that is already
+    -- engaged (e.g. FATE adds whose FateId is 0) so we fight back instead of
+    -- standing still when no FATE-tagged target is available.
+    local playerPos = GetLocalPlayerPosition()
+    if playerPos == nil then
+        return false
+    end
+    local range = maxDist or 30
+    local bestObj = nil
+    local bestDist = range
+    for i = 0, Svc.Objects.Length - 1 do
+        local obj = Svc.Objects[i]
+        if obj ~= nil and obj.IsTargetable and not obj.IsDead and obj:IsHostile() then
+            local wrappedObj = EntityWrapper(obj)
+            if wrappedObj ~= nil and wrappedObj.IsInCombat == true then
+                local dist = DistanceBetweenFlat(playerPos, obj.Position)
+                if dist <= bestDist then
+                    bestDist = dist
+                    bestObj = obj
+                end
+            end
+        end
+    end
+    if bestObj ~= nil then
+        Svc.Targets.Target = bestObj
+        return true
+    end
+    return false
+end
+
+function ShouldKeepCurrentTargetForSelfDefense(wrappedTarget)
+    -- Keep a target that is actively fighting back even if it is not tagged
+    -- with the current FATE; clearing it mid-combat leaves us unable to
+    -- defend ourselves.
+    if not Svc.Condition[CharacterCondition.inCombat] then
+        return false
+    end
+    if Svc.Targets.Target == nil or Svc.Targets.Target.IsDead then
+        return false
+    end
+    if wrappedTarget == nil or wrappedTarget.IsInCombat ~= true then
+        return false
+    end
+    return GetDistanceToTargetFlat() <= (SelfDefenseKeepTargetRadius or 30)
 end
 
 function RandomAdjustCoordinates(position, maxDistance)
@@ -7306,9 +7366,17 @@ function DoFate()
     -- clears target
     if Svc.Targets.Target ~= nil then
         local wrappedTarget = EntityWrapper(Svc.Targets.Target)
+        -- Never clear forlorn targets here: TryTargetForlorn re-targets them
+        -- every frame, so clearing caused an acquire/clear thrash that stopped
+        -- all attacks (e.g. when the forlorn belongs to a nearby other FATE).
         if wrappedTarget ~= nil and (wrappedTarget.FateId ~= CurrentFate.fateId
-                or not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())) then
-            ClearTarget()
+                or not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()))
+            and not IsForlornTargetName(GetTargetName()) then
+            -- Self-defense: keep engaged hostiles that are fighting us (e.g.
+            -- FATE adds with FateId 0) instead of dropping them mid-combat.
+            if not ShouldKeepCurrentTargetForSelfDefense(wrappedTarget) then
+                ClearTarget()
+            end
         end
     end
 
@@ -7316,9 +7384,12 @@ function DoFate()
         local hasValidTarget = false
         if Svc.Targets.Target ~= nil and not Svc.Targets.Target.IsDead then
             local wrappedTarget = EntityWrapper(Svc.Targets.Target)
+            -- A live forlorn target is always considered valid so the watchdog
+            -- doesn't fight the forlorn-priority targeting.
+            local forlornTarget = IsForlornTargetName(GetTargetName())
             hasValidTarget = wrappedTarget ~= nil
-                and wrappedTarget.FateId == CurrentFate.fateId
-                and IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())
+                and (wrappedTarget.FateId == CurrentFate.fateId or forlornTarget)
+                and (forlornTarget or IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()))
         end
 
         local now = os.clock()
@@ -7329,6 +7400,7 @@ function DoFate()
                 TargetAcquireNoTargetSince = now
             end
 
+            local noTargetElapsed = now - (TargetAcquireNoTargetSince or now)
             local canForceAcquire = not Svc.Condition[CharacterCondition.casting]
                 and not Svc.Condition[CharacterCondition.mounted]
                 and not Svc.Condition[CharacterCondition.flying]
@@ -7347,12 +7419,23 @@ function DoFate()
                     fateRadiusForAcquire + 24
                 )
                 local gotFallbackTarget = AttemptToTargetClosestFateEnemy(false, reacquireRadius, true)
+                if not gotFallbackTarget
+                    and Svc.Condition[CharacterCondition.inCombat]
+                    and noTargetElapsed >= (SelfDefenseAcquireSeconds or 3)
+                then
+                    -- No FATE-tagged target for a while but we are being
+                    -- attacked: fight the attacker (covers FATE adds with
+                    -- FateId 0 that the normal filters exclude).
+                    gotFallbackTarget = TargetNearestEngagedEnemy(SelfDefenseAcquireRadius or 30)
+                    if gotFallbackTarget then
+                        Dalamud.Log("[FATE] Self-defense fallback: targeting engaged enemy.")
+                    end
+                end
                 if not gotFallbackTarget then
                     SafeYield("/battletarget")
                 end
             end
 
-            local noTargetElapsed = now - (TargetAcquireNoTargetSince or now)
             if Svc.Targets.Target == nil
                 and noTargetElapsed >= (TargetAcquireStopNavSeconds or 2.4)
                 and (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning())
@@ -7810,6 +7893,17 @@ function Ready()
     end
 
     if Svc.ClientState.TerritoryType ~= SelectedZone.zoneId then
+        -- Teleport always fails while in combat. If we ended up outside the
+        -- selected zone with aggro (e.g. a zone-switch recovery fired while
+        -- mobs are hitting us), fight the attackers first instead of churning
+        -- through zones and poisoning the zone-skip records.
+        if Svc.Condition[CharacterCondition.inCombat] then
+            Dalamud.Log("[FATE] In combat outside selected zone. Engaging attackers before teleporting.")
+            CurrentFate = nil
+            State = CharacterState.unexpectedCombat
+            Dalamud.Log("[FATE] State Change: UnexpectedCombat (pre-teleport)")
+            return
+        end
         if not SelectedZone or not SelectedZone.aetheryteList or #SelectedZone.aetheryteList == 0 then
             -- Aetheryte list may not be populated yet (e.g. right after a zone switch).
             -- Wait briefly and rebuild the zone data before giving up.
@@ -7837,6 +7931,15 @@ function Ready()
         end
         local teleSuccess, attemptedNames = TeleportToSelectedZoneAetheryte()
         if teleSuccess == false then
+            if Svc.Condition[CharacterCondition.inCombat] then
+                -- Combat started during the teleport attempt. Fight first;
+                -- the zone switch is retried once combat drops.
+                Dalamud.Log("[FATE] Teleport failed while in combat. Engaging attackers before retrying.")
+                CurrentFate = nil
+                State = CharacterState.unexpectedCombat
+                Dalamud.Log("[FATE] State Change: UnexpectedCombat (teleport failed in combat)")
+                return
+            end
             local attempted = table.concat(attemptedNames or {}, ", ")
             if attempted == "" then
                 attempted = "none"
@@ -10170,6 +10273,9 @@ function FateFarming:Run()
     FateLevelSyncHardBoundaryBuffer       = 2.5
     FateEngageBoundaryBuffer              = 14
     FateLevelSyncEngageBoundaryBuffer     = 6
+    SelfDefenseAcquireSeconds             = 3
+    SelfDefenseAcquireRadius              = 30
+    SelfDefenseKeepTargetRadius           = 30
     LeashSafeRetargetBuffer               = 18
     LevelSyncInRangeBuffer                = 1.5
     LevelSyncForceCenterAfterFailures     = 2
