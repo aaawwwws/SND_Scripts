@@ -9196,159 +9196,82 @@ function PotionCheck()
 end
 
 function GetChocoboTimeRemaining()
-    local ok, time = pcall(function()
-        if Svc and Svc.Buddies and Svc.Buddies.Companion then
-            return Svc.Buddies.Companion.TimeLeft
-        end
-        return nil
-    end)
-    if ok and type(time) == "number" then
-        return time
-    end
-
-    if SndGameUtils ~= nil then
-        local ok, time = pcall(function() return SndGameUtils.GetBuddyTimeRemaining() end)
-        if ok and type(time) == "number" then
-            return time
+    if Svc and Svc.Buddies then
+        local ok, companion = pcall(function() return Svc.Buddies.Companion end)
+        if ok and companion ~= nil then
+            local ok2, time = pcall(function() return companion.TimeLeft end)
+            if ok2 and type(time) == "number" then
+                return time
+            end
         end
     end
     return -1
 end
 
-IsChocoboDebugDone = false
+local function CompanionObjectExists()
+    if not (Svc and Svc.Objects and Svc.ClientState and Svc.ClientState.LocalPlayer) then
+        return false
+    end
+    local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
+    if not playerOk or player == nil then
+        return false
+    end
+    local posOk, playerPos = pcall(function() return player.Position end)
+    local idOk, playerId = pcall(function() return player.EntityId end)
+    local goIdOk, playerGoId = pcall(function() return player.GameObjectId end)
+    if not posOk or playerPos == nil then
+        return false
+    end
+    local lenOk, objLen = pcall(function() return Svc.Objects.Length end)
+    if not lenOk or objLen == nil then
+        return false
+    end
+    for i = 0, math.min(objLen - 1, 300) do
+        local objOk, obj = pcall(function() return Svc.Objects[i] end)
+        if objOk and obj ~= nil then
+            local ownerOk, owner = pcall(function() return obj.OwnerId end)
+            local kindOk, kind = pcall(function() return obj.ObjectKind end)
+            local nameOk, name = pcall(function() return obj.Name end)
+            local objPosOk, pos = pcall(function() return obj.Position end)
+            if ownerOk and kindOk and nameOk and objPosOk and name ~= nil and tostring(name) ~= "" then
+                local ownerMatches = owner == playerId or (goIdOk and owner == playerGoId)
+                local dist = DistanceBetweenFlat(playerPos, pos)
+                if ownerMatches and dist ~= nil and dist < 15 and (kind == 8 or kind == 11 or kind == 2) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
 
 function IsChocoboSummoned()
     local ok, result = pcall(function()
-        local now = os.clock()
-        local shouldDebug = (ChocoboLastDebugAt or 0) + 30 < now
-        if shouldDebug then
-            ChocoboLastDebugAt = now
+        -- Method 1: TimeLeft API
+        local timeLeft = GetChocoboTimeRemaining()
+        if timeLeft > 0 then
+            return true
         end
 
-        -- Helper: scan object table for an owned companion entity.
-        -- A summoned chocobo is owned by the player. Dalamud's ObjectKind 8 is
-        -- Companion; during state transitions it may briefly report as 2 or 11.
-        local function CompanionObjectExists()
-            if Svc and Svc.Objects then
-                local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
-                if playerOk and player then
-                    local playerPos = player.Position
-                    local playerId = player.EntityId
-                    local playerGoIdOk, playerGoId = pcall(function() return player.GameObjectId end)
-                    if shouldDebug then
-                        yield("/echo [FATE] Chocobo debug: scanning objects. mounted=" ..
-                            tostring(Svc.Condition[CharacterCondition.mounted]) ..
-                            " playerId=" .. tostring(playerId))
-                    end
-                    for i = 0, math.min(Svc.Objects.Length - 1, 300) do
-                        local objOk, obj = pcall(function() return Svc.Objects[i] end)
-                        if objOk and obj then
-                            local ownerOk, owner = pcall(function() return obj.OwnerId end)
-                            local kindOk, kind = pcall(function() return obj.ObjectKind end)
-                            local nameOk, name = pcall(function() return obj.Name end)
-                            local posOk, pos = pcall(function() return obj.Position end)
-                            local ownerMatches = ownerOk and (owner == playerId or
-                                (playerGoIdOk and owner == playerGoId))
-                            local dist = (posOk and playerPos) and DistanceBetweenFlat(playerPos, pos) or nil
-                            if shouldDebug and dist ~= nil and dist < 20 and kindOk and nameOk then
-                                yield("/echo [FATE] Chocobo debug nearby: kind=" .. tostring(kind) ..
-                                    " name=" .. tostring(name) .. " dist=" .. string.format("%.1f", dist) ..
-                                    " owner=" .. tostring(owner) .. " match=" .. tostring(ownerMatches))
-                            end
-                            if ownerMatches and kindOk and nameOk and name and
-                                string.len(tostring(name)) > 0 then
-                                if kind == 8 or kind == 11 or kind == 2 then
-                                    return true
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            return false
-        end
-
-        -- Method 0: While mounted/flying the game hides the companion object and
-        -- removes it from Svc.Buddies. If we have a recent cached expiration, trust
-        -- it so we don't re-summon immediately after dismounting.
-        if Svc.Condition[CharacterCondition.mounted]
-            or Svc.Condition[CharacterCondition.flying]
-            or Svc.Condition[CharacterCondition.mounting57]
-            or Svc.Condition[CharacterCondition.mounting64]
-        then
-            if ChocoboSummonExpiresAt ~= nil then
-                local remaining = ChocoboSummonExpiresAt - os.time()
-                if remaining > 0 then
-                    if shouldDebug then
-                        yield("/echo [FATE] Chocobo debug: mounted, trusting cached expiration")
-                    end
-                    return true
-                end
-            end
-        end
-
-        -- Method 1: Svc.Buddies.Companion
-        if Svc and Svc.Buddies then
-            local buddyOk, hasBuddy = pcall(function() return Svc.Buddies.Companion ~= nil end)
-            local timeLeftOk, timeLeft = pcall(function() return Svc.Buddies.Companion.TimeLeft end)
-            if shouldDebug then
-                yield("/echo [FATE] Chocobo debug: hasBuddy=" .. tostring(hasBuddy) ..
-                    " timeLeft=" .. tostring(timeLeft))
-            end
-            if buddyOk and hasBuddy then
-                if timeLeftOk and type(timeLeft) == "number" and timeLeft > 0 then
-                    return true
-                end
-                -- Even when TimeLeft reports 0 or nil, the API can be slow/buggy.
-                -- If the actual companion object is still nearby, treat it as summoned.
-                if CompanionObjectExists() then
-                    return true
-                end
-            end
-        end
-
-        -- Method 2: SndGameUtils
-        if SndGameUtils ~= nil then
-            local utilsOk, time = pcall(function() return SndGameUtils.GetBuddyTimeRemaining() end)
-            if shouldDebug then
-                yield("/echo [FATE] Chocobo debug: sndUtilsTime=" .. tostring(time))
-            end
-            if utilsOk and type(time) == "number" and time > 0 then
-                return true
-            end
-            if CompanionObjectExists() then
-                return true
-            end
-        end
-
-        -- Method 3: cached expiration time from last successful summon
+        -- Method 2: cached expiration time from last successful summon
         if ChocoboSummonExpiresAt ~= nil then
             local remaining = ChocoboSummonExpiresAt - os.time()
-            if shouldDebug then
-                yield("/echo [FATE] Chocobo debug: cachedRemaining=" .. tostring(remaining))
-            end
             if remaining > 0 then
                 return true
             end
         end
 
-        -- Method 4: Fallback to object-table scan
+        -- Method 3: object-table scan
         if CompanionObjectExists() then
             return true
         end
 
-        -- Method 5: Status effect fallback
+        -- Method 4: Status effect fallback
         -- 1220/1221 are commonly used for Gysahl Greens / Companion presence.
         if HasStatusId(1220) or HasStatusId(1221) then
-            if shouldDebug then
-                yield("/echo [FATE] Chocobo debug: detected via status effect")
-            end
             return true
         end
 
-        if shouldDebug then
-            yield("/echo [FATE] Chocobo debug: not summoned")
-        end
         return false
     end)
     if ok then
@@ -9673,17 +9596,6 @@ function ChocoboCheck()
         " SummonChocobo=" .. tostring(SummonChocobo) ..
         " lastAttempt=" .. tostring(ChocoboLastSummonAttemptAt)
     Dalamud.Log(summary)
-    if State == CharacterState.ready
-        or State == CharacterState.initialSetup
-        or State == CharacterState.MiddleOfFateDismount then
-        yield("/echo " .. summary)
-    end
-
-    local chocoboCheckDebugNow = os.clock()
-    local shouldDebugChocoboCheck = (ChocoboLastCheckDebugAt or 0) + 30 < chocoboCheckDebugNow
-    if shouldDebugChocoboCheck then
-        ChocoboLastCheckDebugAt = chocoboCheckDebugNow
-    end
 
     -- Once the 30-minute window is open, retry every 10 seconds until conditions
     -- are right, so the summon actually happens instead of waiting another 30 min.
@@ -9696,11 +9608,6 @@ function ChocoboCheck()
     local function EchoSkip(reason)
         local msg = "[FATE] ChocoboCheck skip: " .. reason
         Dalamud.Log(msg)
-        if State == CharacterState.ready
-            or State == CharacterState.initialSetup
-            or State == CharacterState.MiddleOfFateDismount then
-            yield("/echo " .. msg)
-        end
     end
 
     if not SummonChocobo then
@@ -9829,26 +9736,17 @@ function ChocoboCheck()
             -- Don't attempt another summon until shortly before expiration.
             ChocoboLastSummonAttemptAt = os.clock() + (30 * 60) - 30
         else
-            if used then
-                -- The item command succeeded. Detection APIs can be flaky, but the
-                -- 30-minute buff is almost certainly active, so don't retry until
-                -- shortly before expiration.
-                ChocoboSummonFailureCount = 0
-                ChocoboLastSummonAttemptAt = os.clock() + (30 * 60) - 30
-            else
-                ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
-                if ChocoboSummonFailureCount <= 3 then
-                    yield("/echo [FATE] Failed to use Gysahl Greens (attempt " ..
-                        tostring(ChocoboSummonFailureCount) .. ")")
-                end
-                -- /item failed. This usually means the chocobo is already
-                -- summoned or the item is on cooldown. Retry after 30 seconds so
-                -- we re-summon quickly once the buff actually expires.
-                ChocoboLastSummonAttemptAt = os.clock() + 30
-                if ChocoboSummonFailureCount >= 10 then
-                    ChocoboSummonDisabled = true
-                    yield("/echo [FATE] Chocobo summon failed 10 times. Disabling auto-summon for this session.")
-                end
+            -- The command was sent but the summon is not detected. Treat this as a
+            -- failure so we retry quickly instead of waiting 30 minutes.
+            ChocoboSummonFailureCount = (ChocoboSummonFailureCount or 0) + 1
+            ChocoboLastSummonAttemptAt = os.clock() + 30
+            if ChocoboSummonFailureCount <= 3 then
+                yield("/echo [FATE] Failed to summon chocobo (attempt " ..
+                    tostring(ChocoboSummonFailureCount) .. ")")
+            end
+            if ChocoboSummonFailureCount >= 10 then
+                ChocoboSummonDisabled = true
+                yield("/echo [FATE] Chocobo summon failed 10 times. Disabling auto-summon for this session.")
             end
         end
     else
@@ -10940,12 +10838,31 @@ function FateFarming:Run()
                     and State ~= CharacterState.doFate
                     and State ~= CharacterState.unexpectedCombat
                 then
-                    if WrathSafetyNilFateStart == nil then
-                        WrathSafetyNilFateStart = os.clock()
-                    elseif os.clock() - WrathSafetyNilFateStart > 2 then
-                        Dalamud.Log("[FATE] Safety: Wrath auto still enabled with no active FATE for 2s, turning off.")
-                        TurnOffCombatMods("safety: no active FATE")
-                        WrathSafetyNilFateStart = nil
+                    local inAnyFate = InActiveFate()
+                    if inAnyFate then
+                        -- The player is still inside a FATE circle even though we don't
+                        -- have a tracked CurrentFate. Don't turn Wrath off; instead log
+                        -- so we can diagnose why CurrentFate was lost.
+                        if WrathSafetyNilFateStart ~= nil then
+                            WrathSafetyNilFateStart = nil
+                        end
+                        Dalamud.Log(string.format(
+                            "[FATE] Safety: CurrentFate is nil but InActiveFate=true (state=%s, territory=%s). Leaving Wrath on.",
+                            tostring(State),
+                            tostring(Svc.ClientState.TerritoryType)
+                        ))
+                    else
+                        if WrathSafetyNilFateStart == nil then
+                            WrathSafetyNilFateStart = os.clock()
+                        elseif os.clock() - WrathSafetyNilFateStart > 2 then
+                            Dalamud.Log(string.format(
+                                "[FATE] Safety: Wrath auto still enabled with no active FATE for 2s (state=%s, territory=%s).",
+                                tostring(State),
+                                tostring(Svc.ClientState.TerritoryType)
+                            ))
+                            TurnOffCombatMods("safety: no active FATE")
+                            WrathSafetyNilFateStart = nil
+                        end
                     end
                 else
                     WrathSafetyNilFateStart = nil
