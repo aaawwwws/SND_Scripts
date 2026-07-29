@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.23
+version: 3.1.24
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,15 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.24   修正: インスタンス変更が一切発動しない問題を修正。
+                FastCombatPacing（デフォルトON）かつゾーン自動切替有効時、
+                FATEなし判定でインスタンス変更より先に即ゾーン切替して
+                いたため、インスタンス変更に到達しなかった。ゾーン間
+                テレポートより安いインスタンス変更を先に試す順序へ変更。
+                追加: FATEなし時のゲート診断ログ（30秒間隔）。
+                enableChangeInstance/zoneInstance/successiveChanges/
+                fastPacing/autoZoneSwitch等を出力し、発動しない場合の
+                原因を特定可能にした。
     -> 3.1.23   修正: インスタンス変更が正常に機能しない問題を修正。
                 /li N 発行後1秒で確認なしにReadyへ戻っていたため、
                 Lifestream側で拒否された場合（busy・ShowInstanceSwitcher
@@ -8382,12 +8391,37 @@ function Ready()
     end
 
     if NextFate == nil then
+        -- Throttled diagnostics: if instance changing still does not trigger,
+        -- this shows exactly which gate is blocking it.
+        local gateLogNow = os.clock()
+        if gateLogNow - (NoFateGateLogAt or 0) >= 30 then
+            NoFateGateLogAt = gateLogNow
+            Dalamud.Log(string.format(
+                "[FATE] No-fate gate: enableChangeInstance=%s zoneInstance=%s successiveChanges=%s/%s fastPacing=%s autoZoneSwitch=%s stayCurrentMap=%s preserveBuff=%s",
+                tostring(EnableChangeInstance),
+                tostring(GetZoneInstance()),
+                tostring(SuccessiveInstanceChanges),
+                tostring(NumberOfInstances),
+                tostring(FastCombatPacing),
+                tostring(AutoTeleportToNextZone),
+                tostring(StayOnCurrentMapOnly),
+                tostring(ShouldPreserveBonusBuffForZoneSwitch(true))))
+        end
         local shouldPreserveBonusBuffForSwitch = ShouldPreserveBonusBuffForZoneSwitch(true)
         local hasInstances = GetZoneInstance() > 0
         local canAutoSwitchZone = AutoTeleportToNextZone
             and not StayOnCurrentMapOnly
             and not shouldPreserveBonusBuffForSwitch
             and not CompanionScriptMode
+        -- Instance hopping is cheaper than a zone transfer: try it FIRST when
+        -- enabled. This must run before the fast-pacing zone switch below,
+        -- otherwise FastCombatPacing (default: on) makes the script hop zones
+        -- immediately and instance changing never triggers at all.
+        if canAutoSwitchZone and EnableChangeInstance and hasInstances and SuccessiveInstanceChanges < NumberOfInstances then
+            State = CharacterState.changingInstances
+            Dalamud.Log("[FATE] State Change: ChangingInstances")
+            return
+        end
         local preferFastZoneSwitch = canAutoSwitchZone and FastCombatPacing == true
         if preferFastZoneSwitch then
             local cooldown = FastNoFateZoneSwitchCooldownSeconds or 1.2
@@ -8400,11 +8434,6 @@ function Ready()
             end
         end
         if canAutoSwitchZone then
-            if EnableChangeInstance and hasInstances and SuccessiveInstanceChanges < NumberOfInstances then
-                State = CharacterState.changingInstances
-                Dalamud.Log("[FATE] State Change: ChangingInstances")
-                return
-            end
             if not hasInstances or not EnableChangeInstance or SuccessiveInstanceChanges >= NumberOfInstances then
                 SelectNextDawntrailZone()
                 return
@@ -10767,6 +10796,7 @@ function FateFarming:Run()
     DismountRepositionUntil               = nil
     DismountRepositionAttempts            = 0
     DismountNoLandingWarnedAt             = nil
+    NoFateGateLogAt                       = 0
     ForlornScanLastAt                     = 0
     SessionStartClock                     = os.clock()
     SessionStartGemCount                  = Inventory.GetItemCount(26807)
