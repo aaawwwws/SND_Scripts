@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.19
+version: 3.1.22
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -305,7 +305,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション,水の迷宮の夢,我々の貢物,千年の孤独,不死の人,奸臣、大寒心,失われた山岳の都,野性と葦,バナナ剥きには最適の日,狼の家"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション,水の迷宮の夢,我々の貢物,千年の孤独,不死の人,奸臣、大寒心,失われた山岳の都,野性と葦,バナナ剥きには最適の日,狼の家,上段の突きを喰らうイブルク"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -316,6 +316,43 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.22   修正: 飛行中にテレポートが必要になると「player is not in a
+                usable state (mounted)」で永久に失敗し続ける問題を修正。
+                原因: 着陸地点への復帰飛行（5秒）終了時点で飛行経過時間が
+                既に2.5秒を超えているため、/ac dismountを一度も試さず即座に
+                次の復帰飛行地点を選び直すループになっていた。飛行終了後は
+                ナビを停止して降車試行フェーズへ戻るように変更。
+                修正: 別ゾーンで選択されたFATEの座標を着陸地点にしてしまい
+                飛び続ける問題を修正（150y以上離れた着陸地点は無視し、
+                最寄りエーテライトへのフォールバックを優先）。
+    -> 3.1.21   改善: 周回速度の向上。FATE接近時にフラグ（中心）で降車して
+                から敵まで徒歩していたのを、敵クラスタ中心が分かっている
+                場合はそこへ直接飛んでから降車するように変更。大型FATEで
+                1回あたり数秒の短縮（クラスタ位置はFATE円内にクランプ済み
+                のためレベルシンク範囲も満たす）。
+                改善: フォーローンのターゲットを /target コマンド連発
+                （毎ティック3〜5件）からオブジェクトスキャンによる即時
+                ダイレクトターゲット（0.3秒間隔）に変更。ボーナス取得が
+                速くなりコマンドスパムも解消。
+                追加: ブラックリストに「上段の突きを喰らうイブルク」を追加。
+    -> 3.1.20   修正: vnavmeshの目的地が地中になりスタックする問題を修正。
+                FATE座標のYがナビメッシュ床より低い場合、そのまま
+                PathfindAndMoveToへ渡すと飛行経路の最終地点が地中になる
+                （vnavmeshは目的地をそのまま最終ウェイポントにするため）。
+                FATE座標をPointOnFloorで床にスナップしてから使うように変更
+                （PointOnFloorはprobe以下の床しか返さないため、probeを+3y
+                持ち上げてマーカーのわずかな沈みも許容）。fateId単位で
+                キャッシュし毎ティックのクエリを回避。
+                修正: FATE中にFATEの範囲外へ出ることがある問題を修正。
+                MoveToTargetHitboxの移動先クランプをエンゲージ境界(+14y)
+                から移動境界(+3y/シンク+2y)へ変更。遠隔ジョブが最大射程を
+                取ろうとして円の反対側へ出るケースもこれで防止。
+                （敵をターゲット可能とする判定自体は従来通り+14yのまま）
+                修正: 地面が無い場所でマウントを降りられずループする問題を
+                修正。飛行中の降下失敗が約2.5秒続いたら、付近の床・FATE
+                中心・最寄りエーテライトの順に着陸地点を探して飛んでから
+                降りるように変更。さらにMiddleOfFateDismountが毎ティック
+                /vnav stopして復帰飛行を即キャンセルしていた競合も解消。
     -> 3.1.19   修正: ゾーン切替テレポートが全滅して停止する問題への対策。
                 修正: テレポート開始時に戦闘モッドをOFF（Wrath auto等がテレポ
                 ート中に戦闘を開始しusable判定を30秒×全エーテライト分潰すのを防止）。
@@ -541,6 +578,9 @@ local
     GetTargetName,
     GetDenseFateClusterCenter,
     GetPreferredFateMovePosition,
+    TryGetFloorPoint,
+    GetFloorSnappedPosition,
+    GetFateGroundPosition,
     GetZoneInstance,
     GrandCompanyTurnIn,
     HandleDeath,
@@ -691,6 +731,17 @@ MoveToTargetLastTargetPos = nil
 ClusterMoveLastRefresh = nil
 ClusterMoveCachedFateId = nil
 ClusterMoveCachedPosition = nil
+
+-- FATE座標の床スナップキャッシュ（地中目的地の防止用）
+FateGroundPosCacheFateId = nil
+FateGroundPosCacheRaw = nil
+FateGroundPosCacheSnapped = nil
+
+-- マウント降下失敗（着地点なし）からの復帰用
+DismountFlyingSince = nil
+DismountRepositionUntil = nil
+DismountRepositionAttempts = 0
+DismountNoLandingWarnedAt = nil
 
 --[[
 ********************************************************************************
@@ -1784,17 +1835,45 @@ function TryTargetForlorn()
     if IgnoreForlorns then
         return
     end
-    local targetNames = {
-        "Forlorn Maiden",
-        "フォーローン・メイデン",
-        "フォーローンメイデン"
-    }
-    if not IgnoreBigForlornOnly then
-        table.insert(targetNames, "The Forlorn")
-        table.insert(targetNames, "フォーローン")
+    -- Object scan + direct target assignment instead of spamming /target text
+    -- commands every tick. Direct assignment is instant (faster forlorn pickup
+    -- for the bonus) and removes 3-5 game commands per DoFate tick.
+    local now = os.clock()
+    if now - (ForlornScanLastAt or 0) < (ForlornScanIntervalSeconds or 0.3) then
+        return
     end
-    for _, targetName in ipairs(targetNames) do
-        SafeYield("/target " .. targetName)
+    ForlornScanLastAt = now
+
+    if Svc.Targets.Target ~= nil and not Svc.Targets.Target.IsDead
+        and IsForlornTargetName(GetTargetName()) then
+        return -- already on a forlorn
+    end
+
+    local playerPos = GetLocalPlayerPosition()
+    if playerPos == nil then
+        return
+    end
+
+    local bestObj = nil
+    local bestDist = math.maxinteger
+    local maxIndex = math.min(Svc.Objects.Length - 1, 400)
+    for i = 0, maxIndex do
+        local obj = Svc.Objects[i]
+        if obj ~= nil and obj.IsTargetable and obj:IsHostile() and not obj.IsDead then
+            local name = obj.Name:GetText()
+            if IsForlornTargetName(name)
+                and (not IgnoreBigForlornOnly or not IsBigForlornTargetName(name)) then
+                local dist = DistanceBetweenFlat(playerPos, obj.Position)
+                if dist < bestDist and dist <= 60 then
+                    bestDist = dist
+                    bestObj = obj
+                end
+            end
+        end
+    end
+
+    if bestObj ~= nil then
+        Svc.Targets.Target = bestObj
     end
 end
 
@@ -1935,6 +2014,58 @@ function ClampPositionToCurrentFateBounds(position, margin)
         position.Y,
         CurrentFate.position.Z + (offset.Z * scale)
     )
+end
+
+-- vnavmesh IPC PointOnFloor(pos, allowUnlandable, halfExtentXZ) returns the
+-- highest navmesh floor point with Y <= pos.Y within +/- halfExtentXZ
+-- horizontally. Because it never looks above the probe Y, we probe from a
+-- slightly lifted point so a FATE marker that sits a little below the actual
+-- navmesh floor still resolves to the real floor instead of a lower level.
+function TryGetFloorPoint(position, probeLift, halfExtentXZ)
+    if position == nil then
+        return nil
+    end
+    if IPC == nil or IPC.vnavmesh == nil or IPC.vnavmesh.PointOnFloor == nil then
+        return nil
+    end
+    local probe = Vector3(position.X, position.Y + (probeLift or 3), position.Z)
+    local ok, floorPoint = pcall(function()
+        return IPC.vnavmesh.PointOnFloor(probe, true, halfExtentXZ or 5)
+    end)
+    if ok and floorPoint ~= nil then
+        return floorPoint
+    end
+    return nil
+end
+
+function GetFloorSnappedPosition(position, probeLift, halfExtentXZ)
+    if position == nil then
+        return nil
+    end
+    return TryGetFloorPoint(position, probeLift, halfExtentXZ) or position
+end
+
+-- Floor-snapped FATE position, cached per fateId so movement code that runs
+-- every tick does not hammer the navmesh query. Prevents vnavmesh fly paths
+-- from ending at an underground waypoint (vnavmesh appends the raw
+-- destination as the final waypoint when flying).
+function GetFateGroundPosition(fate)
+    if fate == nil or fate.position == nil then
+        return nil
+    end
+    if FateGroundPosCacheFateId == fate.fateId
+        and FateGroundPosCacheRaw ~= nil
+        and FateGroundPosCacheSnapped ~= nil
+        and DistanceBetweenFlat(FateGroundPosCacheRaw, fate.position) < 0.5
+        and math.abs(FateGroundPosCacheRaw.Y - fate.position.Y) < 0.5
+    then
+        return FateGroundPosCacheSnapped
+    end
+    local snapped = GetFloorSnappedPosition(fate.position, 3, 5)
+    FateGroundPosCacheFateId = fate.fateId
+    FateGroundPosCacheRaw = fate.position
+    FateGroundPosCacheSnapped = snapped
+    return snapped
 end
 
 function IsCurrentTargetInsideCurrentFateBounds(margin)
@@ -2223,12 +2354,14 @@ function GetPreferredFateMovePosition(fate)
         return nil
     end
 
+    local groundPos = GetFateGroundPosition(fate) or fate.position
+
     if fate.isCollectionsFate or fate.isOtherNpcFate then
-        return ClampPositionToCurrentFateBounds(fate.position, 0)
+        return ClampPositionToCurrentFateBounds(groundPos, 0)
     end
 
     if OptimizeClusterMovement ~= true then
-        return ClampPositionToCurrentFateBounds(fate.position, 0)
+        return ClampPositionToCurrentFateBounds(groundPos, 0)
     end
 
     local now = os.clock()
@@ -2260,7 +2393,7 @@ function GetPreferredFateMovePosition(fate)
         return ClusterMoveCachedPosition
     end
 
-    ClusterMoveCachedPosition = ClampPositionToCurrentFateBounds(fate.position, 0)
+    ClusterMoveCachedPosition = ClampPositionToCurrentFateBounds(groundPos, 0)
     return ClusterMoveCachedPosition
 end
 
@@ -2382,7 +2515,12 @@ function MoveToTargetHitbox()
     local dir = Normalize(playerPos - targetPos)
     if dir:Length() == 0 then return end
     local ideal = targetPos + (dir * desiredRange)
-    local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, GetCurrentFateEngageBoundaryBuffer())
+    -- Clamp the PLAYER's own destination with the tight move boundary, not the
+    -- wide engage boundary (+14y). The engage boundary is only for deciding
+    -- whether an enemy outside the circle is still a valid target; using it
+    -- for the player's movement let ranged jobs back out of the FATE circle
+    -- (and melee get dragged far out) until the hard-boundary check fired.
+    local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, GetCurrentFateMoveBoundaryBuffer())
     local newPos = IPC.vnavmesh.PointOnFloor(boundedIdeal, false, 1.5) or boundedIdeal
 
     -- Avoid reissuing tiny movement commands that cause 1px jitter at fate edges.
@@ -5429,6 +5567,13 @@ function Dismount(force)
     local mountToggleCooldown = MountToggleCooldownSeconds or 2.2
     local bypassToggleCooldown = force == true
 
+    -- Reset landing-recovery tracking once we are no longer airborne.
+    if not Svc.Condition[CharacterCondition.flying] then
+        DismountFlyingSince = nil
+        DismountRepositionUntil = nil
+        DismountRepositionAttempts = 0
+    end
+
     if Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] then
         return
     end
@@ -5440,32 +5585,101 @@ function Dismount(force)
     end
 
     if Svc.Condition[CharacterCondition.flying] then
+        -- While a reposition-for-landing flight is active, let vnavmesh get us
+        -- over solid ground and descend; do not spam dismount commands.
+        if DismountRepositionUntil ~= nil then
+            if now < DismountRepositionUntil then
+                return
+            end
+            -- Flight window is over: stop nav and go back to real dismount
+            -- attempts. Previously DismountFlyingSince was left old enough that
+            -- the code immediately picked yet another reposition target without
+            -- ever trying /ac dismount, looping forever mid-air (teleports then
+            -- always timed out with "player is not in a usable state (mounted)").
+            DismountRepositionUntil = nil
+            if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+                SafeYield("/vnav stop")
+                yield("/wait 0.2")
+            end
+            DismountFlyingSince = now
+        end
+
+        if DismountFlyingSince == nil then
+            DismountFlyingSince = now
+        end
+        local flyingElapsed = now - DismountFlyingSince
+
+        -- Dismounting has been impossible for a while: there is no valid
+        -- landing spot below (over a hole/void). Move somewhere with solid
+        -- ground first instead of spamming /ac dismount forever.
+        if flyingElapsed >= (DismountNoGroundRepositionSeconds or 2.5) then
+            local playerPos = GetLocalPlayerPosition()
+            if playerPos == nil then
+                return
+            end
+
+            DismountRepositionAttempts = (DismountRepositionAttempts or 0) + 1
+            local attempt = DismountRepositionAttempts
+
+            local landingSpot = nil
+            if attempt <= 2 then
+                -- Nearby spot at roughly our altitude with a floor below it.
+                local angle = math.random() * 2 * math.pi
+                local offset = 6 + (math.random() * 6)
+                local probePos = Vector3(
+                    playerPos.X + (math.cos(angle) * offset),
+                    playerPos.Y,
+                    playerPos.Z + (math.sin(angle) * offset))
+                landingSpot = TryGetFloorPoint(probePos, 2, 15)
+            end
+            if landingSpot == nil and CurrentFate ~= nil and CurrentFate.position ~= nil then
+                -- The FATE center always has ground; fly back over it. Ignore
+                -- stale cross-zone FATE coordinates (e.g. CurrentFate was
+                -- selected in another zone): a spot that far away is never a
+                -- sane landing target and would send us flying off forever.
+                local fateSpot = TryGetFloorPoint(CurrentFate.position, 5, 30)
+                    or GetFateGroundPosition(CurrentFate)
+                if fateSpot ~= nil and DistanceBetweenFlat(playerPos, fateSpot) <= 150 then
+                    landingSpot = fateSpot
+                end
+            end
+            if landingSpot == nil then
+                -- Last resort: the closest aetheryte is guaranteed to be landable.
+                local closestAetheryte = GetClosestAetheryteInZoneToPoint(Svc.ClientState.TerritoryType, playerPos)
+                if closestAetheryte ~= nil and closestAetheryte.position ~= nil then
+                    landingSpot = TryGetFloorPoint(closestAetheryte.position, 5, 30)
+                        or closestAetheryte.position
+                end
+            end
+
+            if landingSpot ~= nil then
+                Dalamud.Log("[FATE] Unable to dismount here (no landing spot below). " ..
+                    "Repositioning to solid ground (attempt " .. tostring(attempt) .. ").")
+                if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+                    SafeYield("/vnav stop")
+                    yield("/wait 0.2")
+                end
+                IPC.vnavmesh.PathfindAndMoveTo(landingSpot, true)
+                DismountRepositionUntil = os.clock() + (DismountRepositionFlightSeconds or 5)
+                -- After the flight window, allow a fresh dismount attempt cycle.
+                DismountFlyingSince = os.clock()
+                return
+            end
+
+            -- No landing spot anywhere. Reset the cycle instead of spamming
+            -- /ac dismount forever; the next cycle retries after a short pause.
+            if DismountNoLandingWarnedAt == nil or now - DismountNoLandingWarnedAt >= 60 then
+                DismountNoLandingWarnedAt = now
+                Dalamud.Log("[FATE] Unable to find any landing spot while flying. Retrying in the background.")
+                yield("/echo [FATE] 着陸可能な地点が見つかりません。別の地点を探索します。")
+            end
+            DismountFlyingSince = now
+            DismountRepositionAttempts = 0
+            return
+        end
+
         LastDismountCommandAt = now
         SafeYield("/ac " .. LANG.actions["dismount"])
-
-        local checkNow = os.clock()
-        if checkNow - LastStuckCheckTime > 1 then
-            if Svc.Condition[CharacterCondition.flying] and GetDistanceToPoint(LastStuckCheckPosition) < 2 then
-                Dalamud.Log("[FATE] Unable to dismount here. Moving to another spot.")
-                local playerPos = GetLocalPlayerPosition()
-                if playerPos == nil then
-                    return
-                end
-                local random = RandomAdjustCoordinates(playerPos, 10)
-                local nearestFloor = IPC.vnavmesh.PointOnFloor(random, true, 100)
-                if nearestFloor ~= nil then
-                    IPC.vnavmesh.PathfindAndMoveTo(nearestFloor,
-                        Player.CanFly and SelectedZone.flying)
-                    yield("/wait 1")
-                end
-            end
-
-            LastStuckCheckTime = checkNow
-            local playerPos = GetLocalPlayerPosition()
-            if playerPos ~= nil then
-                LastStuckCheckPosition = playerPos
-            end
-        end
     elseif Svc.Condition[CharacterCondition.mounted] then
         LastDismountCommandAt = now
         SafeYield("/ac " .. LANG.actions["dismount"])
@@ -5488,7 +5702,11 @@ function MiddleOfFateDismount()
     end
 
     if Svc.Condition[CharacterCondition.mounted] then
-        if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
+        -- Do not cancel the reposition-for-landing flight that Dismount()
+        -- starts when there is no landing spot below; stopping nav here every
+        -- tick used to abort that recovery and loop failed dismounts forever.
+        local landingRepositionActive = DismountRepositionUntil ~= nil and os.clock() < DismountRepositionUntil
+        if not landingRepositionActive and (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
             SafeYield("/vnav stop")
         end
         Dismount(true)
@@ -5658,7 +5876,9 @@ function MoveToFate()
         return
     end
 
-    local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+    local preferredMovePos = GetPreferredFateMovePosition(CurrentFate) or GetFateGroundPosition(CurrentFate) or
+        CurrentFate.position
+    local fateGroundPos = GetFateGroundPosition(CurrentFate) or CurrentFate.position
     local distanceToPreferredMovePos = GetDistanceToPoint(preferredMovePos)
     local levelSyncPending = IsLevelSyncPendingForCurrentFate()
 
@@ -5705,12 +5925,18 @@ function MoveToFate()
 
     -- upon approaching fate, pick a target and switch to pathing towards target
     if distanceToPreferredMovePos < 60 then
-        -- Do not dismount until we are close to the FLAG position.
-        local distanceToFlag = GetDistanceToPoint(CurrentFate.position)
-        if distanceToFlag > 15 then
+        -- Fly straight at the engagement position (enemy cluster center when
+        -- known, otherwise the FATE flag). Always dismounting at the flag and
+        -- then walking to the enemies wastes several seconds on large FATE
+        -- circles. The cluster position is clamped inside the FATE radius, so
+        -- landing there also satisfies the level-sync range.
+        local distanceToFlag = GetDistanceToPoint(fateGroundPos)
+        local approachPos = preferredMovePos or fateGroundPos
+        local distanceToApproach = GetDistanceToPoint(approachPos)
+        if distanceToApproach > 10 and distanceToFlag > 15 then
             if Svc.Condition[CharacterCondition.mounted]
                 and not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, Player.CanFly and SelectedZone.flying)
+                IPC.vnavmesh.PathfindAndMoveTo(approachPos, Player.CanFly and SelectedZone.flying)
             end
             return
         end
@@ -5815,9 +6041,9 @@ function MoveToFate()
         nearestFloor = ClampPositionToCurrentFateBounds(nearestFloor, 0)
     end
 
-    -- Always mount toward the FLAG position (CurrentFate.position).
+    -- Always mount toward the FLAG position (floor-snapped FATE position).
     -- After dismounting at the flag, we'll walk to the optimal spot (nearestFloor).
-    local distanceToFlag = GetDistanceToPoint(CurrentFate.position)
+    local distanceToFlag = GetDistanceToPoint(fateGroundPos)
     if distanceToFlag > 3 then
         local mountDistanceThreshold = MountTravelMinDistance or 24
         local shouldMountForTravel = distanceToFlag >= mountDistanceThreshold
@@ -5828,15 +6054,15 @@ function MoveToFate()
                 return
             elseif not IPC.vnavmesh.PathfindInProgress() and not IPC.vnavmesh.IsRunning() then
                 -- Move toward the FLAG position specifically
-                IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, Player.CanFly and SelectedZone.flying)
+                IPC.vnavmesh.PathfindAndMoveTo(fateGroundPos, Player.CanFly and SelectedZone.flying)
             end
         else
             -- Mounted: always fly/move toward destination
             local useFlying = Player.CanFly and SelectedZone.flying
             if useFlying then
-                IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, true)
+                IPC.vnavmesh.PathfindAndMoveTo(fateGroundPos, true)
             else
-                IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, false)
+                IPC.vnavmesh.PathfindAndMoveTo(fateGroundPos, false)
             end
         end
     else
@@ -10357,6 +10583,9 @@ function FateFarming:Run()
     MountToggleCooldownSeconds            = FastCombatPacing and 1.0 or 2.2
     MountRetryCooldownSeconds             = FastCombatPacing and 0.35 or 1.2
     DismountRetryCooldownSeconds          = FastCombatPacing and 0.25 or 0.8
+    DismountNoGroundRepositionSeconds     = 2.5
+    DismountRepositionFlightSeconds       = 5
+    ForlornScanIntervalSeconds            = 0.3
     DynamicZoneSelectionEnabled           = true
     ZoneNoFateBlockSeconds                = 180
     UnresponsiveLevelSyncEarlySkipSeconds = 16
@@ -10449,6 +10678,14 @@ function FateFarming:Run()
     ClusterMoveLastRefresh                = 0
     ClusterMoveCachedFateId               = nil
     ClusterMoveCachedPosition             = nil
+    FateGroundPosCacheFateId              = nil
+    FateGroundPosCacheRaw                 = nil
+    FateGroundPosCacheSnapped             = nil
+    DismountFlyingSince                   = nil
+    DismountRepositionUntil               = nil
+    DismountRepositionAttempts            = 0
+    DismountNoLandingWarnedAt             = nil
+    ForlornScanLastAt                     = 0
     SessionStartClock                     = os.clock()
     SessionStartGemCount                  = Inventory.GetItemCount(26807)
     SessionFatesStarted                   = 0
