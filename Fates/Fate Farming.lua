@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.24
+version: 3.1.25
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,19 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.25   修正: インスタンス変更が「Can't change instance now」で
+                拒否される問題の根本原因を修正。SNDはIPC/モジュールの
+                メソッドをLuaへデリゲート（userdata）として登録するため、
+                type(...) == "function" チェックは常にfalseとなり、
+                Lifestream IPC（ChangeInstance/GetNumberOfInstances/
+                IsBusy/Teleport等）が全て使われず /li チャットコマンドへ
+                フォールバックしていた。さらにIsBusy判定の失效により
+                Lifestream busy中にコマンドを発行し拒否されていた。
+                全IPC/モジュール参照のチェックを ~= nil へ変更。
+                これにより実インスタンス数（2インスタンスのゾーンで3へ
+                行こうとする問題）もGetNumberOfInstancesが使えるように
+                なり解消。Actions.Teleport（ネイティブテレポート）の
+                チェックも同様に修正（こちらも常に無効化されていた）。
     -> 3.1.24   修正: インスタンス変更が一切発動しない問題を修正。
                 FastCombatPacing（デフォルトON）かつゾーン自動切替有効時、
                 FATEなし判定でインスタンス変更より先に即ゾーン切替して
@@ -4745,7 +4758,7 @@ local function TryLocalAetheryteShortcut(destinationName)
     if destinationName == nil or destinationName == "" then
         return false
     end
-    if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.AethernetTeleport) == "function" then
+    if IPC ~= nil and IPC.Lifestream ~= nil and IPC.Lifestream.AethernetTeleport ~= nil then
         for _, candidateName in ipairs(BuildTeleportNameCandidates(destinationName)) do
             local ok, result = pcall(function()
                 return IPC.Lifestream.AethernetTeleport(candidateName)
@@ -4813,7 +4826,7 @@ function TryNativeTeleportById(destinationId, destinationName)
     if destinationId == nil then
         return false
     end
-    if Actions == nil or type(Actions.Teleport) ~= "function" then
+    if Actions == nil or Actions.Teleport == nil then
         Dalamud.Log("[FATE] Actions.Teleport is not available.")
         return false
     end
@@ -4954,7 +4967,7 @@ function TeleportTo(aetheryteName)
         " resolvedId=" .. tostring(resolvedId) ..
         " lifestreamEnabled=" .. tostring(UseLifestreamForTeleport))
 
-    if UseLifestreamForTeleport ~= false and resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Teleport) == "function" then
+    if UseLifestreamForTeleport ~= false and resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil and IPC.Lifestream.Teleport ~= nil then
         attemptedById = true
         Dalamud.Log("[FATE] Trying Lifestream IPC.Teleport id=" .. tostring(resolvedId))
         local ok = pcall(function()
@@ -4975,7 +4988,7 @@ function TeleportTo(aetheryteName)
     -- Some Lifestream versions expose ExecuteCommand("tp <id/name>") instead of
     -- the older Teleport IPC. Try the raw command before falling back to chat.
     if UseLifestreamForTeleport ~= false and not teleportStarted and resolvedId ~= nil and IPC ~= nil and IPC.Lifestream ~= nil
-        and type(IPC.Lifestream.ExecuteCommand) == "function" then
+        and IPC.Lifestream.ExecuteCommand ~= nil then
         Dalamud.Log("[FATE] Trying Lifestream ExecuteCommand tp id=" .. tostring(resolvedId))
         local ok = pcall(function()
             IPC.Lifestream.ExecuteCommand("tp " .. tostring(resolvedId))
@@ -5159,14 +5172,14 @@ function ChangeInstance()
     -- clears AFK first. Fall back to the chat command on older Lifestream
     -- versions that do not expose it.
     local hasChangeInstanceIpc = IPC ~= nil and IPC.Lifestream ~= nil
-        and type(IPC.Lifestream.ChangeInstance) == "function"
+        and IPC.Lifestream.ChangeInstance ~= nil
 
     -- Use the real instance count when Lifestream knows it: requesting an
     -- instance number that does not exist (e.g. 3 in a 2-instance zone)
     -- stalls Lifestream's SelectString task forever and freezes the script
     -- (the main loop skips all states while Lifestream is busy).
     local maxInstances = NumberOfInstances
-    if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.GetNumberOfInstances) == "function" then
+    if IPC ~= nil and IPC.Lifestream ~= nil and IPC.Lifestream.GetNumberOfInstances ~= nil then
         local okCount, instanceCount = pcall(function()
             return IPC.Lifestream.GetNumberOfInstances()
         end)
@@ -5208,7 +5221,7 @@ function ChangeInstance()
         yield("/echo " .. msg)
         -- Abort a possibly stalled Lifestream task so it cannot block the
         -- main loop (which skips all states while Lifestream is busy).
-        if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Abort) == "function" then
+        if IPC ~= nil and IPC.Lifestream ~= nil and IPC.Lifestream.Abort ~= nil then
             pcall(function()
                 IPC.Lifestream.Abort()
             end)
@@ -9608,7 +9621,10 @@ local function BuildConsumableItemCommand(rawItemName)
 end
 
 function IsLifestreamBusySafe()
-    if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.IsBusy) == "function" then
+    -- NOTE: SND registers IPC delegates as userdata, not Lua functions, so
+    -- checks must use ~= nil instead of type(...) == "function" (which is
+    -- always false and silently disabled every IPC path that used it).
+    if IPC ~= nil and IPC.Lifestream ~= nil and IPC.Lifestream.IsBusy ~= nil then
         local ok, busy = pcall(function()
             return IPC.Lifestream.IsBusy()
         end)
@@ -10410,7 +10426,7 @@ end
 
 function ARRetainersWaitingToBeProcessed()
     if IPC.AutoRetainer == nil
-        or type(IPC.AutoRetainer.GetOfflineCharacterData) ~= "function"
+        or IPC.AutoRetainer.GetOfflineCharacterData == nil
         or Svc.ClientState.LocalContentId == nil
     then
         return false
