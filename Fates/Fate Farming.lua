@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.25
+version: 3.1.26
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,18 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.26   修正: vnavmeshの目的地が地中になる問題の残りを修正。
+                敵クラスタ中心の床スナップが PointOnFloor(center, true, 30)
+                （プローブリフトなし・水平±30y）だったため、多層ゾーンで
+                下層デッキの床を返して地中目的地になっていた。リフト付き
+                プローブ＋水平±5yに変更。さらにマーカーが床より深く沈む
+                ケースに対応する段階リフト探索（+3/+8/+15/+25y、まず
+                マーカー基準以上の床を採用）のTryGetFloorPointDeepを追加し
+                FATE座標・クラスタ中心のスナップに適用。
+                修正: MoveToTargetHitboxの床スナップもリフト付きプローブ
+                優先に変更（縁・橋上の敵で下層を拾うのを防止）。
+                修正: コレクションFATE納品時の移動が生のFATE座標を使って
+                いたのを床スナップ済み座標に変更。
     -> 3.1.25   修正: インスタンス変更が「Can't change instance now」で
                 拒否される問題の根本原因を修正。SNDはIPC/モジュールの
                 メソッドをLuaへデリゲート（userdata）として登録するため、
@@ -2085,6 +2097,30 @@ function GetFloorSnappedPosition(position, probeLift, halfExtentXZ)
     return TryGetFloorPoint(position, probeLift, halfExtentXZ) or position
 end
 
+-- Like TryGetFloorPoint, but retries with progressively higher probes so a
+-- marker sunk deeper below the navmesh still resolves to the real floor
+-- instead of a lower deck (which looks like an "underground" destination to
+-- the player). Floors at/above the original Y are accepted immediately
+-- (normal case = 1 query); only sunk markers escalate.
+function TryGetFloorPointDeep(position, halfExtentXZ)
+    if position == nil then
+        return nil
+    end
+    local best = nil
+    for _, lift in ipairs({ 3, 8, 15, 25 }) do
+        local floorPoint = TryGetFloorPoint(position, lift, halfExtentXZ or 5)
+        if floorPoint ~= nil then
+            if floorPoint.Y >= position.Y - 0.5 then
+                return floorPoint
+            end
+            if best == nil or floorPoint.Y > best.Y then
+                best = floorPoint
+            end
+        end
+    end
+    return best
+end
+
 -- Floor-snapped FATE position, cached per fateId so movement code that runs
 -- every tick does not hammer the navmesh query. Prevents vnavmesh fly paths
 -- from ending at an underground waypoint (vnavmesh appends the raw
@@ -2101,7 +2137,7 @@ function GetFateGroundPosition(fate)
     then
         return FateGroundPosCacheSnapped
     end
-    local snapped = GetFloorSnappedPosition(fate.position, 3, 5)
+    local snapped = TryGetFloorPointDeep(fate.position, 5) or fate.position
     FateGroundPosCacheFateId = fate.fateId
     FateGroundPosCacheRaw = fate.position
     FateGroundPosCacheSnapped = snapped
@@ -2345,7 +2381,11 @@ function GetDenseFateClusterCenter(fateIdFilter, clusterRadius, minClusterEnemie
 
     local _, bestClusterSize, bestCenter = GetBestDenseCluster(candidates, clusterRadius)
     if bestCenter ~= nil and bestClusterSize >= minClusterEnemies then
-        local onFloor = IPC.vnavmesh.PointOnFloor(bestCenter, true, 30)
+        -- Snap to the floor with a lifted probe and a TIGHT extent. The old
+        -- PointOnFloor(bestCenter, true, 30) searched a 60y-wide box below the
+        -- centroid, so in multi-deck zones it could resolve to a floor on a
+        -- LOWER level - i.e. an underground destination for vnavmesh.
+        local onFloor = TryGetFloorPointDeep(bestCenter, 5)
         return onFloor or bestCenter, bestClusterSize
     end
 
@@ -2561,7 +2601,12 @@ function MoveToTargetHitbox()
     -- for the player's movement let ranged jobs back out of the FATE circle
     -- (and melee get dragged far out) until the hard-boundary check fired.
     local boundedIdeal = ClampPositionToCurrentFateBounds(ideal, GetCurrentFateMoveBoundaryBuffer())
-    local newPos = IPC.vnavmesh.PointOnFloor(boundedIdeal, false, 1.5) or boundedIdeal
+    -- Probe from a lifted point first: enemies on a ledge/bridge put the ideal
+    -- spot over a lower level, and PointOnFloor never looks above the probe Y,
+    -- so probing at the raw Y could already resolve underground.
+    local newPos = TryGetFloorPoint(boundedIdeal, 3, 3)
+        or IPC.vnavmesh.PointOnFloor(boundedIdeal, false, 1.5)
+        or boundedIdeal
 
     -- Avoid reissuing tiny movement commands that cause 1px jitter at fate edges.
     local now = os.clock()
@@ -6237,7 +6282,7 @@ function CollectionsFateTurnIn()
         local progress = GetFateProgressValue(CurrentFate, nil)
         if (Svc.Targets.Target == nil or GetTargetName() ~= CurrentFate.npcName and progress ~= nil and progress < 100) then
             if not IPC.vnavmesh.PathfindInProgress() and not IPC.vnavmesh.IsRunning() then
-                IPC.vnavmesh.PathfindAndMoveTo(CurrentFate.position, false)
+                IPC.vnavmesh.PathfindAndMoveTo(GetFateGroundPosition(CurrentFate) or CurrentFate.position, false)
             end
         else
             SafeYield("/vnav stop")
