@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.22
+version: 3.1.23
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -316,6 +316,24 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.23   修正: インスタンス変更が正常に機能しない問題を修正。
+                /li N 発行後1秒で確認なしにReadyへ戻っていたため、
+                Lifestream側で拒否された場合（busy・ShowInstanceSwitcher
+                無効・occupied等）に同じインスタンスへ永久に再送し続けて
+                いた。Lifestream IPC（ChangeInstance/GetNumberOfInstances/
+                Abort）を優先使用し、移動が実際に完了したか最大20秒待って
+                検証、失敗時は理由をechoしてLifestreamタスクを中断する
+                ように変更。完了後はbetweenAreas終了まで待機してから再開。
+                修正: 2インスタンスしかないゾーンで /li 3 を送ると
+                LifestreamのSelectStringタスクが永久に停滞しスクリプト
+                全体がフリーズする問題を、実インスタンス数を取得して
+                使うことで修正（未取得時は従来通り3）。
+                修正: インスタンス変更中のマウント迂回がMountState経由で
+                moveToFateへ遷移しインスタンス変更を放棄＆カウンタを
+                リセットしていた問題を、vnavでの直接移動のみに変更。
+                修正: エーテライト到着判定が "aetheryte" 固定文字列で
+                日本語クライアント（エーテライト）では永遠に一致せず
+                FlyBackToAetheryteが正常終了しなかった問題を修正。
     -> 3.1.22   修正: 飛行中にテレポートが必要になると「player is not in a
                 usable state (mounted)」で永久に失敗し続ける問題を修正。
                 原因: 着陸地点への復帰飛行（5秒）終了時点で飛行経過時間が
@@ -5102,15 +5120,15 @@ function ChangeInstance()
 
     if GetDistanceToTarget() > 10 then
         Dalamud.Log("[FATE] Targeting aetheryte, but greater than 10 distance")
+        -- No mounting shortcut here: MountState always continues to moveToFate
+        -- (and resets SuccessiveInstanceChanges), which abandoned the instance
+        -- change entirely. Just walk/fly to the aetheryte with vnav.
         if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
             if Player.CanFly and SelectedZone.flying then
                 SafeYield("/vnav flytarget")
             else
                 SafeYield("/vnav movetarget")
             end
-        elseif GetDistanceToTarget() > 20 and not Svc.Condition[CharacterCondition.mounted] then
-            State = CharacterState.mounting
-            Dalamud.Log("[FATE] State Change: Mounting")
         end
         return
     end
@@ -5127,10 +5145,74 @@ function ChangeInstance()
         return
     end
 
-    Dalamud.Log("[FATE] Transferring to next instance")
-    local nextInstance = math.ceil((GetZoneInstance() % NumberOfInstances) + 1)
-    yield("/li " .. nextInstance) -- start instance transfer
-    yield("/wait 1")              -- wait for instance transfer to register
+    -- Lifestream's instance IPC bypasses the "/li N" chat-command checks
+    -- (ShowInstanceSwitcher config, "already in instance" etc.) and also
+    -- clears AFK first. Fall back to the chat command on older Lifestream
+    -- versions that do not expose it.
+    local hasChangeInstanceIpc = IPC ~= nil and IPC.Lifestream ~= nil
+        and type(IPC.Lifestream.ChangeInstance) == "function"
+
+    -- Use the real instance count when Lifestream knows it: requesting an
+    -- instance number that does not exist (e.g. 3 in a 2-instance zone)
+    -- stalls Lifestream's SelectString task forever and freezes the script
+    -- (the main loop skips all states while Lifestream is busy).
+    local maxInstances = NumberOfInstances
+    if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.GetNumberOfInstances) == "function" then
+        local okCount, instanceCount = pcall(function()
+            return IPC.Lifestream.GetNumberOfInstances()
+        end)
+        if okCount and type(instanceCount) == "number" and instanceCount >= 2 then
+            maxInstances = math.floor(instanceCount)
+        end
+    end
+
+    local currentInstance = GetZoneInstance()
+    local nextInstance = (currentInstance % maxInstances) + 1
+    Dalamud.Log("[FATE] Transferring to next instance (" .. tostring(currentInstance) ..
+        " -> " .. tostring(nextInstance) .. " of " .. tostring(maxInstances) .. ")")
+
+    local issuedAt = os.clock()
+    if hasChangeInstanceIpc then
+        pcall(function()
+            IPC.Lifestream.ChangeInstance(nextInstance)
+        end)
+    else
+        SafeYield("/li " .. nextInstance) -- start instance transfer
+    end
+
+    -- Verify the transfer actually happens. The old code waited 1s and went
+    -- back to Ready blindly, so a rejected /li (Lifestream busy, instance
+    -- switcher overlay disabled, occupied) was retried forever unnoticed.
+    local changed = false
+    while os.clock() - issuedAt < 20 do
+        yield("/wait 0.5")
+        if GetZoneInstance() == nextInstance then
+            changed = true
+            break
+        end
+    end
+
+    if not changed then
+        local msg = "[FATE] Instance change to " .. tostring(nextInstance) ..
+            " did not complete within 20s (rejected by Lifestream?). Moving on."
+        Dalamud.Log(msg)
+        yield("/echo " .. msg)
+        -- Abort a possibly stalled Lifestream task so it cannot block the
+        -- main loop (which skips all states while Lifestream is busy).
+        if IPC ~= nil and IPC.Lifestream ~= nil and type(IPC.Lifestream.Abort) == "function" then
+            pcall(function()
+                IPC.Lifestream.Abort()
+            end)
+        end
+    else
+        -- Wait for the post-transfer zone load to finish before resuming.
+        local settleStart = os.clock()
+        while Svc.Condition[CharacterCondition.betweenAreas] and os.clock() - settleStart < 30 do
+            yield("/wait 0.5")
+        end
+        HasFlownUpYet = false
+    end
+
     State = CharacterState.ready
     SuccessiveInstanceChanges = SuccessiveInstanceChanges + 1
     Dalamud.Log("[FATE] State Change: Ready")
@@ -5264,7 +5346,7 @@ function FlyBackToAetheryte()
 
     SafeYield("/target " .. LANG.actions["aetheryte"])
 
-    if Svc.Targets.Target ~= nil and GetTargetName() == "aetheryte" and GetDistanceToTarget() <= 20 then
+    if Svc.Targets.Target ~= nil and GetTargetName() == LANG.actions["aetheryte"] and GetDistanceToTarget() <= 20 then
         if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
             SafeYield("/vnav stop")
         end
@@ -8343,7 +8425,7 @@ function Ready()
             end
             return
         end
-        if DownTimeWaitAtNearestAetheryte and (Svc.Targets.Target == nil or GetTargetName() ~= "aetheryte" or GetDistanceToTarget() > 20) then
+        if DownTimeWaitAtNearestAetheryte and (Svc.Targets.Target == nil or GetTargetName() ~= LANG.actions["aetheryte"] or GetDistanceToTarget() > 20) then
             State = CharacterState.flyBackToAetheryte
             Dalamud.Log("[FATE] State Change: FlyBackToAetheryte")
             return
@@ -8357,7 +8439,7 @@ function Ready()
 
 
     if NextFate == nil and ShouldPreserveBonusBuffForZoneSwitch(true) and DownTimeWaitAtNearestAetheryte then
-        if Svc.Targets.Target == nil or GetTargetName() ~= "aetheryte" or GetDistanceToTarget() > 20 then
+        if Svc.Targets.Target == nil or GetTargetName() ~= LANG.actions["aetheryte"] or GetDistanceToTarget() > 20 then
             State = CharacterState.flyBackToAetheryte
             Dalamud.Log("[FATE] State Change: FlyBackToAetheryte")
         else
