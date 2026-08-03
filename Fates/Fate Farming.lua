@@ -788,6 +788,13 @@ ClusterMoveLastRefresh = nil
 ClusterMoveCachedFateId = nil
 ClusterMoveCachedPosition = nil
 
+-- 敵オブジェクト走査の短時間キャッシュ。1フレーム内に同じ一覧を
+-- 複数のターゲット選択処理が使うため、全オブジェクト走査を共有する。
+EnemyScanCacheLastAt = 0
+EnemyScanCachePlayerPos = nil
+EnemyScanCacheEntries = nil
+EnemyScanCacheIntervalSeconds = 0.15
+
 -- FATE座標の床スナップキャッシュ（地中目的地の防止用）
 FateGroundPosCacheFateId = nil
 FateGroundPosCacheRaw = nil
@@ -2155,6 +2162,38 @@ function IsCurrentTargetInsideCurrentFateBounds(margin)
     return IsPositionInsideCurrentFateBounds(Svc.Targets.Target.Position, margin)
 end
 
+function GetFateEnemyScanEntries(playerPos)
+    local now = os.clock()
+    local cacheAge = now - (EnemyScanCacheLastAt or 0)
+    local cachedPosition = EnemyScanCachePlayerPos
+    local cacheStillUseful = EnemyScanCacheEntries ~= nil
+        and cacheAge < (EnemyScanCacheIntervalSeconds or 0.15)
+        and cachedPosition ~= nil
+        and DistanceBetweenFlatSquared(playerPos, cachedPosition) <= 9
+    if cacheStillUseful then
+        return EnemyScanCacheEntries
+    end
+
+    local entries = {}
+    for i = 0, Svc.Objects.Length - 1 do
+        local obj = Svc.Objects[i]
+        if obj ~= nil and obj.IsTargetable and obj:IsHostile() and not obj.IsDead then
+            local wrappedObj = EntityWrapper(obj)
+            if wrappedObj ~= nil then
+                entries[#entries + 1] = {
+                    obj = obj,
+                    wrappedObj = wrappedObj
+                }
+            end
+        end
+    end
+
+    EnemyScanCacheLastAt = now
+    EnemyScanCachePlayerPos = playerPos
+    EnemyScanCacheEntries = entries
+    return entries
+end
+
 function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance, ignoreFateRadiusFilter)
     local playerPos = GetLocalPlayerPosition()
     if playerPos == nil then
@@ -2162,11 +2201,12 @@ function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance, ig
     end
 
     local candidates = {}
-    for i = 0, Svc.Objects.Length - 1 do
-        local obj = Svc.Objects[i]
+    local scanEntries = GetFateEnemyScanEntries(playerPos)
+    for _, entry in ipairs(scanEntries) do
+        local obj = entry.obj
         if obj ~= nil and obj.IsTargetable and obj:IsHostile() and not obj.IsDead then
-            local wrappedObj = EntityWrapper(obj)
-            local objFateId = wrappedObj.FateId
+            local wrappedObj = entry.wrappedObj
+            local objFateId = tonumber(wrappedObj.FateId) or 0
             if objFateId > 0 and (fateIdFilter == 0 or objFateId == fateIdFilter) then
                 local dist = DistanceBetween(playerPos, obj.Position)
                 local isUnengaged = not wrappedObj.IsInCombat
@@ -2207,19 +2247,22 @@ function GetBestDenseCluster(candidates, clusterRadius)
     local bestClusterSize = -1
     local bestTargetDistance = math.maxinteger
     local bestCenter = nil
+    local clusterRadiusSquared = (clusterRadius or 0) * (clusterRadius or 0)
 
     for _, candidate in ipairs(candidates) do
         local clusterSize = 0
         local sumX = 0
         local sumY = 0
         local sumZ = 0
+        local candidatePos = candidate.obj.Position
 
         for _, other in ipairs(candidates) do
-            if DistanceBetweenFlat(candidate.obj.Position, other.obj.Position) <= clusterRadius then
+            local otherPos = other.obj.Position
+            if DistanceBetweenFlatSquared(candidatePos, otherPos) <= clusterRadiusSquared then
                 clusterSize = clusterSize + 1
-                sumX = sumX + other.obj.Position.X
-                sumY = sumY + other.obj.Position.Y
-                sumZ = sumZ + other.obj.Position.Z
+                sumX = sumX + otherPos.X
+                sumY = sumY + otherPos.Y
+                sumZ = sumZ + otherPos.Z
             end
         end
 
@@ -4189,9 +4232,16 @@ function DistanceBetweenFlat(pos1, pos2)
         Dalamud.Log("[FATE] Warning: DistanceBetweenFlat called with nil position")
         return 0
     end
+    return math.sqrt(DistanceBetweenFlatSquared(pos1, pos2))
+end
+
+function DistanceBetweenFlatSquared(pos1, pos2)
+    if pos1 == nil or pos2 == nil then
+        return 0
+    end
     local dx = pos1.X - pos2.X
     local dz = pos1.Z - pos2.Z
-    return math.sqrt(dx * dx + dz * dz)
+    return dx * dx + dz * dz
 end
 
 -- Wrap yield() so a single command failure doesn't kill the whole macro.
@@ -4224,7 +4274,16 @@ function TargetNearestAttackingEnemy()
             local posOk, pos = pcall(function() return obj.Position end)
             local deadOk, isDead = pcall(function() return obj.IsDead end)
             local hpOk, hp = pcall(function() return obj.CurrentHp end)
-            if kindOk and posOk and deadOk and hpOk and kind == 2 and not isDead and hp > 0 then
+            local targetableOk, targetable = pcall(function() return obj.IsTargetable end)
+            local hostileOk, hostile = pcall(function() return obj:IsHostile() end)
+            local engaged = false
+            if kindOk and posOk and deadOk and hpOk and targetableOk and hostileOk
+                and kind == 2 and targetable and hostile and not isDead and hp > 0
+            then
+                local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
+                engaged = wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
+            end
+            if engaged then
                 local dist = DistanceBetweenFlat(playerPos, pos)
                 if dist < bestDist then
                     bestDist = dist
@@ -7147,9 +7206,17 @@ function HandleUnexpectedCombat()
         Dalamud.Log("[FATE] State Change: DoFate")
         return
     elseif not Svc.Condition[CharacterCondition.inCombat] then
-        if Svc.Targets.Target ~= nil and not Svc.Targets.Target.IsDead then
-            -- The inCombat condition can flicker; if we still have a live target,
-            -- keep fighting instead of dropping back to ready.
+        local currentTarget = Svc.Targets.Target
+        local targetIsEngaged = false
+        if currentTarget ~= nil and not currentTarget.IsDead then
+            local wrappedOk, wrappedTarget = pcall(function() return EntityWrapper(currentTarget) end)
+            targetIsEngaged = wrappedOk and wrappedTarget ~= nil and wrappedTarget.IsInCombat == true
+        end
+
+        if targetIsEngaged then
+            -- The inCombat condition can flicker; keep the target only when the
+            -- target itself is still engaged. A merely selected overworld enemy
+            -- must not keep this state alive indefinitely.
             Dalamud.Log("[FATE] UnexpectedCombat: inCombat flag dropped, but target still present")
         else
             SafeYield("/vnav stop")
@@ -7178,10 +7245,6 @@ function HandleUnexpectedCombat()
             SafeYield("/battletarget")
             yield("/wait 0.3")
         end
-        if Svc.Targets.Target == nil then
-            SafeYield("/targetenemy")
-            yield("/wait 0.3")
-        end
     end
     Dalamud.Log("[FATE] UnexpectedCombat: target=" ..
         tostring(Svc.Targets.Target and Svc.Targets.Target.Name or "nil") ..
@@ -7207,7 +7270,6 @@ function HandleUnexpectedCombat()
 end
 
 function DoFate()
-    Dalamud.Log("[FATE] DoFate")
     if CurrentFate == nil or CurrentFate.fateObject == nil then
         Dalamud.Log("[FATE] DoFate: CurrentFate is invalid, returning to Ready.")
         State = CharacterState.ready
@@ -7637,8 +7699,6 @@ function DoFate()
             Dalamud.Log("[FATE] State Change: CollectionsFatesTurnIn")
         end
     end
-
-    Dalamud.Log("[FATE] DoFate->Finished transition checks")
 
     -- (Removed) Force target specific enemies for continuation FATEs
     -- The hardcoded list (カナルガルパー / Canal Gulper) only matched one
@@ -10721,6 +10781,7 @@ function FateFarming:Run()
     if FastCombatPacing == nil then
         FastCombatPacing = true
     end
+    EnemyScanCacheIntervalSeconds = FastCombatPacing and 0.15 or 0.3
     if EnableStagedAntiStuck == nil then
         EnableStagedAntiStuck = true
     end
@@ -10852,6 +10913,9 @@ function FateFarming:Run()
     ClusterMoveLastRefresh                = 0
     ClusterMoveCachedFateId               = nil
     ClusterMoveCachedPosition             = nil
+    EnemyScanCacheLastAt                  = 0
+    EnemyScanCachePlayerPos               = nil
+    EnemyScanCacheEntries                  = nil
     FateGroundPosCacheFateId              = nil
     FateGroundPosCacheRaw                 = nil
     FateGroundPosCacheSnapped             = nil
