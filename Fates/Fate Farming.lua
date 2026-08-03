@@ -368,6 +368,11 @@ configs:
                 修正: エーテライト到着判定が "aetheryte" 固定文字列で
                 日本語クライアント（エーテライト）では永遠に一致せず
                 FlyBackToAetheryteが正常終了しなかった問題を修正。
+    -> 3.1.23   修正: FATE移動中に対象FATEが終了した際、地面のない場所で
+                降車できずテレポートが永久に遅延する問題を修正。vnavmeshの
+                移動を停止できた場合は、騎乗・飛行中でもテレポートを開始する。
+                追加: 戦闘開始アクションがローカライズ名で認識されない環境向けに
+                英語名へフォールバック。
     -> 3.1.22   修正: 飛行中にテレポートが必要になると「player is not in a
                 usable state (mounted)」で永久に失敗し続ける問題を修正。
                 原因: 着陸地点への復帰飛行（5秒）終了時点で飛行経過時間が
@@ -4778,10 +4783,10 @@ function WaitUntilTeleportUsable(timeoutSeconds)
         if Svc.Condition[CharacterCondition.occupiedInEvent] then table.insert(reasons, "occupiedInEvent") end
         if Svc.Condition[CharacterCondition.occupiedInQuestEvent] then table.insert(reasons, "occupiedInQuestEvent") end
         if Svc.Condition[CharacterCondition.beingMoved] then table.insert(reasons, "beingMoved") end
-        if Svc.Condition[CharacterCondition.mounted] then
-            table.insert(reasons, "mounted")
-            Dismount(true)
-        end
+        -- Teleport is allowed while stationary on a flying/ground mount. Do not
+        -- force a landing here: over a void, Dismount() can never complete and
+        -- would prevent the teleport attempt forever. TeleportTo stops vnavmesh
+        -- before reaching this check.
         if Svc.Condition[CharacterCondition.mounting57] then table.insert(reasons, "mounting57") end
         if Svc.Condition[CharacterCondition.mounting64] then table.insert(reasons, "mounting64") end
 
@@ -4878,12 +4883,10 @@ function TryNativeTeleportById(destinationId, destinationName)
     local startTerritory = Svc.ClientState.TerritoryType
     local startTimeout = FastCombatPacing and 8.0 or 10.0
     for attempt = 1, 3 do
-        -- Stop movement and ensure we are on the ground before casting.
+        -- Stop movement. A stationary mount is a usable teleport state, so do
+        -- not force a dismount over areas without a landing surface.
         SafeYield("/vnav stop")
-        if Svc.Condition[CharacterCondition.mounted] then
-            Dismount(true)
-        end
-        yield("/wait 0.5")
+        yield("/wait 0.4")
         Dalamud.Log("[FATE] Calling Actions.Teleport(" .. tostring(destinationId) .. ") attempt " .. tostring(attempt))
         local ok, result = pcall(function()
             return Actions.Teleport(destinationId)
@@ -6375,6 +6378,17 @@ function TryUseActionOnTarget(actionName)
     end
 
     local actionText = tostring(actionName)
+    -- SND's /ac parser can reject localized combat names even when the game
+    -- client displays them correctly. Convert known localized names back to
+    -- their canonical English names before dispatching the command.
+    if LANG ~= nil and LANG.actions ~= nil then
+        for englishName, localizedName in pairs(LANG.actions) do
+            if localizedName == actionText then
+                actionText = englishName
+                break
+            end
+        end
+    end
     local cmd = '/ac "' .. actionText .. '"'
     yield(cmd)
     return true
