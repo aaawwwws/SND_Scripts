@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.26
+version: 3.1.27
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -310,7 +310,7 @@ configs:
     default: false
   Blacklist:
     description: 除外したいFATE名をカンマ区切りで入力します（例：FATE名1,FATE名2,FATE名3）。
-    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション,水の迷宮の夢,我々の貢物,千年の孤独,不死の人,奸臣、大寒心,失われた山岳の都,野性と葦,バナナ剥きには最適の日,狼の家,上段の突きを喰らうイブルク"
+    default: "空飛ぶ鍋奉行「ペルペルイーター」,怪力の大食漢「マイティ・マイプ」,踊る山火「ラカクウルク」,薬屋のひと仕事,血濡れの爪「ミユールル」,種の期限,恐怖！ キノコ魔物,落ち石拾い,メモリーズ,人鳥細工,モグラ退治,マイカ・ザ・ムー：大団円,人生がときめく片づけの技法,気まぐれロボット,道を視る青年,カナルタウンでやすらかに,逃走テレメトリー,ブロークンボットダイアリー,マイカ・ザ・ムー：出発進行,人狼伝説,コーヒーを巡る冒険,巨獣めざめる,ポゼッション,水の迷宮の夢,我々の貢物,千年の孤独,不死の人,奸臣、大寒心,失われた山岳の都,野性と葦,バナナ剥きには最適の日,狼の家,上段の突きを喰らうイブルク,汚れた血め！"
   Discord Webhook URL:
     description: スクリプト停止時やエラー時の通知先Webhook URL。空欄で無効。
     default: ""
@@ -321,6 +321,15 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.27   修正: obj:IsHostile()（ECommons拡張）が解放済みオブジェクトの
+                生struct（GetNamePlateColorType）を参照してゲームごと
+                クラッシュする問題を修正（C0000005）。敵スキャンのキャッシュ
+                エントリを次フレームで再検証する際、敵死亡・消滅後に
+                呼び出すとネイティブAVとなりpcallでは捕捉不可。
+                IsHostileObjectSafe（ObjectKind==2 BattleNpc かつ
+                SubKind==2 Enemy、ガード付きプロパティのみ使用）に全6箇所
+                （フォーローンスキャン・敵スキャン・キャッシュ再検証・
+                交戦敵ターゲット×2・パーティ標的）を置き換え。
     -> 3.1.26   修正: vnavmeshの目的地が地中になる問題の残りを修正。
                 敵クラスタ中心の床スナップが PointOnFloor(center, true, 30)
                 （プローブリフトなし・水平±30y）だったため、多層ゾーンで
@@ -1911,6 +1920,23 @@ function IsBigForlornTargetName(targetName)
     return false
 end
 
+-- Safe hostility check: BattleNpc(2) + Enemy subkind(2), using only guarded
+-- Dalamud property reads. This replaces the ECommons obj:IsHostile()
+-- extension, which dereferences raw struct memory (GetNamePlateColorType)
+-- and HARD-CRASHES the whole game process (native C0000005) when the object
+-- was freed - e.g. a scan entry cached one frame and revalidated the next
+-- after the enemy died. pcall cannot catch a native access violation, so
+-- the risky call itself must never be made.
+function IsHostileObjectSafe(obj)
+    if obj == nil then
+        return false
+    end
+    local ok, result = pcall(function()
+        return obj.ObjectKind == 2 and obj.SubKind == 2
+    end)
+    return ok and result == true
+end
+
 function TryTargetForlorn()
     if IgnoreForlorns then
         return
@@ -1939,7 +1965,7 @@ function TryTargetForlorn()
     local maxIndex = math.min(Svc.Objects.Length - 1, 400)
     for i = 0, maxIndex do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and obj:IsHostile() and not obj.IsDead then
+        if obj ~= nil and obj.IsTargetable and IsHostileObjectSafe(obj) and not obj.IsDead then
             local name = obj.Name:GetText()
             if IsForlornTargetName(name)
                 and (not IgnoreBigForlornOnly or not IsBigForlornTargetName(name)) then
@@ -2194,7 +2220,7 @@ function GetFateEnemyScanEntries(playerPos)
     local entries = {}
     for i = 0, Svc.Objects.Length - 1 do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and obj:IsHostile() and not obj.IsDead then
+        if obj ~= nil and obj.IsTargetable and IsHostileObjectSafe(obj) and not obj.IsDead then
             local wrappedObj = EntityWrapper(obj)
             if wrappedObj ~= nil then
                 entries[#entries + 1] = {
@@ -2221,7 +2247,7 @@ function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance, ig
     local scanEntries = GetFateEnemyScanEntries(playerPos)
     for _, entry in ipairs(scanEntries) do
         local obj = entry.obj
-        if obj ~= nil and obj.IsTargetable and obj:IsHostile() and not obj.IsDead then
+        if obj ~= nil and obj.IsTargetable and IsHostileObjectSafe(obj) and not obj.IsDead then
             local wrappedObj = entry.wrappedObj
             local objFateId = tonumber(wrappedObj.FateId) or 0
             if objFateId > 0 and (fateIdFilter == 0 or objFateId == fateIdFilter) then
@@ -2764,6 +2790,11 @@ function ShouldSkipOtherNpcFate(fateName)
 end
 
 function IsUserInputBlackListedFate(fateName)
+    -- Keep this known-problematic FATE excluded even when an existing saved
+    -- Blacklist value predates its addition to the metadata default.
+    if fateName == "汚れた血め！" then
+        return true
+    end
     local array = split(Config.Get("Blacklist"), ',')
     return includes(array, fateName)
 end
@@ -4386,9 +4417,9 @@ function TargetNearestAttackingEnemy()
             local deadOk, isDead = pcall(function() return obj.IsDead end)
             local hpOk, hp = pcall(function() return obj.CurrentHp end)
             local targetableOk, targetable = pcall(function() return obj.IsTargetable end)
-            local hostileOk, hostile = pcall(function() return obj:IsHostile() end)
+            local hostile = IsHostileObjectSafe(obj)
             local engaged = false
-            if kindOk and posOk and deadOk and hpOk and targetableOk and hostileOk
+            if kindOk and posOk and deadOk and hpOk and targetableOk
                 and kind == 2 and targetable and hostile and not isDead and hp > 0
             then
                 local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
@@ -4425,7 +4456,7 @@ function TargetNearestEngagedEnemy(maxDist)
     local bestDist = range
     for i = 0, Svc.Objects.Length - 1 do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and not obj.IsDead and obj:IsHostile() then
+        if obj ~= nil and obj.IsTargetable and not obj.IsDead and IsHostileObjectSafe(obj) then
             local wrappedObj = EntityWrapper(obj)
             if wrappedObj ~= nil and wrappedObj.IsInCombat == true then
                 local dist = DistanceBetweenFlat(playerPos, obj.Position)
@@ -10251,7 +10282,7 @@ function GetPartyMemberTargetObjects()
                 local textOk, text = pcall(function() return name:GetText() end)
                 if textOk and text ~= nil and nameSet[text] then
                     local targetOk, target = pcall(function() return obj.TargetObject end)
-                    if targetOk and target ~= nil and target:IsHostile() and not target.IsDead then
+                    if targetOk and target ~= nil and IsHostileObjectSafe(target) and not target.IsDead then
                         table.insert(targets, target)
                     end
                 end
