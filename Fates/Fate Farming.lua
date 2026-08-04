@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.30
+version: 3.1.31
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.31   修正: FateIdフォールバックがチョコボ等のBattleNpcも候補に
+                含めていた問題を修正。Combatant（敵）だけを対象に限定。
     -> 3.1.30   修正: 一部環境でBattleNpcのFateIdが0として返る場合でも、
                 現在のFATE範囲内にいる生存・対象可能な敵を取得するよう修正。
     -> 3.1.29   修正: SubKindの実行時表現により敵判定が失敗する環境で、
@@ -1926,11 +1928,11 @@ function IsBigForlornTargetName(targetName)
     return false
 end
 
--- Safe hostility check: BattleNpc(2), using only guarded Dalamud property reads.
+-- Safe hostility check: BattleNpc(2) + Combatant subkind(5), using only guarded
+-- Dalamud property reads.
 -- Callers additionally require targetable/alive objects, and FATE candidate
--- selection requires a matching FateId. Do not require SubKind here: its Lua
--- runtime representation differs between object wrappers, which can otherwise
--- make every valid FATE enemy disappear from the candidate list. This replaces
+-- selection requires a matching FateId. Normalize both numeric and enum-string
+-- representations because the Lua/.NET bridge can expose either form. This replaces
 -- the ECommons obj:IsHostile()
 -- extension, which dereferences raw struct memory (GetNamePlateColorType)
 -- and HARD-CRASHES the whole game process (native C0000005) when the object
@@ -1943,13 +1945,25 @@ function IsHostileObjectSafe(obj)
     end
     local ok, result = pcall(function()
         local kind = obj.ObjectKind
-        if kind == 2 or tonumber(kind) == 2 then
+        local isBattleNpc = kind == 2 or tonumber(kind) == 2
+        if not isBattleNpc then
+            local kindText = tostring(kind)
+            isBattleNpc = kindText == "2"
+                or kindText == "BattleNpc"
+                or string.find(kindText, "BattleNpc", 1, true) ~= nil
+        end
+        if not isBattleNpc then
+            return false
+        end
+
+        local subKind = obj.SubKind
+        if subKind == 5 or tonumber(subKind) == 5 then
             return true
         end
-        local kindText = tostring(kind)
-        return kindText == "2"
-            or kindText == "BattleNpc"
-            or string.find(kindText, "BattleNpc", 1, true) ~= nil
+        local subKindText = tostring(subKind)
+        return subKindText == "5"
+            or subKindText == "Combatant"
+            or string.find(subKindText, "Combatant", 1, true) ~= nil
     end)
     return ok and result == true
 end
