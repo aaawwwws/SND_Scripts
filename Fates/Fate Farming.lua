@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.34
+version: 3.1.35
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.35   変更: 騎乗中・飛行中を除き、自分を攻撃しているCombatantは
+                FATE外でも自衛対象にする。騎乗中は移動を優先。
     -> 3.1.34   修正: PTメンバーのターゲットおよび戦闘中オブジェクトの
                 検証を強化し、自分を攻撃していない敵/NPCを除外。
     -> 3.1.33   修正: FATE終了後のWaitForContinuation中に外敵との戦闘が
@@ -2768,13 +2770,13 @@ function MoveToTargetHitbox()
         and IsFateActive(CurrentFate.fateObject)
     if activeFate and not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
         -- Self-defense: stay on an engaged attacker without pathing out of
-        -- bounds. External attackers are dropped and the player returns to the
-        -- active FATE instead of standing still in combat.
+        -- bounds. A nearby attacker may be approached, but the destination is
+        -- still clamped to the FATE movement boundary below.
         if not ShouldKeepCurrentTargetForSelfDefense(EntityWrapper(Svc.Targets.Target)) then
             ClearTarget()
             MoveBackToCurrentFate()
+            return
         end
-        return
     end
 
     local playerPos = GetLocalPlayerPosition()
@@ -4557,9 +4559,15 @@ function MoveBackToCurrentFate()
 end
 
 function FallbackBattleTargetOrReturnToFate()
+    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then
+        return false
+    end
     if CurrentFate ~= nil and CurrentFate.fateObject ~= nil
         and IsFateActive(CurrentFate.fateObject)
     then
+        if TargetNearestEngagedEnemy(SelfDefenseAcquireRadius or 30) then
+            return true
+        end
         MoveBackToCurrentFate()
         return false
     end
@@ -4570,6 +4578,9 @@ function FallbackBattleTargetOrReturnToFate()
 end
 
 function TargetNearestAttackingEnemy()
+    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then
+        return false
+    end
     local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
     if not playerOk or player == nil then
         return false
@@ -4617,6 +4628,9 @@ function TargetNearestEngagedEnemy(maxDist)
     if playerPos == nil then
         return false
     end
+    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then
+        return false
+    end
     local range = maxDist or 30
     local bestObj = nil
     local bestDist = range
@@ -4624,11 +4638,12 @@ function TargetNearestEngagedEnemy(maxDist)
         local obj = Svc.Objects[i]
         if obj ~= nil and obj.IsTargetable and not obj.IsDead and IsHostileObjectSafe(obj) then
             local wrappedObj = EntityWrapper(obj)
+            local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
             local insideCurrentFate = CurrentFate == nil
                 or CurrentFate.fateObject == nil
                 or not IsFateActive(CurrentFate.fateObject)
                 or IsPositionInsideCurrentFateBounds(obj.Position, GetCurrentFateTargetClearMargin())
-            if insideCurrentFate and IsObjectTargetingLocalPlayer(obj)
+            if (insideCurrentFate or targetingPlayer) and targetingPlayer
                 and wrappedObj ~= nil and wrappedObj.IsInCombat == true
             then
                 local dist = DistanceBetweenFlat(playerPos, obj.Position)
@@ -4652,6 +4667,9 @@ function ShouldKeepCurrentTargetForSelfDefense(wrappedTarget)
     if not Svc.Condition[CharacterCondition.inCombat] then
         return false
     end
+    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then
+        return false
+    end
     if Svc.Targets.Target == nil or Svc.Targets.Target.IsDead then
         return false
     end
@@ -4659,12 +4677,6 @@ function ShouldKeepCurrentTargetForSelfDefense(wrappedTarget)
         return false
     end
     if not IsObjectTargetingLocalPlayer(Svc.Targets.Target) then
-        return false
-    end
-    if CurrentFate ~= nil and CurrentFate.fateObject ~= nil
-        and IsFateActive(CurrentFate.fateObject)
-        and not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())
-    then
         return false
     end
     return GetDistanceToTargetFlat() <= (SelfDefenseKeepTargetRadius or 30)
@@ -8629,7 +8641,12 @@ function DoFate()
                     yield("/wait " .. preApproachWaitInCombat)
                 end
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
-                    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
+                    local keepSelfDefenseTarget = ShouldKeepCurrentTargetForSelfDefense(
+                        EntityWrapper(Svc.Targets.Target)
+                    )
+                    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())
+                        and not keepSelfDefenseTarget
+                    then
                         ClearTarget()
                     else
                         MoveToTargetHitbox()
@@ -8637,7 +8654,12 @@ function DoFate()
                 end
             elseif meleeOrTank then
                 if Svc.Targets.Target ~= nil and not Svc.Condition[CharacterCondition.casting] then
-                    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
+                    local keepSelfDefenseTarget = ShouldKeepCurrentTargetForSelfDefense(
+                        EntityWrapper(Svc.Targets.Target)
+                    )
+                    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())
+                        and not keepSelfDefenseTarget
+                    then
                         ClearTarget()
                     else
                         MoveToTargetHitbox()
