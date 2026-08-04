@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.33
+version: 3.1.34
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.34   修正: PTメンバーのターゲットおよび戦闘中オブジェクトの
+                検証を強化し、自分を攻撃していない敵/NPCを除外。
     -> 3.1.33   修正: FATE終了後のWaitForContinuation中に外敵との戦闘が
                 継続すると、戦闘復旧へ遷移せず停止する問題を修正。
     -> 3.1.32   修正: FATE外の敵を反撃対象として保持したまま移動を止め、
@@ -1987,7 +1989,10 @@ function SetObjectTarget(obj)
         return Svc.Targets.Target
     end)
     if setOk and target ~= nil then
-        return true
+        if IsHostileObjectSafe(target) then
+            return true
+        end
+        pcall(function() Svc.Targets.Target = nil end)
     end
 
     -- Direct object assignment can be ignored by some Lua/.NET bridge versions.
@@ -1996,7 +2001,10 @@ function SetObjectTarget(obj)
     if nameOk and name ~= nil and tostring(name) ~= "" then
         SafeYield("/target " .. tostring(name))
         local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
-        return targetOk and currentTarget ~= nil
+        if targetOk and currentTarget ~= nil and IsHostileObjectSafe(currentTarget) then
+            return true
+        end
+        pcall(function() Svc.Targets.Target = nil end)
     end
     return false
 end
@@ -2431,8 +2439,10 @@ function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallba
     if PrioritizePartyMemberTargets == true and GetPartyPlayActive() then
         local partyTargets = GetPartyMemberTargetObjects()
         for _, ptTarget in ipairs(partyTargets) do
-            if ptTarget ~= nil and not ptTarget.IsDead then
-                local validFate = true
+            if ptTarget ~= nil and ptTarget.IsTargetable and not ptTarget.IsDead
+                and IsHostileObjectSafe(ptTarget)
+            then
+                local validFate = fateIdFilter == 0
                 if fateIdFilter ~= 0 then
                     local wrappedOk, wrapped = pcall(function() return EntityWrapper(ptTarget) end)
                     if wrappedOk and wrapped ~= nil then
@@ -4497,6 +4507,36 @@ function SafeYield(command)
     return ok
 end
 
+function IsObjectTargetingLocalPlayer(obj)
+    if obj == nil or Svc == nil or Svc.ClientState == nil then
+        return false
+    end
+    local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
+    if not playerOk or player == nil then
+        return false
+    end
+    local targetOk, target = pcall(function() return obj.TargetObject end)
+    if not targetOk or target == nil then
+        return false
+    end
+    if target == player then
+        return true
+    end
+
+    local targetEntityOk, targetEntityId = pcall(function() return target.EntityId end)
+    local playerEntityOk, playerEntityId = pcall(function() return player.EntityId end)
+    if targetEntityOk and playerEntityOk and targetEntityId ~= nil and playerEntityId ~= nil
+        and targetEntityId ~= 0 and targetEntityId == playerEntityId
+    then
+        return true
+    end
+
+    local targetObjectOk, targetObjectId = pcall(function() return target.GameObjectId end)
+    local playerObjectOk, playerObjectId = pcall(function() return player.GameObjectId end)
+    return targetObjectOk and playerObjectOk and targetObjectId ~= nil and playerObjectId ~= nil
+        and targetObjectId ~= 0 and targetObjectId == playerObjectId
+end
+
 function MoveBackToCurrentFate()
     if CurrentFate == nil or CurrentFate.position == nil
         or CurrentFate.fateObject == nil
@@ -4523,7 +4563,10 @@ function FallbackBattleTargetOrReturnToFate()
         MoveBackToCurrentFate()
         return false
     end
-    return SafeYield("/battletarget")
+    -- Never use the generic /battletarget fallback: it can select a non-enemy
+    -- object or an enemy unrelated to the active FATE. Use the same guarded
+    -- Combatant-only scan as the normal target acquisition path.
+    return TargetNearestAttackingEnemy()
 end
 
 function TargetNearestAttackingEnemy()
@@ -4538,15 +4581,15 @@ function TargetNearestAttackingEnemy()
     for i = 0, maxIndex do
         local objOk, obj = pcall(function() return Svc.Objects[i] end)
         if objOk and obj then
-            local kindOk, kind = pcall(function() return obj.ObjectKind end)
             local posOk, pos = pcall(function() return obj.Position end)
             local deadOk, isDead = pcall(function() return obj.IsDead end)
             local hpOk, hp = pcall(function() return obj.CurrentHp end)
             local targetableOk, targetable = pcall(function() return obj.IsTargetable end)
             local hostile = IsHostileObjectSafe(obj)
             local engaged = false
-            if kindOk and posOk and deadOk and hpOk and targetableOk
-                and kind == 2 and targetable and hostile and not isDead and hp > 0
+            if posOk and deadOk and hpOk and targetableOk
+                and targetable and hostile and not isDead and hp > 0
+                and IsObjectTargetingLocalPlayer(obj)
             then
                 local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
                 engaged = wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
@@ -4585,7 +4628,9 @@ function TargetNearestEngagedEnemy(maxDist)
                 or CurrentFate.fateObject == nil
                 or not IsFateActive(CurrentFate.fateObject)
                 or IsPositionInsideCurrentFateBounds(obj.Position, GetCurrentFateTargetClearMargin())
-            if insideCurrentFate and wrappedObj ~= nil and wrappedObj.IsInCombat == true then
+            if insideCurrentFate and IsObjectTargetingLocalPlayer(obj)
+                and wrappedObj ~= nil and wrappedObj.IsInCombat == true
+            then
                 local dist = DistanceBetweenFlat(playerPos, obj.Position)
                 if dist <= bestDist then
                     bestDist = dist
@@ -4611,6 +4656,9 @@ function ShouldKeepCurrentTargetForSelfDefense(wrappedTarget)
         return false
     end
     if wrappedTarget == nil or wrappedTarget.IsInCombat ~= true then
+        return false
+    end
+    if not IsObjectTargetingLocalPlayer(Svc.Targets.Target) then
         return false
     end
     if CurrentFate ~= nil and CurrentFate.fateObject ~= nil
@@ -8126,6 +8174,7 @@ function DoFate()
             and (os.clock() - ActivePullLastAttemptAt) < 1.5
         local hasValidPullTarget = Svc.Targets.Target ~= nil
             and not Svc.Targets.Target.IsDead
+            and IsHostileObjectSafe(Svc.Targets.Target)
             and IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())
 
         if not IsForlornTargetName(currentTargetName) and not (pullCooldownActive and hasValidPullTarget) then
@@ -8164,17 +8213,25 @@ function DoFate()
 
     -- clears target
     if Svc.Targets.Target ~= nil then
-        local wrappedTarget = EntityWrapper(Svc.Targets.Target)
-        -- Never clear forlorn targets here: TryTargetForlorn re-targets them
-        -- every frame, so clearing caused an acquire/clear thrash that stopped
-        -- all attacks (e.g. when the forlorn belongs to a nearby other FATE).
-        if wrappedTarget ~= nil and (wrappedTarget.FateId ~= CurrentFate.fateId
-                or not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()))
-            and not IsForlornTargetName(GetTargetName()) then
-            -- Self-defense: keep engaged hostiles that are fighting us (e.g.
-            -- FATE adds with FateId 0) instead of dropping them mid-combat.
-            if not ShouldKeepCurrentTargetForSelfDefense(wrappedTarget) then
-                ClearTarget()
+        local normalCombatFate = not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate
+        if normalCombatFate and not IsForlornTargetName(GetTargetName())
+            and not IsHostileObjectSafe(Svc.Targets.Target)
+        then
+            ClearTarget()
+        end
+        if Svc.Targets.Target ~= nil then
+            local wrappedTarget = EntityWrapper(Svc.Targets.Target)
+            -- Never clear forlorn targets here: TryTargetForlorn re-targets them
+            -- every frame, so clearing caused an acquire/clear thrash that stopped
+            -- all attacks (e.g. when the forlorn belongs to a nearby other FATE).
+            if wrappedTarget ~= nil and (wrappedTarget.FateId ~= CurrentFate.fateId
+                    or not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()))
+                and not IsForlornTargetName(GetTargetName()) then
+                -- Self-defense: keep engaged hostiles that are fighting us (e.g.
+                -- FATE adds with FateId 0) instead of dropping them mid-combat.
+                if not ShouldKeepCurrentTargetForSelfDefense(wrappedTarget) then
+                    ClearTarget()
+                end
             end
         end
     end
@@ -8187,6 +8244,7 @@ function DoFate()
             -- doesn't fight the forlorn-priority targeting.
             local forlornTarget = IsForlornTargetName(GetTargetName())
             hasValidTarget = wrappedTarget ~= nil
+                and (forlornTarget or IsHostileObjectSafe(Svc.Targets.Target))
                 and (wrappedTarget.FateId == CurrentFate.fateId or forlornTarget)
                 and (forlornTarget or IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()))
         end
