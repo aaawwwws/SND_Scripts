@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.27
+version: 3.1.28
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.28   修正: 敵のSubKind判定がPet(2)になっており、通常のFATE敵
+                （Combatant=5）を全て攻撃対象から除外していた問題を修正。
     -> 3.1.27   修正: obj:IsHostile()（ECommons拡張）が解放済みオブジェクトの
                 生struct（GetNamePlateColorType）を参照してゲームごと
                 クラッシュする問題を修正（C0000005）。敵スキャンのキャッシュ
@@ -1920,7 +1922,7 @@ function IsBigForlornTargetName(targetName)
     return false
 end
 
--- Safe hostility check: BattleNpc(2) + Enemy subkind(2), using only guarded
+-- Safe hostility check: BattleNpc(2) + Combatant subkind(5), using only guarded
 -- Dalamud property reads. This replaces the ECommons obj:IsHostile()
 -- extension, which dereferences raw struct memory (GetNamePlateColorType)
 -- and HARD-CRASHES the whole game process (native C0000005) when the object
@@ -1932,7 +1934,7 @@ function IsHostileObjectSafe(obj)
         return false
     end
     local ok, result = pcall(function()
-        return obj.ObjectKind == 2 and obj.SubKind == 2
+        return obj.ObjectKind == 2 and obj.SubKind == 5
     end)
     return ok and result == true
 end
