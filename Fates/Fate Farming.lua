@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.28
+version: 3.1.29
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.29   修正: SubKindの実行時表現により敵判定が失敗する環境で、
+                ObjectKindがBattleNpcの対象を取得できない問題を修正。
     -> 3.1.28   修正: 敵のSubKind判定がPet(2)になっており、通常のFATE敵
                 （Combatant=5）を全て攻撃対象から除外していた問題を修正。
     -> 3.1.27   修正: obj:IsHostile()（ECommons拡張）が解放済みオブジェクトの
@@ -328,8 +330,8 @@ configs:
                 クラッシュする問題を修正（C0000005）。敵スキャンのキャッシュ
                 エントリを次フレームで再検証する際、敵死亡・消滅後に
                 呼び出すとネイティブAVとなりpcallでは捕捉不可。
-                IsHostileObjectSafe（ObjectKind==2 BattleNpc かつ
-                SubKind==2 Enemy、ガード付きプロパティのみ使用）に全6箇所
+                IsHostileObjectSafe（ObjectKind==2 BattleNpc、ガード付き
+                プロパティのみ使用）に全6箇所
                 （フォーローンスキャン・敵スキャン・キャッシュ再検証・
                 交戦敵ターゲット×2・パーティ標的）を置き換え。
     -> 3.1.26   修正: vnavmeshの目的地が地中になる問題の残りを修正。
@@ -1922,8 +1924,12 @@ function IsBigForlornTargetName(targetName)
     return false
 end
 
--- Safe hostility check: BattleNpc(2) + Combatant subkind(5), using only guarded
--- Dalamud property reads. This replaces the ECommons obj:IsHostile()
+-- Safe hostility check: BattleNpc(2), using only guarded Dalamud property reads.
+-- Callers additionally require targetable/alive objects, and FATE candidate
+-- selection requires a matching FateId. Do not require SubKind here: its Lua
+-- runtime representation differs between object wrappers, which can otherwise
+-- make every valid FATE enemy disappear from the candidate list. This replaces
+-- the ECommons obj:IsHostile()
 -- extension, which dereferences raw struct memory (GetNamePlateColorType)
 -- and HARD-CRASHES the whole game process (native C0000005) when the object
 -- was freed - e.g. a scan entry cached one frame and revalidated the next
@@ -1934,7 +1940,7 @@ function IsHostileObjectSafe(obj)
         return false
     end
     local ok, result = pcall(function()
-        return obj.ObjectKind == 2 and obj.SubKind == 5
+        return obj.ObjectKind == 2
     end)
     return ok and result == true
 end
