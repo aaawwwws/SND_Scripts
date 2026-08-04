@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.31
+version: 3.1.33
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,10 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.33   修正: FATE終了後のWaitForContinuation中に外敵との戦闘が
+                継続すると、戦闘復旧へ遷移せず停止する問題を修正。
+    -> 3.1.32   修正: FATE外の敵を反撃対象として保持したまま移動を止め、
+                戦闘中に停止するケースを修正。FATE中心へ戻るよう変更。
     -> 3.1.31   修正: FateIdフォールバックがチョコボ等のBattleNpcも候補に
                 含めていた問題を修正。Combatant（敵）だけを対象に限定。
     -> 3.1.30   修正: 一部環境でBattleNpcのFateIdが0として返る場合でも、
@@ -2749,11 +2753,16 @@ function MoveToTargetHitbox()
     if Svc.Targets.Target == nil then
         return
     end
-    if not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
+    local activeFate = CurrentFate ~= nil
+        and CurrentFate.fateObject ~= nil
+        and IsFateActive(CurrentFate.fateObject)
+    if activeFate and not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()) then
         -- Self-defense: stay on an engaged attacker without pathing out of
-        -- bounds; only drop targets that are not fighting us.
+        -- bounds. External attackers are dropped and the player returns to the
+        -- active FATE instead of standing still in combat.
         if not ShouldKeepCurrentTargetForSelfDefense(EntityWrapper(Svc.Targets.Target)) then
             ClearTarget()
+            MoveBackToCurrentFate()
         end
         return
     end
@@ -4488,6 +4497,35 @@ function SafeYield(command)
     return ok
 end
 
+function MoveBackToCurrentFate()
+    if CurrentFate == nil or CurrentFate.position == nil
+        or CurrentFate.fateObject == nil
+        or not IsFateActive(CurrentFate.fateObject)
+    then
+        return false
+    end
+
+    local returnPos = GetPreferredFateMovePosition(CurrentFate) or CurrentFate.position
+    if returnPos == nil or GetDistanceToPoint(returnPos) <= 8 then
+        return true
+    end
+
+    if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+        IPC.vnavmesh.PathfindAndMoveTo(returnPos, false)
+    end
+    return true
+end
+
+function FallbackBattleTargetOrReturnToFate()
+    if CurrentFate ~= nil and CurrentFate.fateObject ~= nil
+        and IsFateActive(CurrentFate.fateObject)
+    then
+        MoveBackToCurrentFate()
+        return false
+    end
+    return SafeYield("/battletarget")
+end
+
 function TargetNearestAttackingEnemy()
     local playerOk, player = pcall(function() return Svc.ClientState.LocalPlayer end)
     if not playerOk or player == nil then
@@ -4543,7 +4581,11 @@ function TargetNearestEngagedEnemy(maxDist)
         local obj = Svc.Objects[i]
         if obj ~= nil and obj.IsTargetable and not obj.IsDead and IsHostileObjectSafe(obj) then
             local wrappedObj = EntityWrapper(obj)
-            if wrappedObj ~= nil and wrappedObj.IsInCombat == true then
+            local insideCurrentFate = CurrentFate == nil
+                or CurrentFate.fateObject == nil
+                or not IsFateActive(CurrentFate.fateObject)
+                or IsPositionInsideCurrentFateBounds(obj.Position, GetCurrentFateTargetClearMargin())
+            if insideCurrentFate and wrappedObj ~= nil and wrappedObj.IsInCombat == true then
                 local dist = DistanceBetweenFlat(playerPos, obj.Position)
                 if dist <= bestDist then
                     bestDist = dist
@@ -4569,6 +4611,12 @@ function ShouldKeepCurrentTargetForSelfDefense(wrappedTarget)
         return false
     end
     if wrappedTarget == nil or wrappedTarget.IsInCombat ~= true then
+        return false
+    end
+    if CurrentFate ~= nil and CurrentFate.fateObject ~= nil
+        and IsFateActive(CurrentFate.fateObject)
+        and not IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())
+    then
         return false
     end
     return GetDistanceToTargetFlat() <= (SelfDefenseKeepTargetRadius or 30)
@@ -5608,6 +5656,15 @@ function WaitForContinuation()
     if CurrentFate == nil or CurrentFate.fateObject == nil then
         Dalamud.Log("[FATE] WaitForContinuation: CurrentFate missing, returning to Ready.")
         State = CharacterState.ready
+        return
+    end
+
+    -- A FATE can end while an unrelated overworld enemy is still attacking.
+    -- Do not wait for a continuation with combat mods disabled; hand control to
+    -- the unexpected-combat recovery path so the attacker is handled first.
+    if Svc.Condition[CharacterCondition.inCombat] then
+        State = CharacterState.unexpectedCombat
+        Dalamud.Log("[FATE] WaitForContinuation interrupted by combat; handling unexpected enemy.")
         return
     end
 
@@ -7488,7 +7545,7 @@ function HandleUnexpectedCombat()
     if Svc.Targets.Target == nil then
         Dalamud.Log("[FATE] UnexpectedCombat: no target, attempting acquisition")
         if not TargetNearestAttackingEnemy() then
-            SafeYield("/battletarget")
+            FallbackBattleTargetOrReturnToFate()
             yield("/wait 0.3")
         end
     end
@@ -7792,7 +7849,7 @@ function DoFate()
                 ClearTarget()
                 local acquired = AttemptToTargetClosestFateEnemy(true, reacquireRadius, true)
                 if not acquired then
-                    SafeYield("/battletarget")
+                    FallbackBattleTargetOrReturnToFate()
                 end
                 NoCombatRecoveryStage = 1
                 NoCombatRecoveryLastActionAt = now
@@ -8101,7 +8158,7 @@ function DoFate()
             gotTarget = AttemptToTargetClosestFateEnemy(true, farPullRadius, true)
         end
         if not gotTarget then
-            SafeYield("/battletarget")
+            FallbackBattleTargetOrReturnToFate()
         end
     end
 
@@ -8174,12 +8231,13 @@ function DoFate()
                     end
                 end
                 if not gotFallbackTarget then
-                    SafeYield("/battletarget")
+                    FallbackBattleTargetOrReturnToFate()
                 end
             end
 
             if Svc.Targets.Target == nil
                 and noTargetElapsed >= (TargetAcquireStopNavSeconds or 2.4)
+                and not Svc.Condition[CharacterCondition.inCombat]
                 and (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning())
             then
                 SafeYield("/vnav stop")
@@ -8263,7 +8321,7 @@ function DoFate()
                     retargeted = AttemptToTargetClosestFateEnemy(false, pullRadius, true)
                 end
                 if not retargeted then
-                    SafeYield("/battletarget")
+                    FallbackBattleTargetOrReturnToFate()
                 end
                 CombatOpenTargetSignature = nil
                 CombatOpenTargetSince = now
@@ -8344,7 +8402,7 @@ function DoFate()
                     ClearTarget()
                     local reacquired = AttemptToTargetClosestFateEnemy(true, retargetRadius, true)
                     if not reacquired then
-                        SafeYield("/battletarget")
+                        FallbackBattleTargetOrReturnToFate()
                     end
                     MeleeEngageStartAt = now
                     MeleeEngageNextRetargetAt = now + 2
@@ -8365,7 +8423,7 @@ function DoFate()
                     ClearTarget()
                     local reacquired = AttemptToTargetClosestFateEnemy(true, retargetRadius, true)
                     if not reacquired then
-                        SafeYield("/battletarget")
+                        FallbackBattleTargetOrReturnToFate()
                     end
                     MeleeEngageStartAt = now
                     MeleeEngageNextRetargetAt = now + 3
@@ -8460,7 +8518,7 @@ function DoFate()
                 gotTarget = AttemptToTargetClosestFateEnemy(true, acquisitionRadius, true)
             end
             if not gotTarget then
-                SafeYield("/battletarget")
+                FallbackBattleTargetOrReturnToFate()
             end
             yield("/wait " .. targetStickWait) -- short wait in case target doesnt stick
             if (Svc.Targets.Target == nil) and not Svc.Condition[CharacterCondition.casting] then
@@ -8485,7 +8543,7 @@ function DoFate()
                 gotNearTarget = AttemptToTargetClosestFateEnemy(true, leashSafeRadius, true)
             end
             if not gotNearTarget then
-                SafeYield("/battletarget")
+                FallbackBattleTargetOrReturnToFate()
             end
             return
         end
