@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.29
+version: 3.1.30
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.30   修正: 一部環境でBattleNpcのFateIdが0として返る場合でも、
+                現在のFATE範囲内にいる生存・対象可能な敵を取得するよう修正。
     -> 3.1.29   修正: SubKindの実行時表現により敵判定が失敗する環境で、
                 ObjectKindがBattleNpcの対象を取得できない問題を修正。
     -> 3.1.28   修正: 敵のSubKind判定がPet(2)になっており、通常のFATE敵
@@ -1940,9 +1942,45 @@ function IsHostileObjectSafe(obj)
         return false
     end
     local ok, result = pcall(function()
-        return obj.ObjectKind == 2
+        local kind = obj.ObjectKind
+        if kind == 2 or tonumber(kind) == 2 then
+            return true
+        end
+        local kindText = tostring(kind)
+        return kindText == "2"
+            or kindText == "BattleNpc"
+            or string.find(kindText, "BattleNpc", 1, true) ~= nil
     end)
     return ok and result == true
+end
+
+function SetObjectTarget(obj)
+    if obj == nil then
+        return false
+    end
+
+    local setOk, target = pcall(function()
+        local wrapped = EntityWrapper(obj)
+        if wrapped ~= nil then
+            wrapped:SetAsTarget()
+        else
+            Svc.Targets.Target = obj
+        end
+        return Svc.Targets.Target
+    end)
+    if setOk and target ~= nil then
+        return true
+    end
+
+    -- Direct object assignment can be ignored by some Lua/.NET bridge versions.
+    -- Fall back to the normal target command when the target did not stick.
+    local nameOk, name = pcall(function() return obj.Name:GetText() end)
+    if nameOk and name ~= nil and tostring(name) ~= "" then
+        SafeYield("/target " .. tostring(name))
+        local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
+        return targetOk and currentTarget ~= nil
+    end
+    return false
 end
 
 function TryTargetForlorn()
@@ -1987,7 +2025,7 @@ function TryTargetForlorn()
     end
 
     if bestObj ~= nil then
-        Svc.Targets.Target = bestObj
+        SetObjectTarget(bestObj)
     end
 end
 
@@ -2290,6 +2328,37 @@ function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance, ig
         end
     end
 
+    -- Some client/object-wrapper combinations expose a FATE enemy's FateId as
+    -- zero even while it is visibly inside the active FATE. Use the current
+    -- FATE boundary as a conservative fallback rather than returning no target.
+    if #candidates == 0 and ignoreFateRadiusFilter and fateIdFilter ~= 0
+        and CurrentFate ~= nil
+    then
+        for _, entry in ipairs(scanEntries) do
+            local obj = entry.obj
+            local wrappedObj = entry.wrappedObj
+            local objFateId = tonumber(wrappedObj.FateId) or 0
+            local currentHp = tonumber(obj.CurrentHp) or 0
+            local maxHp = tonumber(obj.MaxHp) or 0
+            if objFateId == 0 and currentHp > 0 and maxHp > 0 then
+                local dist = DistanceBetween(playerPos, obj.Position)
+                local isUnengaged = not wrappedObj.IsInCombat
+                local passesCombatFilter = (onlyUnengaged ~= true) or isUnengaged
+                local passesDistanceFilter = (maxDistance == nil) or (dist <= maxDistance)
+                local passesFateBounds = IsPositionInsideCurrentFateBounds(
+                    obj.Position,
+                    GetCurrentFateEngageBoundaryBuffer()
+                )
+                if passesCombatFilter and passesDistanceFilter and passesFateBounds then
+                    table.insert(candidates, {
+                        obj = obj,
+                        dist = dist
+                    })
+                end
+            end
+        end
+    end
+
     return candidates, playerPos
 end
 
@@ -2362,8 +2431,9 @@ function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallba
                 local withinFateBounds = IsPositionInsideCurrentFateBounds(ptTarget.Position,
                     GetCurrentFateTargetClearMargin())
                 if validFate and validDist and withinFateBounds then
-                    Svc.Targets.Target = ptTarget
-                    return true
+                    if SetObjectTarget(ptTarget) then
+                        return true
+                    end
                 end
             end
         end
@@ -2397,18 +2467,15 @@ function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallba
     local minClusterEnemies = DensePullMinimumEnemies or 1
 
     if not useDensePulls or #candidates == 1 then
-        Svc.Targets.Target = closestTarget
-        return true
+        return SetObjectTarget(closestTarget)
     end
 
     local bestTarget, bestClusterSize = GetBestDenseCluster(candidates, clusterRadius)
 
     if bestTarget ~= nil and bestClusterSize >= minClusterEnemies then
-        Svc.Targets.Target = bestTarget
-        return true
+        return SetObjectTarget(bestTarget)
     elseif closestTarget ~= nil then
-        Svc.Targets.Target = closestTarget
-        return true
+        return SetObjectTarget(closestTarget)
     end
 
     return false
@@ -2467,8 +2534,7 @@ function AttemptToTargetLowestHpFateEnemy(maxDistance)
         return false
     end
 
-    Svc.Targets.Target = bestTarget
-    return true
+    return SetObjectTarget(bestTarget)
 end
 
 function GetDenseFateClusterCenter(fateIdFilter, clusterRadius, minClusterEnemies)
@@ -4443,10 +4509,7 @@ function TargetNearestAttackingEnemy()
         end
     end
     if bestObj ~= nil then
-        local setOk = pcall(function() Svc.Targets.Target = bestObj end)
-        if setOk then
-            return true
-        end
+        return SetObjectTarget(bestObj)
     end
     return false
 end
@@ -4476,8 +4539,7 @@ function TargetNearestEngagedEnemy(maxDist)
         end
     end
     if bestObj ~= nil then
-        Svc.Targets.Target = bestObj
-        return true
+        return SetObjectTarget(bestObj)
     end
     return false
 end
@@ -6830,7 +6892,7 @@ function TryActivePullNearbyEnemies(now)
     for i = 1, pullCount do
         local targetObj = validCandidates[i].obj
         if targetObj ~= nil and not targetObj.IsDead and targetObj.IsTargetable then
-            Svc.Targets.Target = targetObj
+            SetObjectTarget(targetObj)
             yield("/wait 0.2")
             -- Cycle through available pull actions so ranged gap-closers are
             -- used first, then fall back to melee basic attacks for nearby targets.
@@ -6849,7 +6911,7 @@ function TryActivePullNearbyEnemies(now)
     -- Restore the original target so BMR/RSR don't chase a pulled mob away from
     -- the pack. The pulled enemies have aggro and will follow the player.
     if currentTarget ~= nil and not currentTarget.IsDead then
-        Svc.Targets.Target = currentTarget
+        SetObjectTarget(currentTarget)
     end
 
     return pulledAny
