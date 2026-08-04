@@ -273,6 +273,11 @@ configs:
   Teleport to next zone if no FATEs?:
     description: 対象FATEが無くなったら、次の黄金エリアへ順番に移動します。
     default: true
+  Farming expansion:
+    description: 周回する拡張を限定します。Autoは従来通り黄金エリアを選択します。
+    default: "Auto"
+    is_choice: true
+    choices: ["Auto", "Shadowbringers", "Endwalker", "Dawntrail"]
   Stay on current map only?:
     description: 他マップへは移動せず、現在マップのみで周回します（インスタンス移動は発生する場合があります）。
     default: false
@@ -350,6 +355,9 @@ configs:
                 enableChangeInstance/zoneInstance/successiveChanges/
                 fastPacing/autoZoneSwitch等を出力し、発動しない場合の
                 原因を特定可能にした。
+    -> 3.1.24   追加: Farming expansion設定で漆黒・暁月・黄金のいずれか
+                一つの拡張エリアだけを周回可能にした。対象外エリアから開始
+                した場合は、選択拡張内のアチューン済みマップへ移動する。
     -> 3.1.23   修正: インスタンス変更が正常に機能しない問題を修正。
                 /li N 発行後1秒で確認なしにReadyへ戻っていたため、
                 Lifestream側で拒否された場合（busy・ShowInstanceSwitcher
@@ -805,6 +813,15 @@ DismountFlyingSince = nil
 DismountRepositionUntil = nil
 DismountRepositionAttempts = 0
 DismountNoLandingWarnedAt = nil
+
+-- NIN/ROGの戦闘開始アクションは、/acのローカライズ名解決を避けて
+-- SNDのネイティブアクション実行を使う。
+CombatOpenNativeActionIds = {
+    ["Throwing Dagger"] = 2247,
+    ["投刃"] = 2247,
+    ["Spinning Edge"] = 2240,
+    ["双刃旋"] = 2240
+}
 
 --[[
 ********************************************************************************
@@ -3641,11 +3658,44 @@ local function GetPreferredHighLevelZoneBonusWeight(zoneId)
     return 0
 end
 
+function GetFarmingExpansionName()
+    local expansion = tostring(FarmingExpansion or "Auto")
+    if expansion == "Shadowbringers" or expansion == "Endwalker" or expansion == "Dawntrail" then
+        return expansion
+    end
+    return "Auto"
+end
+
+function GetFarmingZoneOrder()
+    local expansion = GetFarmingExpansionName()
+    if expansion == "Shadowbringers" then
+        return { 813, 814, 815, 816, 817, 818 }
+    elseif expansion == "Endwalker" then
+        return { 956, 957, 958, 959, 960, 961 }
+    end
+
+    -- Auto and Dawntrail preserve the existing default order.
+    return { 1187, 1188, 1189, 1190, 1191, 1192 }
+end
+
+function IsZoneInFarmingExpansion(zoneId)
+    if GetFarmingExpansionName() == "Auto" then
+        return true
+    end
+
+    for _, allowedZoneId in ipairs(GetFarmingZoneOrder()) do
+        if allowedZoneId == zoneId then
+            return true
+        end
+    end
+    return false
+end
+
 function GetBestDawntrailZoneId(currentZoneId)
     if DynamicZoneSelectionEnabled ~= true then
         return nil
     end
-    local order = { 1187, 1188, 1189, 1190, 1191, 1192 }
+    local order = GetFarmingZoneOrder()
     local now = os.clock()
     local bestZoneId = nil
     local bestScore = -999999
@@ -3724,13 +3774,13 @@ function GetBestDawntrailZoneId(currentZoneId)
 end
 
 function GetNextDawntrailZoneId(currentZoneId)
-    local dawntrailZoneOrder = { 1187, 1188, 1189, 1190, 1191, 1192 }
-    for i, zoneId in ipairs(dawntrailZoneOrder) do
+    local farmingZoneOrder = GetFarmingZoneOrder()
+    for i, zoneId in ipairs(farmingZoneOrder) do
         if currentZoneId == zoneId then
-            return dawntrailZoneOrder[(i % #dawntrailZoneOrder) + 1]
+            return farmingZoneOrder[(i % #farmingZoneOrder) + 1]
         end
     end
-    return dawntrailZoneOrder[1]
+    return farmingZoneOrder[1]
 end
 
 function SelectNextDawntrailZone()
@@ -3759,6 +3809,63 @@ function SelectNextDawntrailZone()
     ResetDynamicAoeSwitchState()
     ResetMiddleDismountState()
     Dalamud.Log("[FATE] No eligible fates. Switching to zone: " .. (SelectedZone.zoneName or ""))
+end
+
+function EnsureFarmingExpansionZone()
+    if GetFarmingExpansionName() == "Auto"
+        or IsZoneInFarmingExpansion(Svc.ClientState.TerritoryType)
+    then
+        return false
+    end
+
+    if Svc.Condition[CharacterCondition.inCombat]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.occupied]
+    then
+        return true
+    end
+
+    local targetZone = nil
+    for _, zoneId in ipairs(GetFarmingZoneOrder()) do
+        local candidate = BuildZoneData(zoneId)
+        if candidate ~= nil and candidate.aetheryteList ~= nil and #candidate.aetheryteList > 0 then
+            targetZone = candidate
+            break
+        end
+    end
+
+    if targetZone == nil then
+        Dalamud.Log("[FATE] No attuned aetheryte found in selected expansion: " .. GetFarmingExpansionName())
+        return true
+    end
+
+    if SelectedZone == nil or SelectedZone.zoneId ~= targetZone.zoneId then
+        SelectedZone = targetZone
+        CurrentFate = nil
+        NextFate = nil
+        PrefetchedNextFateId = nil
+        PrefetchedNextFateAt = 0
+        ResetNoCombatRecoveryState()
+        ResetMeleeEngageRecoveryState()
+        ClearTarget()
+        TurnOffCombatMods("expansion selection")
+        Dalamud.Log("[FATE] Expansion restriction: selected " .. (targetZone.zoneName or ""))
+    end
+
+    local now = os.clock()
+    if now - (ExpansionRedirectLastAt or 0) < 10 then
+        return true
+    end
+
+    local firstAetheryte = targetZone.aetheryteList[1]
+    if firstAetheryte == nil or firstAetheryte.aetheryteName == nil then
+        return true
+    end
+
+    ExpansionRedirectLastAt = now
+    TeleportTo(firstAetheryte.aetheryteName)
+    return true
 end
 
 function BuildFateTable(fateObj)
@@ -4051,6 +4158,10 @@ end
 
 --Gets the Location of the next Fate. Prioritizes anything with progress above 0, then by shortest time left
 function SelectNextFate()
+    if not IsZoneInFarmingExpansion(Svc.ClientState.TerritoryType) then
+        return nil
+    end
+
     local fates = Fates.GetActiveFates()
     if fates == nil then
         return
@@ -6436,6 +6547,22 @@ function TryUseActionOnTarget(actionName)
     end
 
     local actionText = tostring(actionName)
+    local nativeActionId = CombatOpenNativeActionIds[actionText]
+    if nativeActionId ~= nil then
+        if Actions == nil or Actions.ExecuteAction == nil then
+            Dalamud.Log("[FATE] Native action execution is unavailable for " .. actionText)
+            return false
+        end
+
+        local ok, err = pcall(function()
+            Actions.ExecuteAction(nativeActionId)
+        end)
+        if not ok then
+            Dalamud.Log("[FATE] Native action failed for " .. actionText .. ": " .. tostring(err))
+        end
+        return ok
+    end
+
     local cmd = '/ac "' .. actionText .. '"'
     yield(cmd)
     return true
@@ -7193,7 +7320,11 @@ function HandleUnexpectedCombat()
 
     local nearestFate = Fates.GetNearestFate()
     local nearestProgress = nearestFate and nearestFate.Progress or nil
-    if InActiveFate() and nearestProgress ~= nil and nearestProgress < 100 then
+    if IsZoneInFarmingExpansion(Svc.ClientState.TerritoryType)
+        and InActiveFate()
+        and nearestProgress ~= nil
+        and nearestProgress < 100
+    then
         local builtFate = BuildFateTable(nearestFate)
         if CurrentFate == nil or builtFate == nil or CurrentFate.fateId ~= builtFate.fateId then
             TankStanceAcAttemptedForFate = nil
@@ -8300,6 +8431,13 @@ function Ready()
         return
     end
     if StopScript then return end --Early exit before running ready checks.
+
+    -- An explicit expansion selection takes precedence over the current map.
+    -- Redirect before selecting a local FATE so an active FATE in another
+    -- expansion cannot be farmed accidentally.
+    if EnsureFarmingExpansionZone() then
+        return
+    end
 
     -- Party Play: auto-accept teleport offers from party leader/members
     if GetPartyPlayActive() then
@@ -11023,6 +11161,7 @@ function FateFarming:Run()
     FateResultSummaryLastOpenErrorAt      = 0
     ZonePerformanceById                   = {}
     ZoneSelectionLastSwitchAt             = 0
+    ExpansionRedirectLastAt               = 0
     TeleportDecisionLastFateId            = nil
     TeleportDecisionPreferAetheryte       = false
     BonusBuffNoEligibleSince              = 0
@@ -11138,6 +11277,7 @@ function FateFarming:Run()
     -- Config settings
     EnableChangeInstance           = Config.Get("Change instances if no FATEs?")
     AutoTeleportToNextZone         = Config.Get("Teleport to next zone if no FATEs?")
+    FarmingExpansion               = Config.Get("Farming expansion")
     StayOnCurrentMapOnly           = Config.Get("Stay on current map only?")
     ShouldExchangeBicolorGemstones = Config.Get("Exchange bicolor gemstones?")
     ItemToPurchase                 = Config.Get("Exchange bicolor gemstones for")
