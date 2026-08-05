@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.37
+version: 3.1.38
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.38   修正: Combatant扱いの友好的なGuard/NPCが敵候補に入る場合が
+                あるため、EntityWrapper.IsHostileでも検証するよう修正。
     -> 3.1.37   修正: ターゲット設定直後の反映前に検証して解除していたため、
                 攻撃者が選択されても実ターゲットにならない問題を修正。
     -> 3.1.36   修正: EntityWrapperのTarget情報を使って攻撃者を検出し、
@@ -1980,6 +1982,17 @@ function IsHostileObjectSafe(obj)
     return ok and result == true
 end
 
+function IsActuallyHostileObjectSafe(obj, wrappedObj)
+    if not IsHostileObjectSafe(obj) then
+        return false
+    end
+    local ok, result = pcall(function()
+        local wrapped = wrappedObj or EntityWrapper(obj)
+        return wrapped ~= nil and wrapped.IsHostile == true
+    end)
+    return ok and result == true
+end
+
 function SetObjectTarget(obj)
     if obj == nil then
         return false
@@ -1997,7 +2010,7 @@ function SetObjectTarget(obj)
         yield("/wait 0.1")
         local targetOk, target = pcall(function() return Svc.Targets.Target end)
         if targetOk and target ~= nil then
-            if IsHostileObjectSafe(target) then
+            if IsActuallyHostileObjectSafe(target) then
                 return true
             end
             pcall(function() Svc.Targets.Target = nil end)
@@ -2011,7 +2024,7 @@ function SetObjectTarget(obj)
         SafeYield("/target " .. tostring(name))
         yield("/wait 0.1")
         local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
-        if targetOk and currentTarget ~= nil and IsHostileObjectSafe(currentTarget) then
+        if targetOk and currentTarget ~= nil and IsActuallyHostileObjectSafe(currentTarget) then
             return true
         end
         pcall(function() Svc.Targets.Target = nil end)
@@ -2047,7 +2060,7 @@ function TryTargetForlorn()
     local maxIndex = math.min(Svc.Objects.Length - 1, 400)
     for i = 0, maxIndex do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and IsHostileObjectSafe(obj) and not obj.IsDead then
+        if obj ~= nil and obj.IsTargetable and IsActuallyHostileObjectSafe(obj) and not obj.IsDead then
             local name = obj.Name:GetText()
             if IsForlornTargetName(name)
                 and (not IgnoreBigForlornOnly or not IsBigForlornTargetName(name)) then
@@ -2302,12 +2315,13 @@ function GetFateEnemyScanEntries(playerPos)
     local entries = {}
     for i = 0, Svc.Objects.Length - 1 do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and IsHostileObjectSafe(obj) and not obj.IsDead then
+        if obj ~= nil and obj.IsTargetable and not obj.IsDead then
             local wrappedObj = EntityWrapper(obj)
-            if wrappedObj ~= nil then
+            if wrappedObj ~= nil and IsActuallyHostileObjectSafe(obj, wrappedObj) then
                 entries[#entries + 1] = {
                     obj = obj,
-                    wrappedObj = wrappedObj
+                    wrappedObj = wrappedObj,
+                    isHostile = true
                 }
             end
         end
@@ -2329,10 +2343,11 @@ function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance, ig
     local scanEntries = GetFateEnemyScanEntries(playerPos)
     for _, entry in ipairs(scanEntries) do
         local obj = entry.obj
-        if obj ~= nil and obj.IsTargetable and IsHostileObjectSafe(obj) and not obj.IsDead then
+        if obj ~= nil and obj.IsTargetable and not obj.IsDead then
             local wrappedObj = entry.wrappedObj
             local objFateId = tonumber(wrappedObj.FateId) or 0
-            if objFateId > 0 and (fateIdFilter == 0 or objFateId == fateIdFilter) then
+            local isHostile = entry.isHostile == true
+            if isHostile and objFateId > 0 and (fateIdFilter == 0 or objFateId == fateIdFilter) then
                 local dist = DistanceBetween(playerPos, obj.Position)
                 local isUnengaged = not wrappedObj.IsInCombat
                 local passesCombatFilter = (onlyUnengaged ~= true) or isUnengaged
@@ -2450,7 +2465,7 @@ function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallba
         local partyTargets = GetPartyMemberTargetObjects()
         for _, ptTarget in ipairs(partyTargets) do
             if ptTarget ~= nil and ptTarget.IsTargetable and not ptTarget.IsDead
-                and IsHostileObjectSafe(ptTarget)
+                and IsActuallyHostileObjectSafe(ptTarget)
             then
                 local validFate = fateIdFilter == 0
                 if fateIdFilter ~= 0 then
@@ -4619,7 +4634,7 @@ function TargetNearestAttackingEnemy()
             local deadOk, isDead = pcall(function() return obj.IsDead end)
             local hpOk, hp = pcall(function() return obj.CurrentHp end)
             local targetableOk, targetable = pcall(function() return obj.IsTargetable end)
-            local hostile = IsHostileObjectSafe(obj)
+            local hostile = IsActuallyHostileObjectSafe(obj)
             local engaged = false
             if posOk and deadOk and hpOk and targetableOk
                 and targetable and hostile and not isDead and hp > 0
@@ -4662,8 +4677,11 @@ function TargetNearestEngagedEnemy(maxDist)
     local bestDist = range
     for i = 0, Svc.Objects.Length - 1 do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and not obj.IsDead and IsHostileObjectSafe(obj) then
+        if obj ~= nil and obj.IsTargetable and not obj.IsDead then
             local wrappedObj = EntityWrapper(obj)
+            if wrappedObj == nil or not IsActuallyHostileObjectSafe(obj, wrappedObj) then
+                wrappedObj = nil
+            end
             local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
             local combatFallback = Svc.Condition[CharacterCondition.inCombat]
                 and wrappedObj ~= nil and wrappedObj.IsInCombat == true
@@ -8217,7 +8235,7 @@ function DoFate()
             and (os.clock() - ActivePullLastAttemptAt) < 1.5
         local hasValidPullTarget = Svc.Targets.Target ~= nil
             and not Svc.Targets.Target.IsDead
-            and IsHostileObjectSafe(Svc.Targets.Target)
+            and IsActuallyHostileObjectSafe(Svc.Targets.Target)
             and IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())
 
         if not IsForlornTargetName(currentTargetName) and not (pullCooldownActive and hasValidPullTarget) then
@@ -8258,7 +8276,7 @@ function DoFate()
     if Svc.Targets.Target ~= nil then
         local normalCombatFate = not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate
         if normalCombatFate and not IsForlornTargetName(GetTargetName())
-            and not IsHostileObjectSafe(Svc.Targets.Target)
+            and not IsActuallyHostileObjectSafe(Svc.Targets.Target)
         then
             ClearTarget()
         end
@@ -8287,7 +8305,7 @@ function DoFate()
             -- doesn't fight the forlorn-priority targeting.
             local forlornTarget = IsForlornTargetName(GetTargetName())
             hasValidTarget = wrappedTarget ~= nil
-                and (forlornTarget or IsHostileObjectSafe(Svc.Targets.Target))
+                and (forlornTarget or IsActuallyHostileObjectSafe(Svc.Targets.Target))
                 and (wrappedTarget.FateId == CurrentFate.fateId or forlornTarget)
                 and (forlornTarget or IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()))
         end
@@ -10535,7 +10553,7 @@ function GetPartyMemberTargetObjects()
                 local textOk, text = pcall(function() return name:GetText() end)
                 if textOk and text ~= nil and nameSet[text] then
                     local targetOk, target = pcall(function() return obj.TargetObject end)
-                    if targetOk and target ~= nil and IsHostileObjectSafe(target) and not target.IsDead then
+                    if targetOk and target ~= nil and IsActuallyHostileObjectSafe(target) and not target.IsDead then
                         table.insert(targets, target)
                     end
                 end
