@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.40
+version: 3.1.41
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.41   追加: ターゲット設定失敗または戦闘開始不能と判定した対象を
+                セッション中のブラックリストへ登録し、再ターゲットを防止。
     -> 3.1.40   修正: 敵をターゲット設定した直後にHostile再検証で解除され、
                 選択だけされて実ターゲットにならない場合がある問題を修正。
     -> 3.1.39   修正: 戦闘中にNPC用の直接ターゲット命令が実行される場合でも、
@@ -833,10 +835,11 @@ ClusterMoveCachedPosition = nil
 
 -- 敵オブジェクト走査の短時間キャッシュ。1フレーム内に同じ一覧を
 -- 複数のターゲット選択処理が使うため、全オブジェクト走査を共有する。
-EnemyScanCacheLastAt = 0
-EnemyScanCachePlayerPos = nil
-EnemyScanCacheEntries = nil
-EnemyScanCacheIntervalSeconds = 0.15
+    EnemyScanCacheLastAt = 0
+    EnemyScanCachePlayerPos = nil
+    EnemyScanCacheEntries = nil
+    EnemyScanCacheIntervalSeconds = 0.15
+UnusableTargetBlacklist = nil
 
 -- FATE座標の床スナップキャッシュ（地中目的地の防止用）
 FateGroundPosCacheFateId = nil
@@ -2032,8 +2035,63 @@ function IsSameGameObject(first, second)
     return false
 end
 
+function GetUnusableTargetKey(obj)
+    if obj == nil then
+        return nil
+    end
+
+    local entityOk, entityId = pcall(function() return obj.EntityId end)
+    if entityOk and entityId ~= nil and tostring(entityId) ~= "0" then
+        return "entity:" .. tostring(entityId)
+    end
+
+    local objectOk, objectId = pcall(function() return obj.GameObjectId end)
+    if objectOk and objectId ~= nil and tostring(objectId) ~= "0" then
+        return "object:" .. tostring(objectId)
+    end
+
+    local addressOk, address = pcall(function() return obj.Address end)
+    if addressOk and address ~= nil and tostring(address) ~= "0" then
+        return "address:" .. tostring(address)
+    end
+
+    local nameOk, name = pcall(function() return obj.Name:GetText() end)
+    local posOk, pos = pcall(function() return obj.Position end)
+    if nameOk and posOk and name ~= nil and pos ~= nil then
+        return string.format("name:%s:%d:%d", tostring(name), math.floor(pos.X), math.floor(pos.Z))
+    end
+    return nil
+end
+
+function IsUnusableTarget(obj)
+    local key = GetUnusableTargetKey(obj)
+    return key ~= nil and UnusableTargetBlacklist ~= nil and UnusableTargetBlacklist[key] ~= nil
+end
+
+function BlacklistUnusableTarget(obj, reason)
+    local key = GetUnusableTargetKey(obj)
+    if key == nil then
+        return
+    end
+    if UnusableTargetBlacklist == nil then
+        UnusableTargetBlacklist = {}
+    end
+    if UnusableTargetBlacklist[key] == nil then
+        UnusableTargetBlacklist[key] = {
+            reason = tostring(reason or "unknown"),
+            at = os.clock()
+        }
+        local nameOk, name = pcall(function() return obj.Name:GetText() end)
+        Dalamud.Log("[FATE] Blacklisted unusable target: " ..
+            tostring(nameOk and name or key) .. " (" .. tostring(reason or "unknown") .. ")")
+    end
+end
+
 function SetObjectTarget(obj)
     if obj == nil then
+        return false
+    end
+    if IsUnusableTarget(obj) then
         return false
     end
 
@@ -2067,6 +2125,7 @@ function SetObjectTarget(obj)
         end
         pcall(function() Svc.Targets.Target = nil end)
     end
+    BlacklistUnusableTarget(obj, "target assignment failed")
     return false
 end
 
@@ -2107,7 +2166,10 @@ function TryTargetForlorn()
     local maxIndex = math.min(Svc.Objects.Length - 1, 400)
     for i = 0, maxIndex do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and IsActuallyHostileObjectSafe(obj) and not obj.IsDead then
+        if obj ~= nil and obj.IsTargetable and not obj.IsDead
+            and not IsUnusableTarget(obj)
+            and IsActuallyHostileObjectSafe(obj)
+        then
             local name = obj.Name:GetText()
             if IsForlornTargetName(name)
                 and (not IgnoreBigForlornOnly or not IsBigForlornTargetName(name)) then
@@ -2362,7 +2424,7 @@ function GetFateEnemyScanEntries(playerPos)
     local entries = {}
     for i = 0, Svc.Objects.Length - 1 do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and not obj.IsDead then
+        if obj ~= nil and obj.IsTargetable and not obj.IsDead and not IsUnusableTarget(obj) then
             local wrappedObj = EntityWrapper(obj)
             if wrappedObj ~= nil and IsActuallyHostileObjectSafe(obj, wrappedObj) then
                 entries[#entries + 1] = {
@@ -2390,7 +2452,7 @@ function CollectFateEnemyCandidates(fateIdFilter, onlyUnengaged, maxDistance, ig
     local scanEntries = GetFateEnemyScanEntries(playerPos)
     for _, entry in ipairs(scanEntries) do
         local obj = entry.obj
-        if obj ~= nil and obj.IsTargetable and not obj.IsDead then
+        if obj ~= nil and obj.IsTargetable and not obj.IsDead and not IsUnusableTarget(obj) then
             local wrappedObj = entry.wrappedObj
             local objFateId = tonumber(wrappedObj.FateId) or 0
             local isHostile = entry.isHostile == true
@@ -2512,6 +2574,7 @@ function AttemptToTargetClosestFateEnemy(onlyUnengaged, maxDistance, allowFallba
         local partyTargets = GetPartyMemberTargetObjects()
         for _, ptTarget in ipairs(partyTargets) do
             if ptTarget ~= nil and ptTarget.IsTargetable and not ptTarget.IsDead
+                and not IsUnusableTarget(ptTarget)
                 and IsActuallyHostileObjectSafe(ptTarget)
             then
                 local validFate = fateIdFilter == 0
@@ -4684,6 +4747,7 @@ function TargetNearestAttackingEnemy()
             local hostile = IsActuallyHostileObjectSafe(obj)
             local engaged = false
             if posOk and deadOk and hpOk and targetableOk
+                and not IsUnusableTarget(obj)
                 and targetable and hostile and not isDead and hp > 0
             then
                 local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
@@ -4724,7 +4788,7 @@ function TargetNearestEngagedEnemy(maxDist)
     local bestDist = range
     for i = 0, Svc.Objects.Length - 1 do
         local obj = Svc.Objects[i]
-        if obj ~= nil and obj.IsTargetable and not obj.IsDead then
+        if obj ~= nil and obj.IsTargetable and not obj.IsDead and not IsUnusableTarget(obj) then
             local wrappedObj = EntityWrapper(obj)
             if wrappedObj == nil or not IsActuallyHostileObjectSafe(obj, wrappedObj) then
                 wrappedObj = nil
@@ -8484,6 +8548,7 @@ function DoFate()
 
             local retargetAfter = CombatOpenRetargetSeconds or 2.2
             if now - (CombatOpenTargetSince or now) >= retargetAfter then
+                BlacklistUnusableTarget(Svc.Targets.Target, "no combat after opener")
                 local pullRadius = math.max(
                     (DynamicAoeCheckRadius or 30) + 10,
                     (ClusterMoveRadius or 40),
@@ -11411,6 +11476,7 @@ function FateFarming:Run()
     EnemyScanCacheLastAt                  = 0
     EnemyScanCachePlayerPos               = nil
     EnemyScanCacheEntries                  = nil
+    UnusableTargetBlacklist               = {}
     FateGroundPosCacheFateId              = nil
     FateGroundPosCacheRaw                 = nil
     FateGroundPosCacheSnapped             = nil
@@ -12088,6 +12154,7 @@ function FateFarming:Run()
                     and Svc.Targets.Target ~= nil
                     and not IsActuallyHostileObjectSafe(Svc.Targets.Target)
                 then
+                    BlacklistUnusableTarget(Svc.Targets.Target, "non-hostile target during combat")
                     ClearTarget()
                     if not (Svc.Condition[CharacterCondition.mounted]
                         or Svc.Condition[CharacterCondition.flying])
