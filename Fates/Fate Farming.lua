@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.43
+version: 3.1.44
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.44   修正: 現在マップ限定設定がゾーン選択・拡張補正・テレポート
+                復旧・初期テレポートの一部経路を通過していた問題を修正。
     -> 3.1.43   修正: FATE終了後にNPCターゲットが残っていると攻撃者スキャンを
                 実行しない分岐があり、外敵へ反撃できない問題を修正。
     -> 3.1.42   追加: 攻撃不能と判定した対象の表示名をセッション中記憶し、
@@ -4098,6 +4100,17 @@ function GetNextDawntrailZoneId(currentZoneId)
 end
 
 function SelectNextDawntrailZone()
+    if StayOnCurrentMapOnly == true then
+        local currentZoneId = Svc.ClientState.TerritoryType
+        SelectedZone = BuildZoneData(currentZoneId)
+        CurrentFate = nil
+        NextFate = nil
+        PrefetchedNextFateId = nil
+        PrefetchedNextFateAt = 0
+        FatePrefetchLastAttemptAt = 0
+        Dalamud.Log("[FATE] StayOnCurrentMapOnly: keeping current zone " .. tostring(currentZoneId))
+        return
+    end
     local currentZoneId = Svc.ClientState.TerritoryType
     RecordZoneNoEligibleFates(currentZoneId)
     local nextZoneId = GetNextDawntrailZoneId(currentZoneId)
@@ -4126,6 +4139,16 @@ function SelectNextDawntrailZone()
 end
 
 function EnsureFarmingExpansionZone()
+    if StayOnCurrentMapOnly == true then
+        local currentZoneId = Svc.ClientState.TerritoryType
+        if SelectedZone == nil or SelectedZone.zoneId ~= currentZoneId then
+            SelectedZone = BuildZoneData(currentZoneId)
+            CurrentFate = nil
+            NextFate = nil
+            Dalamud.Log("[FATE] StayOnCurrentMapOnly: ignoring expansion redirect and using current zone.")
+        end
+        return false
+    end
     if GetFarmingExpansionName() == "Auto"
         or IsZoneInFarmingExpansion(Svc.ClientState.TerritoryType)
     then
@@ -6179,7 +6202,9 @@ function InitialSetup()
     end
 
     -- 2. Teleport to configured starting zone.
-    if InitialSetupTeleportZone ~= nil and InitialSetupTeleportZone ~= "" and not InitialSetupTeleportDone then
+    if InitialSetupTeleportZone ~= nil and InitialSetupTeleportZone ~= ""
+        and not InitialSetupTeleportDone and StayOnCurrentMapOnly ~= true
+    then
         if InitialSetupTeleportStartAt == nil then
             InitialSetupTeleportStartAt = os.clock()
             InitialSetupLastTerritoryType = Svc.ClientState.TerritoryType
@@ -11752,10 +11777,10 @@ function FateFarming:Run()
     ShouldExtractMateria           = true --should it Extract Materia
 
     -- Config settings
-    EnableChangeInstance           = Config.Get("Change instances if no FATEs?")
-    AutoTeleportToNextZone         = Config.Get("Teleport to next zone if no FATEs?")
+    EnableChangeInstance           = ParseBool(Config.Get("Change instances if no FATEs?"), false)
+    AutoTeleportToNextZone         = ParseBool(Config.Get("Teleport to next zone if no FATEs?"), true)
     FarmingExpansion               = Config.Get("Farming expansion")
-    StayOnCurrentMapOnly           = Config.Get("Stay on current map only?")
+    StayOnCurrentMapOnly           = ParseBool(Config.Get("Stay on current map only?"), false)
     ShouldExchangeBicolorGemstones = Config.Get("Exchange bicolor gemstones?")
     ItemToPurchase                 = Config.Get("Exchange bicolor gemstones for")
     if ItemToPurchase == "None" then
