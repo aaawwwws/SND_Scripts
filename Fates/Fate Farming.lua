@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.42
+version: 3.1.43
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.43   修正: FATE終了後にNPCターゲットが残っていると攻撃者スキャンを
+                実行しない分岐があり、外敵へ反撃できない問題を修正。
     -> 3.1.42   追加: 攻撃不能と判定した対象の表示名をセッション中記憶し、
                 同名の対象を全ターゲット経路から除外。
     -> 3.1.41   追加: ターゲット設定失敗または戦闘開始不能と判定した対象を
@@ -7756,6 +7758,18 @@ function HandleUnexpectedCombat()
 
     TurnOnCombatMods("manual")
     yield("/wait 0.3")
+
+    -- A FATE/NPC interaction can leave a non-hostile target selected when the
+    -- state changes into unexpected combat. Remove it before looking for the
+    -- actual attacker; otherwise the acquisition branch below is skipped.
+    if Svc.Condition[CharacterCondition.inCombat]
+        and Svc.Targets.Target ~= nil
+        and (IsUnusableTarget(Svc.Targets.Target)
+            or not IsActuallyHostileObjectSafe(Svc.Targets.Target))
+    then
+        BlacklistUnusableTarget(Svc.Targets.Target, "non-hostile target on combat recovery")
+        ClearTarget()
+    end
 
     local nearestFate = Fates.GetNearestFate()
     local nearestProgress = nearestFate and nearestFate.Progress or nil
