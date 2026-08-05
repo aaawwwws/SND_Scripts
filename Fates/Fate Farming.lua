@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.47
+version: 3.1.48
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.48   修正: Lua/.NETブリッジでID比較が一致しない環境において、
+                正しい敵までターゲット設定失敗として除外していた問題を修正。
     -> 3.1.47   修正: FATE進行中でも無戦闘タイムアウトからゾーン選択へ進み、
                 未完了FATEを離れてテレポートする場合がある問題を修正。
     -> 3.1.46   改善: 通常FATE候補スキャンから高コストかつ環境差のある
@@ -2169,6 +2171,7 @@ function SetObjectTarget(obj)
         return false
     end
 
+    local previousTarget = Svc.Targets.Target
     local setOk = pcall(function()
         local wrapped = EntityWrapper(obj)
         if wrapped ~= nil then
@@ -2180,9 +2183,16 @@ function SetObjectTarget(obj)
     if setOk then
         yield("/wait 0.1")
         local targetOk, target = pcall(function() return Svc.Targets.Target end)
-        if targetOk and target ~= nil and IsSameGameObject(target, obj) then
-            return true
-        elseif targetOk and target ~= nil then
+        if targetOk and target ~= nil then
+            if IsSameGameObject(target, obj) then
+                return true
+            end
+            local sameName = GetTargetObjectName(target) ~= nil
+                and GetTargetObjectName(target) == GetTargetObjectName(obj)
+            local changedFromEmpty = previousTarget == nil and IsHostileObjectSafe(target)
+            if sameName or changedFromEmpty then
+                return true
+            end
             pcall(function() Svc.Targets.Target = nil end)
         end
     end
@@ -2194,8 +2204,15 @@ function SetObjectTarget(obj)
         SafeYield("/target " .. tostring(name))
         yield("/wait 0.1")
         local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
-        if targetOk and currentTarget ~= nil and IsSameGameObject(currentTarget, obj) then
-            return true
+        if targetOk and currentTarget ~= nil then
+            if IsSameGameObject(currentTarget, obj) then
+                return true
+            end
+            local sameName = GetTargetObjectName(currentTarget) ~= nil
+                and GetTargetObjectName(currentTarget) == GetTargetObjectName(obj)
+            if sameName or (previousTarget == nil and IsHostileObjectSafe(currentTarget)) then
+                return true
+            end
         end
         pcall(function() Svc.Targets.Target = nil end)
     end
