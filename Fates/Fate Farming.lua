@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.46
+version: 3.1.47
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.47   修正: FATE進行中でも無戦闘タイムアウトからゾーン選択へ進み、
+                未完了FATEを離れてテレポートする場合がある問題を修正。
     -> 3.1.46   改善: 通常FATE候補スキャンから高コストかつ環境差のある
                 EntityWrapper.IsHostile判定を外し、FateId絞り込みを優先。
     -> 3.1.45   改善: 攻撃不能対象のブラックリストが空の場合、毎回の敵走査で
@@ -3844,6 +3846,16 @@ function IsFateActive(fate)
     end
 end
 
+function IsCurrentFateIncomplete()
+    if CurrentFate == nil or CurrentFate.fateObject == nil
+        or not IsFateActive(CurrentFate.fateObject)
+    then
+        return false
+    end
+    local progress = GetFateProgressValue(CurrentFate, nil)
+    return progress == nil or progress < 100
+end
+
 function InActiveFate()
     local activeFates = Fates.GetActiveFates()
     for i = 0, activeFates.Count - 1 do
@@ -4130,6 +4142,10 @@ function GetNextDawntrailZoneId(currentZoneId)
 end
 
 function SelectNextDawntrailZone()
+    if IsCurrentFateIncomplete() then
+        Dalamud.Log("[FATE] Active incomplete FATE: refusing zone switch.")
+        return
+    end
     if StayOnCurrentMapOnly == true then
         local currentZoneId = Svc.ClientState.TerritoryType
         SelectedZone = BuildZoneData(currentZoneId)
@@ -4169,6 +4185,9 @@ function SelectNextDawntrailZone()
 end
 
 function EnsureFarmingExpansionZone()
+    if IsCurrentFateIncomplete() then
+        return false
+    end
     if StayOnCurrentMapOnly == true then
         local currentZoneId = Svc.ClientState.TerritoryType
         if SelectedZone == nil or SelectedZone.zoneId ~= currentZoneId then
@@ -4890,12 +4909,14 @@ function TargetNearestEngagedEnemy(maxDist)
             local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
             local combatFallback = Svc.Condition[CharacterCondition.inCombat]
                 and wrappedObj ~= nil and wrappedObj.IsInCombat == true
-            local insideCurrentFate = CurrentFate == nil
-                or CurrentFate.fateObject == nil
-                or not IsFateActive(CurrentFate.fateObject)
-                or IsPositionInsideCurrentFateBounds(obj.Position, GetCurrentFateTargetClearMargin())
-            if (insideCurrentFate or targetingPlayer or combatFallback)
-                and (targetingPlayer or combatFallback)
+            local activeFate = CurrentFate ~= nil and CurrentFate.fateObject ~= nil
+                and IsFateActive(CurrentFate.fateObject)
+            local currentFateTarget = activeFate and wrappedObj ~= nil
+                and tonumber(wrappedObj.FateId) == tonumber(CurrentFate.fateId)
+            local allowedCombatFallback = combatFallback and (not activeFate or currentFateTarget)
+            local allowedTarget = targetingPlayer or allowedCombatFallback
+            if allowedTarget
+                and (not activeFate or currentFateTarget or targetingPlayer)
                 and wrappedObj ~= nil and wrappedObj.IsInCombat == true
             then
                 local dist = DistanceBetweenFlat(playerPos, obj.Position)
@@ -4930,7 +4951,15 @@ function ShouldKeepCurrentTargetForSelfDefense(wrappedTarget)
     end
     local combatFallback = wrappedTarget.IsInCombat == true
         and Svc.Condition[CharacterCondition.inCombat]
-    if not IsObjectTargetingLocalPlayer(Svc.Targets.Target) and not combatFallback then
+    local targetingPlayer = IsObjectTargetingLocalPlayer(Svc.Targets.Target)
+    local activeFate = CurrentFate ~= nil and CurrentFate.fateObject ~= nil
+        and IsFateActive(CurrentFate.fateObject)
+    local currentFateTarget = activeFate
+        and tonumber(wrappedTarget.FateId) == tonumber(CurrentFate.fateId)
+    if not targetingPlayer and not combatFallback then
+        return false
+    end
+    if activeFate and not currentFateTarget and not targetingPlayer then
         return false
     end
     return GetDistanceToTargetFlat() <= (SelfDefenseKeepTargetRadius or 30)
@@ -8089,6 +8118,12 @@ function DoFate()
         local syncLooksBlocked = (LevelSyncHardCooldownUntil or 0) > now or (LevelSyncFailureCount or 0) >= 3
         local earlySkipWait = UnresponsiveLevelSyncEarlySkipSeconds or 16
         if inSyncRange and syncLooksBlocked and levelSyncWaitElapsed >= earlySkipWait then
+            if IsCurrentFateIncomplete() then
+                Dalamud.Log("[FATE] Active incomplete FATE: refusing level-sync early skip.")
+                ResetNoCombatRecoveryState()
+                State = CharacterState.doFate
+                return
+            end
             local msg = string.format(
                 "[FATE] Early skip: level sync remained unavailable on fate #%s (%s) for %.1fs.",
                 tostring(CurrentFate.fateId or 0),
@@ -8208,6 +8243,12 @@ function DoFate()
             local earlySkipAt = math.max(10, NoCombatTeleportTimeout * (UnresponsiveSkipRatio or 0.65))
             local noTargetTooLong = noTargetElapsed >= (UnresponsiveNoTargetSkipSeconds or 10)
             if NoCombatRecoveryStage >= 2 and elapsed >= earlySkipAt and noTargetTooLong then
+                if IsCurrentFateIncomplete() then
+                    Dalamud.Log("[FATE] Active incomplete FATE: refusing no-target zone skip.")
+                    ResetNoCombatRecoveryState()
+                    State = CharacterState.doFate
+                    return
+                end
                 local msg = string.format(
                     "[FATE] Early skip: no valid target for %.1fs after staged recovery on fate #%s (%s).",
                     noTargetElapsed,
@@ -8234,6 +8275,12 @@ function DoFate()
             end
 
             if elapsed >= NoCombatTeleportTimeout then
+                if IsCurrentFateIncomplete() then
+                    Dalamud.Log("[FATE] Active incomplete FATE: refusing no-combat zone skip.")
+                    ResetNoCombatRecoveryState()
+                    State = CharacterState.doFate
+                    return
+                end
                 local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
                 local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
                 local timeoutMsg = string.format(
@@ -8966,6 +9013,15 @@ function Ready()
     -- Redirect before selecting a local FATE so an active FATE in another
     -- expansion cannot be farmed accidentally.
     if EnsureFarmingExpansionZone() then
+        return
+    end
+
+    if IsCurrentFateIncomplete() then
+        if SelectedZone == nil or SelectedZone.zoneId ~= Svc.ClientState.TerritoryType then
+            SelectedZone = BuildZoneData(Svc.ClientState.TerritoryType)
+        end
+        State = CharacterState.doFate
+        Dalamud.Log("[FATE] Active incomplete FATE: resuming DoFate instead of teleporting.")
         return
     end
 
