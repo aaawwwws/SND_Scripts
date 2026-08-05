@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.36
+version: 3.1.37
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.37   修正: ターゲット設定直後の反映前に検証して解除していたため、
+                攻撃者が選択されても実ターゲットにならない問題を修正。
     -> 3.1.36   修正: EntityWrapperのTarget情報を使って攻撃者を検出し、
                 IGameObject.TargetObjectが取得できない環境でも徒歩中に反撃。
     -> 3.1.35   変更: 騎乗中・飛行中を除き、自分を攻撃しているCombatantは
@@ -1983,20 +1985,23 @@ function SetObjectTarget(obj)
         return false
     end
 
-    local setOk, target = pcall(function()
+    local setOk = pcall(function()
         local wrapped = EntityWrapper(obj)
         if wrapped ~= nil then
             wrapped:SetAsTarget()
         else
             Svc.Targets.Target = obj
         end
-        return Svc.Targets.Target
     end)
-    if setOk and target ~= nil then
-        if IsHostileObjectSafe(target) then
-            return true
+    if setOk then
+        yield("/wait 0.1")
+        local targetOk, target = pcall(function() return Svc.Targets.Target end)
+        if targetOk and target ~= nil then
+            if IsHostileObjectSafe(target) then
+                return true
+            end
+            pcall(function() Svc.Targets.Target = nil end)
         end
-        pcall(function() Svc.Targets.Target = nil end)
     end
 
     -- Direct object assignment can be ignored by some Lua/.NET bridge versions.
@@ -2004,6 +2009,7 @@ function SetObjectTarget(obj)
     local nameOk, name = pcall(function() return obj.Name:GetText() end)
     if nameOk and name ~= nil and tostring(name) ~= "" then
         SafeYield("/target " .. tostring(name))
+        yield("/wait 0.1")
         local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
         if targetOk and currentTarget ~= nil and IsHostileObjectSafe(currentTarget) then
             return true
