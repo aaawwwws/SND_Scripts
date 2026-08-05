@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.45
+version: 3.1.46
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.46   改善: 通常FATE候補スキャンから高コストかつ環境差のある
+                EntityWrapper.IsHostile判定を外し、FateId絞り込みを優先。
     -> 3.1.45   改善: 攻撃不能対象のブラックリストが空の場合、毎回の敵走査で
                 名前・IDを取得しないようにして処理負荷を削減。
     -> 3.1.44   修正: 現在マップ限定設定がゾーン選択・拡張補正・テレポート
@@ -2010,6 +2012,27 @@ function IsActuallyHostileObjectSafe(obj, wrappedObj)
     return ok and result == true
 end
 
+function IsAllowedCombatTarget(obj)
+    if not IsHostileObjectSafe(obj) then
+        return false
+    end
+
+    -- Normal FATE enemies are already identified by their current FateId. Avoid
+    -- the expensive/unstable native hostility lookup on this hot path.
+    if CurrentFate ~= nil
+        and not CurrentFate.isCollectionsFate
+        and not CurrentFate.isOtherNpcFate
+    then
+        local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
+        if wrappedOk and wrappedObj ~= nil
+            and tonumber(wrappedObj.FateId) == tonumber(CurrentFate.fateId)
+        then
+            return true
+        end
+    end
+    return IsActuallyHostileObjectSafe(obj)
+end
+
 function IsSameGameObject(first, second)
     if first == nil or second == nil then
         return false
@@ -2476,7 +2499,7 @@ function GetFateEnemyScanEntries(playerPos)
         local obj = Svc.Objects[i]
         if obj ~= nil and obj.IsTargetable and not obj.IsDead and not IsUnusableTarget(obj) then
             local wrappedObj = EntityWrapper(obj)
-            if wrappedObj ~= nil and IsActuallyHostileObjectSafe(obj, wrappedObj) then
+            if wrappedObj ~= nil and IsHostileObjectSafe(obj) then
                 entries[#entries + 1] = {
                     obj = obj,
                     wrappedObj = wrappedObj,
@@ -8439,7 +8462,7 @@ function DoFate()
             and (os.clock() - ActivePullLastAttemptAt) < 1.5
         local hasValidPullTarget = Svc.Targets.Target ~= nil
             and not Svc.Targets.Target.IsDead
-            and IsActuallyHostileObjectSafe(Svc.Targets.Target)
+            and IsAllowedCombatTarget(Svc.Targets.Target)
             and IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin())
 
         if not IsForlornTargetName(currentTargetName) and not (pullCooldownActive and hasValidPullTarget) then
@@ -8480,7 +8503,7 @@ function DoFate()
     if Svc.Targets.Target ~= nil then
         local normalCombatFate = not CurrentFate.isCollectionsFate and not CurrentFate.isOtherNpcFate
         if normalCombatFate and not IsForlornTargetName(GetTargetName())
-            and not IsActuallyHostileObjectSafe(Svc.Targets.Target)
+            and not IsAllowedCombatTarget(Svc.Targets.Target)
         then
             ClearTarget()
         end
@@ -8509,7 +8532,7 @@ function DoFate()
             -- doesn't fight the forlorn-priority targeting.
             local forlornTarget = IsForlornTargetName(GetTargetName())
             hasValidTarget = wrappedTarget ~= nil
-                and (forlornTarget or IsActuallyHostileObjectSafe(Svc.Targets.Target))
+                and (forlornTarget or IsAllowedCombatTarget(Svc.Targets.Target))
                 and (wrappedTarget.FateId == CurrentFate.fateId or forlornTarget)
                 and (forlornTarget or IsCurrentTargetInsideCurrentFateBounds(GetCurrentFateTargetClearMargin()))
         end
@@ -12239,7 +12262,7 @@ function FateFarming:Run()
                 -- non-hostile target and restore the attacker target instead.
                 if Svc.Condition[CharacterCondition.inCombat]
                     and Svc.Targets.Target ~= nil
-                    and not IsActuallyHostileObjectSafe(Svc.Targets.Target)
+                    and not IsAllowedCombatTarget(Svc.Targets.Target)
                 then
                     BlacklistUnusableTarget(Svc.Targets.Target, "non-hostile target during combat")
                     ClearTarget()
