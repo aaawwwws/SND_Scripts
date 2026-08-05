@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.35
+version: 3.1.36
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.36   修正: EntityWrapperのTarget情報を使って攻撃者を検出し、
+                IGameObject.TargetObjectが取得できない環境でも徒歩中に反撃。
     -> 3.1.35   変更: 騎乗中・飛行中を除き、自分を攻撃しているCombatantは
                 FATE外でも自衛対象にする。騎乗中は移動を優先。
     -> 3.1.34   修正: PTメンバーのターゲットおよび戦闘中オブジェクトの
@@ -4518,25 +4520,40 @@ function IsObjectTargetingLocalPlayer(obj)
         return false
     end
     local targetOk, target = pcall(function() return obj.TargetObject end)
-    if not targetOk or target == nil then
-        return false
-    end
-    if target == player then
-        return true
+    if targetOk and target ~= nil then
+        if target == player then
+            return true
+        end
+
+        local targetEntityOk, targetEntityId = pcall(function() return target.EntityId end)
+        local playerEntityOk, playerEntityId = pcall(function() return player.EntityId end)
+        if targetEntityOk and playerEntityOk and targetEntityId ~= nil and playerEntityId ~= nil
+            and targetEntityId ~= 0 and targetEntityId == playerEntityId
+        then
+            return true
+        end
+
+        local targetObjectOk, targetObjectId = pcall(function() return target.GameObjectId end)
+        local playerObjectOk, playerObjectId = pcall(function() return player.GameObjectId end)
+        if targetObjectOk and playerObjectOk and targetObjectId ~= nil and playerObjectId ~= nil
+            and targetObjectId ~= 0 and targetObjectId == playerObjectId
+        then
+            return true
+        end
     end
 
-    local targetEntityOk, targetEntityId = pcall(function() return target.EntityId end)
-    local playerEntityOk, playerEntityId = pcall(function() return player.EntityId end)
-    if targetEntityOk and playerEntityOk and targetEntityId ~= nil and playerEntityId ~= nil
-        and targetEntityId ~= 0 and targetEntityId == playerEntityId
-    then
-        return true
+    -- Some SND/Dalamud object references do not expose TargetObject IDs even
+    -- though the EntityWrapper can resolve the target. Player names are unique
+    -- within the active world, so use the resolved wrapper name as a fallback.
+    local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
+    if wrappedOk and wrappedObj ~= nil and wrappedObj.Target ~= nil then
+        local targetName = tostring(wrappedObj.Target.Name or "")
+        local playerNameOk, playerName = pcall(function() return player.Name:GetText() end)
+        if playerNameOk and targetName ~= "" and targetName == tostring(playerName) then
+            return true
+        end
     end
-
-    local targetObjectOk, targetObjectId = pcall(function() return target.GameObjectId end)
-    local playerObjectOk, playerObjectId = pcall(function() return player.GameObjectId end)
-    return targetObjectOk and playerObjectOk and targetObjectId ~= nil and playerObjectId ~= nil
-        and targetObjectId ~= 0 and targetObjectId == playerObjectId
+    return false
 end
 
 function MoveBackToCurrentFate()
@@ -4600,10 +4617,13 @@ function TargetNearestAttackingEnemy()
             local engaged = false
             if posOk and deadOk and hpOk and targetableOk
                 and targetable and hostile and not isDead and hp > 0
-                and IsObjectTargetingLocalPlayer(obj)
             then
                 local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
+                local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
+                local combatFallback = Svc.Condition[CharacterCondition.inCombat]
+                    and wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                 engaged = wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
+                    and (targetingPlayer or combatFallback)
             end
             if engaged then
                 local dist = DistanceBetweenFlat(playerPos, pos)
@@ -4639,11 +4659,14 @@ function TargetNearestEngagedEnemy(maxDist)
         if obj ~= nil and obj.IsTargetable and not obj.IsDead and IsHostileObjectSafe(obj) then
             local wrappedObj = EntityWrapper(obj)
             local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
+            local combatFallback = Svc.Condition[CharacterCondition.inCombat]
+                and wrappedObj ~= nil and wrappedObj.IsInCombat == true
             local insideCurrentFate = CurrentFate == nil
                 or CurrentFate.fateObject == nil
                 or not IsFateActive(CurrentFate.fateObject)
                 or IsPositionInsideCurrentFateBounds(obj.Position, GetCurrentFateTargetClearMargin())
-            if (insideCurrentFate or targetingPlayer) and targetingPlayer
+            if (insideCurrentFate or targetingPlayer or combatFallback)
+                and (targetingPlayer or combatFallback)
                 and wrappedObj ~= nil and wrappedObj.IsInCombat == true
             then
                 local dist = DistanceBetweenFlat(playerPos, obj.Position)
@@ -4676,7 +4699,9 @@ function ShouldKeepCurrentTargetForSelfDefense(wrappedTarget)
     if wrappedTarget == nil or wrappedTarget.IsInCombat ~= true then
         return false
     end
-    if not IsObjectTargetingLocalPlayer(Svc.Targets.Target) then
+    local combatFallback = wrappedTarget.IsInCombat == true
+        and Svc.Condition[CharacterCondition.inCombat]
+    if not IsObjectTargetingLocalPlayer(Svc.Targets.Target) and not combatFallback then
         return false
     end
     return GetDistanceToTargetFlat() <= (SelfDefenseKeepTargetRadius or 30)
