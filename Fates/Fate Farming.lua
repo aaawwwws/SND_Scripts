@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.52
+version: 3.1.53
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.53   修正: Limsa Lominsa Lower DecksをLifestreamが解決できない環境で、
+                リムサ・ロミンサへテレポートできない問題を修正。
     -> 3.1.52   修正: FATE終了後の残敵スキャンでHostile判定に失敗すると、
                 攻撃者候補を全て除外して反撃できない問題を修正。
     -> 3.1.51   修正: FATE完了時に戦闘中のターゲットを先に解除していたため、
@@ -5426,7 +5428,7 @@ local function BuildTeleportNameCandidates(name)
     addCandidate(original:gsub(" ", ""))
     addCandidate(original:gsub("　", ""))
     local aliasGroups = {
-        { "Limsa Lominsa Lower Decks", "リムサ・ロミンサ下甲板層", "リムサロミンサ下甲板層" },
+        { "Limsa Lominsa Lower Decks", "Limsa Lominsa", "リムサ・ロミンサ下甲板層", "リムサロミンサ下甲板層", "リムサ・ロミンサ", "リムサロミンサ" },
         { "Old Sharlayan", "オールド・シャーレアン", "オールドシャーレアン" },
         { "Solution Nine", "ソリューション・ナイン", "ソリューションナイン" },
         { "Tuliyollal", "トライヨラ" },
