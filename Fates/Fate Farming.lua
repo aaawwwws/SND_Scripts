@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.41
+version: 3.1.42
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.42   追加: 攻撃不能と判定した対象の表示名をセッション中記憶し、
+                同名の対象を全ターゲット経路から除外。
     -> 3.1.41   追加: ターゲット設定失敗または戦闘開始不能と判定した対象を
                 セッション中のブラックリストへ登録し、再ターゲットを防止。
     -> 3.1.40   修正: 敵をターゲット設定した直後にHostile再検証で解除され、
@@ -840,6 +842,7 @@ ClusterMoveCachedPosition = nil
     EnemyScanCacheEntries = nil
     EnemyScanCacheIntervalSeconds = 0.15
 UnusableTargetBlacklist = nil
+UnusableTargetNameBlacklist = nil
 
 -- FATE座標の床スナップキャッシュ（地中目的地の防止用）
 FateGroundPosCacheFateId = nil
@@ -2063,7 +2066,33 @@ function GetUnusableTargetKey(obj)
     return nil
 end
 
+function GetTargetObjectName(obj)
+    if obj == nil then
+        return nil
+    end
+    local textOk, text = pcall(function() return obj.Name:GetText() end)
+    if textOk and text ~= nil and tostring(text) ~= "" then
+        return tostring(text)
+    end
+    local nameOk, name = pcall(function() return obj.Name end)
+    if nameOk and name ~= nil and tostring(name) ~= "" then
+        return tostring(name)
+    end
+    return nil
+end
+
+function IsUnusableTargetName(name)
+    local normalized = name ~= nil and tostring(name) or ""
+    return normalized ~= ""
+        and UnusableTargetNameBlacklist ~= nil
+        and UnusableTargetNameBlacklist[normalized] ~= nil
+end
+
 function IsUnusableTarget(obj)
+    local name = GetTargetObjectName(obj)
+    if IsUnusableTargetName(name) then
+        return true
+    end
     local key = GetUnusableTargetKey(obj)
     return key ~= nil and UnusableTargetBlacklist ~= nil and UnusableTargetBlacklist[key] ~= nil
 end
@@ -2076,14 +2105,23 @@ function BlacklistUnusableTarget(obj, reason)
     if UnusableTargetBlacklist == nil then
         UnusableTargetBlacklist = {}
     end
+    if UnusableTargetNameBlacklist == nil then
+        UnusableTargetNameBlacklist = {}
+    end
     if UnusableTargetBlacklist[key] == nil then
+        local name = GetTargetObjectName(obj)
         UnusableTargetBlacklist[key] = {
             reason = tostring(reason or "unknown"),
             at = os.clock()
         }
-        local nameOk, name = pcall(function() return obj.Name:GetText() end)
+        if name ~= nil and name ~= "" then
+            UnusableTargetNameBlacklist[name] = {
+                reason = tostring(reason or "unknown"),
+                at = os.clock()
+            }
+        end
         Dalamud.Log("[FATE] Blacklisted unusable target: " ..
-            tostring(nameOk and name or key) .. " (" .. tostring(reason or "unknown") .. ")")
+            tostring(name or key) .. " (" .. tostring(reason or "unknown") .. ")")
     end
 end
 
@@ -2131,6 +2169,7 @@ end
 
 function TargetNpcIfSafe(npcName)
     if npcName == nil or tostring(npcName) == ""
+        or IsUnusableTargetName(npcName)
         or Svc.Condition[CharacterCondition.inCombat]
     then
         return false
@@ -11477,6 +11516,7 @@ function FateFarming:Run()
     EnemyScanCachePlayerPos               = nil
     EnemyScanCacheEntries                  = nil
     UnusableTargetBlacklist               = {}
+    UnusableTargetNameBlacklist            = {}
     FateGroundPosCacheFateId              = nil
     FateGroundPosCacheRaw                 = nil
     FateGroundPosCacheSnapped             = nil
