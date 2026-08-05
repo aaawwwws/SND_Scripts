@@ -12110,11 +12110,7 @@ function FateFarming:Run()
                                     "[FATE] No-movement timeout triggered in zone: %s",
                                     tostring(timeoutZoneName)
                                 )
-                                local currentFateStillInProgress = false
-                                if CurrentFate ~= nil and IsFateActive(CurrentFate.fateObject) then
-                                    local currentProgress = GetFateProgressValue(CurrentFate, nil)
-                                    currentFateStillInProgress = currentProgress ~= nil and currentProgress < 100
-                                end
+                                local currentFateStillInProgress = IsCurrentFateIncomplete()
                                 Dalamud.Log(timeoutMsg)
                                 SendDiscordMessage(timeoutMsg)
                                 if currentFateStillInProgress then
@@ -12187,6 +12183,12 @@ function FateFarming:Run()
                     if NoCombatStartTime == nil then
                         NoCombatStartTime = os.clock()
                     elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
+                        if IsCurrentFateIncomplete() then
+                            Dalamud.Log("[FATE] Active incomplete FATE: refusing global no-combat zone skip.")
+                            ResetNoCombatRecoveryState()
+                            State = CharacterState.doFate
+                            return
+                        end
                         local shouldPreserveBonusBuff = ShouldPreserveBonusBuffForZoneSwitch(true)
                         local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
                         local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
