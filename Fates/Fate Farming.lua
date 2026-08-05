@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.44
+version: 3.1.45
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.45   改善: 攻撃不能対象のブラックリストが空の場合、毎回の敵走査で
+                名前・IDを取得しないようにして処理負荷を削減。
     -> 3.1.44   修正: 現在マップ限定設定がゾーン選択・拡張補正・テレポート
                 復旧・初期テレポートの一部経路を通過していた問題を修正。
     -> 3.1.43   修正: FATE終了後にNPCターゲットが残っていると攻撃者スキャンを
@@ -847,6 +849,7 @@ ClusterMoveCachedPosition = nil
     EnemyScanCacheIntervalSeconds = 0.15
 UnusableTargetBlacklist = nil
 UnusableTargetNameBlacklist = nil
+UnusableTargetBlacklistActive = false
 
 -- FATE座標の床スナップキャッシュ（地中目的地の防止用）
 FateGroundPosCacheFateId = nil
@@ -2093,6 +2096,9 @@ function IsUnusableTargetName(name)
 end
 
 function IsUnusableTarget(obj)
+    if UnusableTargetBlacklistActive ~= true then
+        return false
+    end
     local name = GetTargetObjectName(obj)
     if IsUnusableTargetName(name) then
         return true
@@ -2112,6 +2118,7 @@ function BlacklistUnusableTarget(obj, reason)
     if UnusableTargetNameBlacklist == nil then
         UnusableTargetNameBlacklist = {}
     end
+    UnusableTargetBlacklistActive = true
     if UnusableTargetBlacklist[key] == nil then
         local name = GetTargetObjectName(obj)
         UnusableTargetBlacklist[key] = {
@@ -11556,6 +11563,7 @@ function FateFarming:Run()
     EnemyScanCacheEntries                  = nil
     UnusableTargetBlacklist               = {}
     UnusableTargetNameBlacklist            = {}
+    UnusableTargetBlacklistActive         = false
     FateGroundPosCacheFateId              = nil
     FateGroundPosCacheRaw                 = nil
     FateGroundPosCacheSnapped             = nil
