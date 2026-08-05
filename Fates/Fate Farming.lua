@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.39
+version: 3.1.40
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.40   修正: 敵をターゲット設定した直後にHostile再検証で解除され、
+                選択だけされて実ターゲットにならない場合がある問題を修正。
     -> 3.1.39   修正: 戦闘中にNPC用の直接ターゲット命令が実行される場合でも、
                 NPCを解除して攻撃中のCombatantへ戻す安全処理を追加。
     -> 3.1.38   修正: Combatant扱いの友好的なGuard/NPCが敵候補に入る場合が
@@ -1995,6 +1997,41 @@ function IsActuallyHostileObjectSafe(obj, wrappedObj)
     return ok and result == true
 end
 
+function IsSameGameObject(first, second)
+    if first == nil or second == nil then
+        return false
+    end
+    if first == second then
+        return true
+    end
+
+    local firstAddressOk, firstAddress = pcall(function() return first.Address end)
+    local secondAddressOk, secondAddress = pcall(function() return second.Address end)
+    if firstAddressOk and secondAddressOk and firstAddress ~= nil and secondAddress ~= nil
+        and tostring(firstAddress) ~= "0" and tostring(firstAddress) == tostring(secondAddress)
+    then
+        return true
+    end
+
+    local firstEntityOk, firstEntityId = pcall(function() return first.EntityId end)
+    local secondEntityOk, secondEntityId = pcall(function() return second.EntityId end)
+    if firstEntityOk and secondEntityOk and firstEntityId ~= nil and secondEntityId ~= nil
+        and tostring(firstEntityId) ~= "0" and tostring(firstEntityId) == tostring(secondEntityId)
+    then
+        return true
+    end
+
+    local firstObjectOk, firstObjectId = pcall(function() return first.GameObjectId end)
+    local secondObjectOk, secondObjectId = pcall(function() return second.GameObjectId end)
+    if firstObjectOk and secondObjectOk and firstObjectId ~= nil and secondObjectId ~= nil
+        and tostring(firstObjectId) ~= "0" and tostring(firstObjectId) == tostring(secondObjectId)
+    then
+        return true
+    end
+
+    return false
+end
+
 function SetObjectTarget(obj)
     if obj == nil then
         return false
@@ -2011,10 +2048,9 @@ function SetObjectTarget(obj)
     if setOk then
         yield("/wait 0.1")
         local targetOk, target = pcall(function() return Svc.Targets.Target end)
-        if targetOk and target ~= nil then
-            if IsActuallyHostileObjectSafe(target) then
-                return true
-            end
+        if targetOk and target ~= nil and IsSameGameObject(target, obj) then
+            return true
+        elseif targetOk and target ~= nil then
             pcall(function() Svc.Targets.Target = nil end)
         end
     end
@@ -2026,7 +2062,7 @@ function SetObjectTarget(obj)
         SafeYield("/target " .. tostring(name))
         yield("/wait 0.1")
         local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
-        if targetOk and currentTarget ~= nil and IsActuallyHostileObjectSafe(currentTarget) then
+        if targetOk and currentTarget ~= nil and IsSameGameObject(currentTarget, obj) then
             return true
         end
         pcall(function() Svc.Targets.Target = nil end)
