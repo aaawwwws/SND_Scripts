@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.51
+version: 3.1.52
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.52   修正: FATE終了後の残敵スキャンでHostile判定に失敗すると、
+                攻撃者候補を全て除外して反撃できない問題を修正。
     -> 3.1.51   修正: FATE完了時に戦闘中のターゲットを先に解除していたため、
                 漆黒・暁月で残った敵へ反撃できない問題を修正。
     -> 3.1.50   追加: カンマ区切りで複数の周回マップを指定できる設定を追加。
@@ -4943,6 +4945,8 @@ function TargetNearestAttackingEnemy()
     local playerPos = player.Position
     local bestObj = nil
     local bestDist = 9999
+    local recoveryFallbackAllowed = CurrentFate == nil or CurrentFate.fateObject == nil
+        or not IsFateActive(CurrentFate.fateObject)
     local maxIndex = math.min(Svc.Objects.Length - 1, 300)
     for i = 0, maxIndex do
         local objOk, obj = pcall(function() return Svc.Objects[i] end)
@@ -4951,18 +4955,22 @@ function TargetNearestAttackingEnemy()
             local deadOk, isDead = pcall(function() return obj.IsDead end)
             local hpOk, hp = pcall(function() return obj.CurrentHp end)
             local targetableOk, targetable = pcall(function() return obj.IsTargetable end)
-            local hostile = IsActuallyHostileObjectSafe(obj)
             local engaged = false
             if posOk and deadOk and hpOk and targetableOk
-                and not IsUnusableTarget(obj)
-                and targetable and hostile and not isDead and hp > 0
+                and not IsUnusableTarget(obj) and targetable and not isDead and hp > 0
             then
                 local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
+                local hostile = IsActuallyHostileObjectSafe(obj, wrappedObj)
+                local structuralFallback = recoveryFallbackAllowed
+                    and IsHostileObjectSafe(obj)
+                    and Svc.Condition[CharacterCondition.inCombat]
+                    and wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                 local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
                 local combatFallback = Svc.Condition[CharacterCondition.inCombat]
                     and wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                 engaged = wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                     and (targetingPlayer or combatFallback)
+                    and (hostile or structuralFallback)
             end
             if engaged then
                 local dist = DistanceBetweenFlat(playerPos, pos)
