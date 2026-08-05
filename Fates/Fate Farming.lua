@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.48
+version: 3.1.49
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.49   変更: 攻撃不能ターゲットの名前/IDブラックリストが正常なFATE敵を
+                誤除外して攻撃を止めるため、ブラックリスト機能を無効化。
     -> 3.1.48   修正: Lua/.NETブリッジでID比較が一致しない環境において、
                 正しい敵までターゲット設定失敗として除外していた問題を修正。
     -> 3.1.47   修正: FATE進行中でも無戦闘タイムアウトからゾーン選択へ進み、
@@ -2116,51 +2118,16 @@ function GetTargetObjectName(obj)
 end
 
 function IsUnusableTargetName(name)
-    local normalized = name ~= nil and tostring(name) or ""
-    return normalized ~= ""
-        and UnusableTargetNameBlacklist ~= nil
-        and UnusableTargetNameBlacklist[normalized] ~= nil
+    return false
 end
 
 function IsUnusableTarget(obj)
-    if UnusableTargetBlacklistActive ~= true then
-        return false
-    end
-    local name = GetTargetObjectName(obj)
-    if IsUnusableTargetName(name) then
-        return true
-    end
-    local key = GetUnusableTargetKey(obj)
-    return key ~= nil and UnusableTargetBlacklist ~= nil and UnusableTargetBlacklist[key] ~= nil
+    return false
 end
 
 function BlacklistUnusableTarget(obj, reason)
-    local key = GetUnusableTargetKey(obj)
-    if key == nil then
-        return
-    end
-    if UnusableTargetBlacklist == nil then
-        UnusableTargetBlacklist = {}
-    end
-    if UnusableTargetNameBlacklist == nil then
-        UnusableTargetNameBlacklist = {}
-    end
-    UnusableTargetBlacklistActive = true
-    if UnusableTargetBlacklist[key] == nil then
-        local name = GetTargetObjectName(obj)
-        UnusableTargetBlacklist[key] = {
-            reason = tostring(reason or "unknown"),
-            at = os.clock()
-        }
-        if name ~= nil and name ~= "" then
-            UnusableTargetNameBlacklist[name] = {
-                reason = tostring(reason or "unknown"),
-                at = os.clock()
-            }
-        end
-        Dalamud.Log("[FATE] Blacklisted unusable target: " ..
-            tostring(name or key) .. " (" .. tostring(reason or "unknown") .. ")")
-    end
+    -- Disabled: target IDs/names are not stable enough across object wrappers.
+    return
 end
 
 function SetObjectTarget(obj)
