@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.49
+version: 3.1.50
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -278,6 +278,12 @@ configs:
     default: "Auto"
     is_choice: true
     choices: ["Auto", "Shadowbringers", "Endwalker", "Dawntrail"]
+  Use selected farming maps?:
+    description: ONにすると、下のカンマ区切りマップだけを周回します。OFFでは従来の拡張設定を使用します。
+    default: false
+  Farming maps (comma separated):
+    description: 周回対象マップをカンマ区切りで指定します。英語名または日本語名を使用できます。
+    default: "Middle La Noscea,Lower La Noscea,Central Thanalan,Eastern Thanalan,Southern Thanalan,Outer La Noscea,Coerthas Central Highlands,Coerthas Western Highlands,Mor Dhona,The Sea of Clouds,Azys Lla,The Dravanian Forelands,The Dravanian Hinterlands,The Churning Mists,The Fringes,The Peaks,The Lochs,The Ruby Sea,Yanxia,The Azim Steppe,Lakeland,Kholusia,Amh Araeng,Il Mheg,The Rak'tika Greatwood,The Tempest,Labyrinthos,Thavnair,Garlemald,Mare Lamentorum,Ultima Thule,Elpis,Urqopacha,Kozama'uka,Yak T'el,Shaaloani,Heritage Found,Living Memory"
   Stay on current map only?:
     description: 他マップへは移動せず、現在マップのみで周回します（インスタンス移動は発生する場合があります）。
     default: false
@@ -321,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.50   追加: カンマ区切りで複数の周回マップを指定できる設定を追加。
+                OFF（初期値）では従来の拡張設定を使用。
     -> 3.1.49   変更: 攻撃不能ターゲットの名前/IDブラックリストが正常なFATE敵を
                 誤除外して攻撃を止めるため、ブラックリスト機能を無効化。
     -> 3.1.48   修正: Lua/.NETブリッジでID比較が一致しない環境において、
@@ -4008,7 +4016,101 @@ function GetFarmingExpansionName()
     return "Auto"
 end
 
+function NormalizeFarmingMapName(value)
+    local text = string.lower(tostring(value or ""))
+    text = text:gsub("%s+", "")
+    text = text:gsub("　", "")
+    text = text:gsub("・", "")
+    text = text:gsub("%-", "")
+    text = text:gsub("'", "")
+    text = text:gsub("’", "")
+    return text
+end
+
+function GetConfiguredFarmingMapIds()
+    if UseSelectedFarmingMaps ~= true then
+        return nil
+    end
+    if ConfiguredFarmingMapIds ~= nil then
+        return ConfiguredFarmingMapIds
+    end
+
+    local aliases = {
+        [NormalizeFarmingMapName("レイクランド")] = "Lakeland",
+        [NormalizeFarmingMapName("オルコ・パチャ")] = "Urqopacha",
+        [NormalizeFarmingMapName("ウルコ・パチャ")] = "Urqopacha",
+        [NormalizeFarmingMapName("コザマル・カ")] = "Kozama'uka",
+        [NormalizeFarmingMapName("ヤクテル樹海")] = "Yak T'el",
+        [NormalizeFarmingMapName("ヤクテル")] = "Yak T'el",
+        [NormalizeFarmingMapName("シャーローニ荒野")] = "Shaaloani",
+        [NormalizeFarmingMapName("ヘリテージ・ファウンド")] = "Heritage Found",
+        [NormalizeFarmingMapName("リビング・メモリー")] = "Living Memory",
+        [NormalizeFarmingMapName("コルシア島")] = "Kholusia",
+        [NormalizeFarmingMapName("アム・アレーン")] = "Amh Araeng",
+        [NormalizeFarmingMapName("イル・メグ")] = "Il Mheg",
+        [NormalizeFarmingMapName("テンペスト")] = "The Tempest"
+    }
+
+    local configuredText = tostring(FarmingMaps or "")
+    local selectedIds = {}
+    local seenIds = {}
+    local unresolved = {}
+    for token in string.gmatch(configuredText, "[^,]+") do
+        local normalizedToken = NormalizeFarmingMapName(token)
+        local canonicalName = aliases[normalizedToken] or token
+        local canonicalNormalized = NormalizeFarmingMapName(canonicalName)
+        local matchedId = nil
+        for _, zone in ipairs(FatesData) do
+            if NormalizeFarmingMapName(zone.zoneName) == canonicalNormalized then
+                matchedId = zone.zoneId
+                break
+            end
+        end
+        if matchedId ~= nil then
+            if not seenIds[matchedId] then
+                selectedIds[#selectedIds + 1] = matchedId
+                seenIds[matchedId] = true
+            end
+        elseif normalizedToken ~= "" then
+            unresolved[#unresolved + 1] = tostring(token):gsub("^%s+", ""):gsub("%s+$", "")
+        end
+    end
+
+    if #unresolved > 0 then
+        Dalamud.Log("[FATE] Unrecognized farming map names: " .. table.concat(unresolved, ", "))
+    end
+    if #selectedIds == 0 then
+        Dalamud.Log("[FATE] No valid selected farming maps; disabling selected-map mode.")
+        UseSelectedFarmingMaps = false
+        return nil
+    end
+    ConfiguredFarmingMapIds = selectedIds
+    return ConfiguredFarmingMapIds
+end
+
+function IsSelectedFarmingMapModeActive()
+    local selectedIds = GetConfiguredFarmingMapIds()
+    return UseSelectedFarmingMaps == true and selectedIds ~= nil and #selectedIds > 0
+end
+
+function IsConfiguredFarmingZone(zoneId)
+    local selectedIds = GetConfiguredFarmingMapIds()
+    if selectedIds == nil then
+        return false
+    end
+    for _, selectedId in ipairs(selectedIds) do
+        if selectedId == zoneId then
+            return true
+        end
+    end
+    return false
+end
+
 function GetFarmingZoneOrder()
+    local selectedIds = GetConfiguredFarmingMapIds()
+    if selectedIds ~= nil and #selectedIds > 0 then
+        return selectedIds
+    end
     local expansion = GetFarmingExpansionName()
     if expansion == "Shadowbringers" then
         return { 813, 814, 815, 816, 817, 818 }
@@ -4021,6 +4123,9 @@ function GetFarmingZoneOrder()
 end
 
 function IsZoneInFarmingExpansion(zoneId)
+    if IsSelectedFarmingMapModeActive() then
+        return IsConfiguredFarmingZone(zoneId)
+    end
     if GetFarmingExpansionName() == "Auto" then
         return true
     end
@@ -4125,12 +4230,12 @@ function GetNextDawntrailZoneId(currentZoneId)
     return farmingZoneOrder[1]
 end
 
-function SelectNextDawntrailZone()
-    if IsCurrentFateIncomplete() then
+function SelectNextDawntrailZone(forceSwitch)
+    if IsCurrentFateIncomplete() and forceSwitch ~= true then
         Dalamud.Log("[FATE] Active incomplete FATE: refusing zone switch.")
         return
     end
-    if StayOnCurrentMapOnly == true then
+    if StayOnCurrentMapOnly == true and not IsSelectedFarmingMapModeActive() then
         local currentZoneId = Svc.ClientState.TerritoryType
         SelectedZone = BuildZoneData(currentZoneId)
         CurrentFate = nil
@@ -4172,7 +4277,7 @@ function EnsureFarmingExpansionZone()
     if IsCurrentFateIncomplete() then
         return false
     end
-    if StayOnCurrentMapOnly == true then
+    if StayOnCurrentMapOnly == true and not IsSelectedFarmingMapModeActive() then
         local currentZoneId = Svc.ClientState.TerritoryType
         if SelectedZone == nil or SelectedZone.zoneId ~= currentZoneId then
             SelectedZone = BuildZoneData(currentZoneId)
@@ -4182,9 +4287,12 @@ function EnsureFarmingExpansionZone()
         end
         return false
     end
-    if GetFarmingExpansionName() == "Auto"
-        or IsZoneInFarmingExpansion(Svc.ClientState.TerritoryType)
+    local selectedMapMode = IsSelectedFarmingMapModeActive()
+    if not selectedMapMode and (GetFarmingExpansionName() == "Auto"
+            or IsZoneInFarmingExpansion(Svc.ClientState.TerritoryType))
     then
+        return false
+    elseif selectedMapMode and IsConfiguredFarmingZone(Svc.ClientState.TerritoryType) then
         return false
     end
 
@@ -8102,12 +8210,6 @@ function DoFate()
         local syncLooksBlocked = (LevelSyncHardCooldownUntil or 0) > now or (LevelSyncFailureCount or 0) >= 3
         local earlySkipWait = UnresponsiveLevelSyncEarlySkipSeconds or 16
         if inSyncRange and syncLooksBlocked and levelSyncWaitElapsed >= earlySkipWait then
-            if IsCurrentFateIncomplete() then
-                Dalamud.Log("[FATE] Active incomplete FATE: refusing level-sync early skip.")
-                ResetNoCombatRecoveryState()
-                State = CharacterState.doFate
-                return
-            end
             local msg = string.format(
                 "[FATE] Early skip: level sync remained unavailable on fate #%s (%s) for %.1fs.",
                 tostring(CurrentFate.fateId or 0),
@@ -8127,7 +8229,7 @@ function DoFate()
                 CurrentFate = nil
                 NextFate = nil
             else
-                SelectNextDawntrailZone()
+                SelectNextDawntrailZone(true)
             end
             State = CharacterState.ready
             return
@@ -8227,12 +8329,6 @@ function DoFate()
             local earlySkipAt = math.max(10, NoCombatTeleportTimeout * (UnresponsiveSkipRatio or 0.65))
             local noTargetTooLong = noTargetElapsed >= (UnresponsiveNoTargetSkipSeconds or 10)
             if NoCombatRecoveryStage >= 2 and elapsed >= earlySkipAt and noTargetTooLong then
-                if IsCurrentFateIncomplete() then
-                    Dalamud.Log("[FATE] Active incomplete FATE: refusing no-target zone skip.")
-                    ResetNoCombatRecoveryState()
-                    State = CharacterState.doFate
-                    return
-                end
                 local msg = string.format(
                     "[FATE] Early skip: no valid target for %.1fs after staged recovery on fate #%s (%s).",
                     noTargetElapsed,
@@ -8252,19 +8348,13 @@ function DoFate()
                     CurrentFate = nil
                     NextFate = nil
                 else
-                    SelectNextDawntrailZone()
+                    SelectNextDawntrailZone(true)
                 end
                 State = CharacterState.ready
                 return
             end
 
             if elapsed >= NoCombatTeleportTimeout then
-                if IsCurrentFateIncomplete() then
-                    Dalamud.Log("[FATE] Active incomplete FATE: refusing no-combat zone skip.")
-                    ResetNoCombatRecoveryState()
-                    State = CharacterState.doFate
-                    return
-                end
                 local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
                 local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
                 local timeoutMsg = string.format(
@@ -8290,7 +8380,7 @@ function DoFate()
                     CurrentFate = nil
                     NextFate = nil
                 else
-                    SelectNextDawntrailZone()
+                    SelectNextDawntrailZone(true)
                 end
                 State = CharacterState.ready
                 return
@@ -9178,7 +9268,7 @@ function Ready()
             yield("/echo [FATE] " .. msg)
             SendDiscordMessage(msg)
             RecordZoneUnresponsiveSkip(SelectedZone and SelectedZone.zoneId, "teleport_failed")
-            SelectNextDawntrailZone()
+            SelectNextDawntrailZone(true)
             return
         end
         -- Reset recovery counter on success.
@@ -9601,7 +9691,7 @@ function HandleMovementStuck(targetPosition)
         State = CharacterState.ready
     else
         if not StayOnCurrentMapOnly then
-            SelectNextDawntrailZone()
+            SelectNextDawntrailZone(true)
             SessionStuckZoneSwitchCount = SessionStuckZoneSwitchCount + 1
         else
             CurrentFate = nil
@@ -11851,7 +11941,14 @@ function FateFarming:Run()
     EnableChangeInstance           = ParseBool(Config.Get("Change instances if no FATEs?"), false)
     AutoTeleportToNextZone         = ParseBool(Config.Get("Teleport to next zone if no FATEs?"), true)
     FarmingExpansion               = Config.Get("Farming expansion")
+    UseSelectedFarmingMaps         = ParseBool(Config.Get("Use selected farming maps?"), false)
+    FarmingMaps                     = Config.Get("Farming maps (comma separated)")
+    ConfiguredFarmingMapIds         = nil
     StayOnCurrentMapOnly           = ParseBool(Config.Get("Stay on current map only?"), false)
+    if IsSelectedFarmingMapModeActive() then
+        -- A selected map list takes precedence over the single-map stay mode.
+        StayOnCurrentMapOnly = false
+    end
     ShouldExchangeBicolorGemstones = Config.Get("Exchange bicolor gemstones?")
     ItemToPurchase                 = Config.Get("Exchange bicolor gemstones for")
     if ItemToPurchase == "None" then
@@ -11873,6 +11970,26 @@ function FateFarming:Run()
     UseLifestreamForTeleport        = ParseBool(Config.Get("Use Lifestream for teleport?"), true)
     SummonChocoboOnStart            = Config.Get("Summon chocobo on start?")
     SwitchToNormalGearsetOnStart    = Config.Get("Switch to normal gearset on start?")
+
+    if IsSelectedFarmingMapModeActive() then
+        local currentZoneId = Svc.ClientState.TerritoryType
+        if IsConfiguredFarmingZone(currentZoneId) then
+            InitialSetupTeleportDone = true
+            InitialSetupTeleportZone = ""
+            Dalamud.Log("[FATE] Selected map mode: current zone is already selected.")
+        else
+            local selectedOrder = GetFarmingZoneOrder()
+            local firstSelectedZone = selectedOrder ~= nil and selectedOrder[1] ~= nil
+                and BuildZoneData(selectedOrder[1]) or nil
+            local firstAetheryte = firstSelectedZone ~= nil
+                and firstSelectedZone.aetheryteList ~= nil
+                and firstSelectedZone.aetheryteList[1] or nil
+            if firstAetheryte ~= nil then
+                InitialSetupTeleportZone = firstAetheryte.aetheryteName
+                Dalamud.Log("[FATE] Selected map mode: initial zone is " .. firstSelectedZone.zoneName)
+            end
+        end
+    end
 
     -- Party Play settings
     PartyPlayMode                   = Config.Get("Party Play Mode")
@@ -12147,7 +12264,7 @@ function FateFarming:Run()
                                         CurrentFate = nil
                                         NextFate = nil
                                     else
-                                        SelectNextDawntrailZone()
+                                        SelectNextDawntrailZone(true)
                                     end
                                     State = CharacterState.ready
                                 end
@@ -12183,12 +12300,6 @@ function FateFarming:Run()
                     if NoCombatStartTime == nil then
                         NoCombatStartTime = os.clock()
                     elseif os.clock() - NoCombatStartTime >= NoCombatTeleportTimeout then
-                        if IsCurrentFateIncomplete() then
-                            Dalamud.Log("[FATE] Active incomplete FATE: refusing global no-combat zone skip.")
-                            ResetNoCombatRecoveryState()
-                            State = CharacterState.doFate
-                            return
-                        end
                         local shouldPreserveBonusBuff = ShouldPreserveBonusBuffForZoneSwitch(true)
                         local timedOutFateName = (CurrentFate and CurrentFate.fateName) or "Unknown FATE"
                         local timedOutFateId = (CurrentFate and CurrentFate.fateId) or 0
@@ -12218,7 +12329,7 @@ function FateFarming:Run()
                             CurrentFate = nil
                             NextFate = nil
                         else
-                            SelectNextDawntrailZone()
+                            SelectNextDawntrailZone(true)
                         end
                         State = CharacterState.ready
                     end
