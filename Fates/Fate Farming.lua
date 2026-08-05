@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.38
+version: 3.1.39
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -321,6 +321,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.39   修正: 戦闘中にNPC用の直接ターゲット命令が実行される場合でも、
+                NPCを解除して攻撃中のCombatantへ戻す安全処理を追加。
     -> 3.1.38   修正: Combatant扱いの友好的なGuard/NPCが敵候補に入る場合が
                 あるため、EntityWrapper.IsHostileでも検証するよう修正。
     -> 3.1.37   修正: ターゲット設定直後の反映前に検証して解除していたため、
@@ -2030,6 +2032,15 @@ function SetObjectTarget(obj)
         pcall(function() Svc.Targets.Target = nil end)
     end
     return false
+end
+
+function TargetNpcIfSafe(npcName)
+    if npcName == nil or tostring(npcName) == ""
+        or Svc.Condition[CharacterCondition.inCombat]
+    then
+        return false
+    end
+    return SafeYield("/target " .. tostring(npcName))
 end
 
 function TryTargetForlorn()
@@ -6358,7 +6369,7 @@ function MoveToNPC()
         Dalamud.Log("[FATE] MoveToNPC: npcName is nil or empty, skipping")
         return
     end
-    SafeYield("/target " .. CurrentFate.npcName)
+    TargetNpcIfSafe(CurrentFate.npcName)
     if Svc.Targets.Target ~= nil and GetTargetName() == CurrentFate.npcName then
         if GetDistanceToTarget() > 5 then
             SafeYield("/vnav movetarget")
@@ -6585,7 +6596,7 @@ function MoveToFate()
             return
         else
             if (CurrentFate.isOtherNpcFate or CurrentFate.isCollectionsFate) and not InActiveFate() then
-                SafeYield("/target " .. CurrentFate.npcName)
+                TargetNpcIfSafe(CurrentFate.npcName)
             else
                 local gotTarget = AttemptToTargetClosestFateEnemy(true, nil, true)
                 if not gotTarget
@@ -6677,6 +6688,10 @@ function MoveToFate()
 end
 
 function InteractWithFateNpc()
+    if Svc.Condition[CharacterCondition.inCombat] then
+        State = CharacterState.unexpectedCombat
+        return
+    end
     if InActiveFate() or CurrentFate.startTime > 0 then
         SafeYield("/vnav stop")
         State = CharacterState.doFate
@@ -6693,7 +6708,7 @@ function InteractWithFateNpc()
     else
         -- if target is already selected earlier during pathing, avoids having to target and move again
         if (Svc.Targets.Target == nil or GetTargetName() ~= CurrentFate.npcName) then
-            SafeYield("/target " .. CurrentFate.npcName)
+            TargetNpcIfSafe(CurrentFate.npcName)
             return
         end
 
@@ -6717,6 +6732,10 @@ function InteractWithFateNpc()
 end
 
 function CollectionsFateTurnIn()
+    if Svc.Condition[CharacterCondition.inCombat] then
+        State = CharacterState.unexpectedCombat
+        return
+    end
     AcceptNPCFateOrRejectOtherYesno()
 
     if CurrentFate ~= nil and not IsFateActive(CurrentFate.fateObject) then
@@ -6728,7 +6747,7 @@ function CollectionsFateTurnIn()
 
     if (Svc.Targets.Target == nil or GetTargetName() ~= CurrentFate.npcName) then
         TurnOffCombatMods()
-        SafeYield("/target " .. CurrentFate.npcName)
+        TargetNpcIfSafe(CurrentFate.npcName)
         yield("/wait 1")
 
         -- if too far from npc to target, then head towards center of fate
@@ -9522,7 +9541,7 @@ function ExecuteBicolorExchange()
             end
 
             if Svc.Targets.Target == nil or GetTargetName() ~= SelectedBicolorExchangeData.shopKeepName then
-                SafeYield("/target " .. SelectedBicolorExchangeData.shopKeepName)
+                TargetNpcIfSafe(SelectedBicolorExchangeData.shopKeepName)
                 yield("/wait 0.5")
             elseif not Svc.Condition[CharacterCondition.occupiedInQuestEvent] then
                 yield("/interact")
@@ -9570,7 +9589,7 @@ function ProcessRetainers()
         end
 
         if Svc.Targets.Target == nil or GetTargetName() ~= summoningBell.name then
-            SafeYield("/target " .. summoningBell.name)
+            TargetNpcIfSafe(summoningBell.name)
             return
         end
 
@@ -9722,7 +9741,7 @@ function Repair()
                 end
             else
                 if Svc.Targets.Target == nil or GetTargetName() ~= vendor.npcName then
-                    SafeYield("/target " .. vendor.npcName)
+                    TargetNpcIfSafe(vendor.npcName)
                 elseif not Svc.Condition[CharacterCondition.occupiedInQuestEvent] then
                     yield("/interact")
                 elseif AddonReady("SelectYesno") then
@@ -9760,7 +9779,7 @@ function Repair()
                     end
                 else
                     if Svc.Targets.Target == nil or GetTargetName() ~= mender.npcName then
-                        SafeYield("/target " .. mender.npcName)
+                        TargetNpcIfSafe(mender.npcName)
                     elseif not Svc.Condition[CharacterCondition.occupiedInQuestEvent] then
                         yield("/interact")
                     end
@@ -9790,7 +9809,7 @@ function Repair()
                 end
             else
                 if Svc.Targets.Target == nil or GetTargetName() ~= mender.npcName then
-                    SafeYield("/target " .. mender.npcName)
+                    TargetNpcIfSafe(mender.npcName)
                 elseif not Svc.Condition[CharacterCondition.occupiedInQuestEvent] then
                     yield("/interact")
                 end
@@ -12024,6 +12043,21 @@ function FateFarming:Run()
                 -- Party Play: global teleport acceptance (runs regardless of state)
                 if GetPartyPlayActive() and FollowPartyLeaderZone == true then
                     AcceptTeleportOfferLocation("")
+                end
+
+                -- NPC interaction states can issue direct target commands. If
+                -- combat starts between state ticks, immediately remove any
+                -- non-hostile target and restore the attacker target instead.
+                if Svc.Condition[CharacterCondition.inCombat]
+                    and Svc.Targets.Target ~= nil
+                    and not IsActuallyHostileObjectSafe(Svc.Targets.Target)
+                then
+                    ClearTarget()
+                    if not (Svc.Condition[CharacterCondition.mounted]
+                        or Svc.Condition[CharacterCondition.flying])
+                    then
+                        TargetNearestAttackingEnemy()
+                    end
                 end
 
                 local stateOk, stateErr = pcall(State)
