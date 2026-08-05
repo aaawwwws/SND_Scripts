@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.50
+version: 3.1.51
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.51   修正: FATE完了時に戦闘中のターゲットを先に解除していたため、
+                漆黒・暁月で残った敵へ反撃できない問題を修正。
     -> 3.1.50   追加: カンマ区切りで複数の周回マップを指定できる設定を追加。
                 OFF（初期値）では従来の拡張設定を使用。
     -> 3.1.49   変更: 攻撃不能ターゲットの名前/IDブラックリストが正常なFATE敵を
@@ -8404,6 +8406,17 @@ function DoFate()
             Player.CanFly and SelectedZone.flying)
         return
     elseif not IsFateActive(CurrentFate.fateObject) or progress == 100 then
+        if Svc.Condition[CharacterCondition.inCombat]
+            and not Svc.Condition[CharacterCondition.mounted]
+            and not Svc.Condition[CharacterCondition.flying]
+        then
+            LastFateEndTime = os.clock()
+            DidFate = true
+            TurnOffCombatMods()
+            State = CharacterState.unexpectedCombat
+            Dalamud.Log("[FATE] FATE completed while in combat. Handling remaining attacker before leaving.")
+            return
+        end
         SafeYield("/vnav stop")
         ClearTarget()
         Dalamud.Log("[FATE] HasContinuation check")
