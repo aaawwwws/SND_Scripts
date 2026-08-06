@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.66
+version: 3.1.67
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.67   修正: FATE完了後の長い後処理待機中に攻撃されても、待機が終わる
+                まで攻撃者をターゲットしない問題を修正。
     -> 3.1.66   修正: FATE後の/battletargetがactual=falseの環境差で解除され、
                 選択だけで実ターゲットにならない問題を修正。
     -> 3.1.65   修正: FATE後のFateId=0残敵がHostile判定の環境差で候補から
@@ -8204,6 +8206,21 @@ function HandleUnexpectedCombat()
     yield("/wait 1")
 end
 
+function WaitPostFateGracePeriod(seconds)
+    local deadline = os.clock() + math.max(0, tonumber(seconds) or 0)
+    while os.clock() < deadline do
+        if Svc.Condition[CharacterCondition.inCombat]
+            and not Svc.Condition[CharacterCondition.mounted]
+            and not Svc.Condition[CharacterCondition.flying]
+        then
+            return false
+        end
+        local remaining = deadline - os.clock()
+        yield("/wait " .. tostring(math.min(0.25, math.max(0.05, remaining))))
+    end
+    return true
+end
+
 function DoFate()
     if CurrentFate == nil or CurrentFate.fateObject == nil then
         Dalamud.Log("[FATE] DoFate: CurrentFate is invalid, returning to Ready.")
@@ -8607,7 +8624,13 @@ function DoFate()
             TurnOffCombatMods()
             ClearTarget()
             local randomWait = GetPostFateWaitSeconds()
-            yield("/wait " .. randomWait)
+            if not WaitPostFateGracePeriod(randomWait) then
+                TurnOnCombatMods("post-FATE combat recovery")
+                State = CharacterState.unexpectedCombat
+                LastFateEndTime = os.clock()
+                Dalamud.Log("[FATE] Post-FATE wait interrupted by combat. Recovering attacker target.")
+                return
+            end
             ForlornMarked = false
             MovingAnnouncementLock = false
             ResetTargetAcquireWatchdog()
