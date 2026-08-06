@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.68
+version: 3.1.69
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.69   修正: Forlornが通常Hostile判定で除外され、優先ターゲットに
+                ならない場合がある問題を修正。
     -> 3.1.68   修正: 敵が自分をターゲットしていてもIsInCombatの反映前に
                 候補から除外していたため、攻撃者検出を両条件のORに統合。
     -> 3.1.67   修正: FATE完了後の長い後処理待機中に攻撃されても、待機が終わる
@@ -2239,7 +2241,7 @@ function BlacklistUnusableTarget(obj, reason)
     return
 end
 
-function SetObjectTarget(obj, allowRecoveryFallback)
+function SetObjectTarget(obj, allowRecoveryFallback, allowForlorn)
     if obj == nil then
         return false
     end
@@ -2250,7 +2252,13 @@ function SetObjectTarget(obj, allowRecoveryFallback)
         and IsHostileObjectSafe(obj)
         and Svc.Condition[CharacterCondition.inCombat]
         and (IsRecoveryCombatantObject(obj) or IsObjectTargetingLocalPlayer(obj))
-    if not IsActuallyHostileObjectSafe(obj) and not recoveryTargetAllowed then
+    local forlornTargetAllowed = allowForlorn == true
+        and IsHostileObjectSafe(obj)
+        and IsForlornTargetName(GetTargetObjectName(obj))
+    if not IsActuallyHostileObjectSafe(obj)
+        and not recoveryTargetAllowed
+        and not forlornTargetAllowed
+    then
         EchoCombatTargetDiagnostic("candidate_rejected_non_actual", obj)
         return false
     end
@@ -2272,8 +2280,11 @@ function SetObjectTarget(obj, allowRecoveryFallback)
                 and IsHostileObjectSafe(target)
                 and Svc.Condition[CharacterCondition.inCombat]
                 and (IsRecoveryCombatantObject(target) or IsObjectTargetingLocalPlayer(target))
+            local acceptedForlornTarget = allowForlorn == true
+                and IsHostileObjectSafe(target)
+                and IsForlornTargetName(GetTargetObjectName(target))
             if IsSameGameObject(target, obj) then
-                if IsActuallyHostileObjectSafe(target) or acceptedRecoveryTarget then
+                if IsActuallyHostileObjectSafe(target) or acceptedRecoveryTarget or acceptedForlornTarget then
                     RememberAcceptedCombatTarget(obj)
                     return true
                 end
@@ -2284,7 +2295,7 @@ function SetObjectTarget(obj, allowRecoveryFallback)
                 and GetTargetObjectName(target) == GetTargetObjectName(obj)
             local changedFromEmpty = previousTarget == nil and IsHostileObjectSafe(target)
             if sameName or changedFromEmpty then
-                if IsActuallyHostileObjectSafe(target) or acceptedRecoveryTarget then
+                if IsActuallyHostileObjectSafe(target) or acceptedRecoveryTarget or acceptedForlornTarget then
                     RememberAcceptedCombatTarget(obj)
                     return true
                 end
@@ -2307,8 +2318,13 @@ function SetObjectTarget(obj, allowRecoveryFallback)
                 and IsHostileObjectSafe(currentTarget)
                 and Svc.Condition[CharacterCondition.inCombat]
                 and (IsRecoveryCombatantObject(currentTarget) or IsObjectTargetingLocalPlayer(currentTarget))
+            local acceptedForlornTarget = allowForlorn == true
+                and IsHostileObjectSafe(currentTarget)
+                and IsForlornTargetName(GetTargetObjectName(currentTarget))
             if IsSameGameObject(currentTarget, obj) then
-                if IsActuallyHostileObjectSafe(currentTarget) or acceptedRecoveryTarget then
+                if IsActuallyHostileObjectSafe(currentTarget)
+                    or acceptedRecoveryTarget or acceptedForlornTarget
+                then
                     RememberAcceptedCombatTarget(obj)
                     return true
                 end
@@ -2318,7 +2334,9 @@ function SetObjectTarget(obj, allowRecoveryFallback)
             local sameName = GetTargetObjectName(currentTarget) ~= nil
                 and GetTargetObjectName(currentTarget) == GetTargetObjectName(obj)
             if sameName or (previousTarget == nil and IsHostileObjectSafe(currentTarget)) then
-                if IsActuallyHostileObjectSafe(currentTarget) or acceptedRecoveryTarget then
+                if IsActuallyHostileObjectSafe(currentTarget)
+                    or acceptedRecoveryTarget or acceptedForlornTarget
+                then
                     RememberAcceptedCombatTarget(obj)
                     return true
                 end
@@ -2376,7 +2394,7 @@ function TryTargetForlorn()
         local obj = Svc.Objects[i]
         if obj ~= nil and obj.IsTargetable and not obj.IsDead
             and not IsUnusableTarget(obj)
-            and IsActuallyHostileObjectSafe(obj)
+            and IsHostileObjectSafe(obj)
         then
             local name = obj.Name:GetText()
             if IsForlornTargetName(name)
@@ -2391,7 +2409,7 @@ function TryTargetForlorn()
     end
 
     if bestObj ~= nil then
-        SetObjectTarget(bestObj)
+        SetObjectTarget(bestObj, false, true)
     end
 end
 
@@ -3240,9 +3258,18 @@ function ShouldSkipOtherNpcFate(fateName)
 end
 
 function IsUserInputBlackListedFate(fateName)
-    -- Keep this known-problematic FATE excluded even when an existing saved
-    -- Blacklist value predates its addition to the metadata default.
-    if fateName == "汚れた血め！" then
+    -- Keep known-problematic FATEs excluded even when an existing saved
+    -- Blacklist value predates their addition to the metadata default.
+    local forcedBlacklist = {
+        ["汚れた血め！"] = true,
+        ["ミャルナの巡察：矢の補充"] = true,
+        ["香りの錬金術師：危険な花摘み"] = true,
+        ["嘆きの白兎：ばくばく大爆発"] = true,
+        ["栄光の翼「アル・アイン」"] = true,
+        ["霜の巨人たち"] = true,
+        ["魔導技師の帰郷：ファースト・ステップ"] = true
+    }
+    if forcedBlacklist[fateName] then
         return true
     end
     local array = split(Config.Get("Blacklist"), ',')
