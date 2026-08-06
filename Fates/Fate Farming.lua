@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.54
+version: 3.1.55
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.55   修正: Combatant扱いのNPCが現在ターゲットとして残る場合があるため、
+                スクリプトが承認した敵または実Hostile対象だけを戦闘対象に限定。
     -> 3.1.54   修正: Wrathの停止検知時にログだけで再ONしていなかったため、
                 FATE中に数秒攻撃が止まる問題を修正。
     -> 3.1.53   修正: Limsa Lominsa Lower DecksをLifestreamが解決できない環境で、
@@ -874,6 +876,8 @@ ClusterMoveCachedPosition = nil
 UnusableTargetBlacklist = nil
 UnusableTargetNameBlacklist = nil
 UnusableTargetBlacklistActive = false
+LastAcceptedCombatTargetKey = nil
+LastAcceptedCombatTargetName = nil
 
 -- FATE座標の床スナップキャッシュ（地中目的地の防止用）
 FateGroundPosCacheFateId = nil
@@ -2039,19 +2043,10 @@ function IsAllowedCombatTarget(obj)
         return false
     end
 
-    -- Normal FATE enemies are already identified by their current FateId. Avoid
-    -- the expensive/unstable native hostility lookup on this hot path.
-    if CurrentFate ~= nil
-        and not CurrentFate.isCollectionsFate
-        and not CurrentFate.isOtherNpcFate
-    then
-        local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
-        if wrappedOk and wrappedObj ~= nil
-            and tonumber(wrappedObj.FateId) == tonumber(CurrentFate.fateId)
-        then
-            return true
-        end
+    if IsRememberedCombatTarget(obj) then
+        return true
     end
+
     return IsActuallyHostileObjectSafe(obj)
 end
 
@@ -2133,6 +2128,21 @@ function GetTargetObjectName(obj)
     return nil
 end
 
+function RememberAcceptedCombatTarget(obj)
+    LastAcceptedCombatTargetKey = GetUnusableTargetKey(obj)
+    LastAcceptedCombatTargetName = GetTargetObjectName(obj)
+end
+
+function IsRememberedCombatTarget(obj)
+    local key = GetUnusableTargetKey(obj)
+    if key ~= nil and LastAcceptedCombatTargetKey ~= nil and key == LastAcceptedCombatTargetKey then
+        return true
+    end
+    local name = GetTargetObjectName(obj)
+    return name ~= nil and LastAcceptedCombatTargetName ~= nil
+        and name == LastAcceptedCombatTargetName
+end
+
 function IsUnusableTargetName(name)
     return false
 end
@@ -2168,12 +2178,14 @@ function SetObjectTarget(obj)
         local targetOk, target = pcall(function() return Svc.Targets.Target end)
         if targetOk and target ~= nil then
             if IsSameGameObject(target, obj) then
+                RememberAcceptedCombatTarget(obj)
                 return true
             end
             local sameName = GetTargetObjectName(target) ~= nil
                 and GetTargetObjectName(target) == GetTargetObjectName(obj)
             local changedFromEmpty = previousTarget == nil and IsHostileObjectSafe(target)
             if sameName or changedFromEmpty then
+                RememberAcceptedCombatTarget(obj)
                 return true
             end
             pcall(function() Svc.Targets.Target = nil end)
@@ -2189,11 +2201,13 @@ function SetObjectTarget(obj)
         local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
         if targetOk and currentTarget ~= nil then
             if IsSameGameObject(currentTarget, obj) then
+                RememberAcceptedCombatTarget(obj)
                 return true
             end
             local sameName = GetTargetObjectName(currentTarget) ~= nil
                 and GetTargetObjectName(currentTarget) == GetTargetObjectName(obj)
             if sameName or (previousTarget == nil and IsHostileObjectSafe(currentTarget)) then
+                RememberAcceptedCombatTarget(obj)
                 return true
             end
         end
@@ -7150,6 +7164,8 @@ end
 
 function ClearTarget()
     Svc.Targets.Target = nil
+    LastAcceptedCombatTargetKey = nil
+    LastAcceptedCombatTargetName = nil
 end
 
 function GetTargetHitboxRadius()
@@ -11753,6 +11769,8 @@ function FateFarming:Run()
     UnusableTargetBlacklist               = {}
     UnusableTargetNameBlacklist            = {}
     UnusableTargetBlacklistActive         = false
+    LastAcceptedCombatTargetKey           = nil
+    LastAcceptedCombatTargetName          = nil
     FateGroundPosCacheFateId              = nil
     FateGroundPosCacheRaw                 = nil
     FateGroundPosCacheSnapped             = nil
