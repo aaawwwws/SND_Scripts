@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.60
+version: 3.1.61
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.61   修正: 攻撃者候補を最寄り1体だけ試して失敗時に終了していたため、
+                距離順に複数候補を順送りでターゲットするよう修正。
     -> 3.1.60   追加: 戦闘中のNPCターゲット原因を特定するTargetDiag /echoログを追加。
     -> 3.1.59   修正: FATE後の攻撃者スキャンで候補を取得できない場合に、
                 Combatant確認付きの/battletargetフォールバックを追加。
@@ -5025,8 +5027,7 @@ function TargetNearestAttackingEnemy(forceRecovery)
         return false
     end
     local playerPos = player.Position
-    local bestObj = nil
-    local bestDist = 9999
+    local candidates = {}
     local recoveryFallbackAllowed = forceRecovery == true
         or CurrentFate == nil or CurrentFate.fateObject == nil
         or not IsFateActive(CurrentFate.fateObject)
@@ -5061,15 +5062,16 @@ function TargetNearestAttackingEnemy(forceRecovery)
             end
             if engaged then
                 local dist = DistanceBetweenFlat(playerPos, pos)
-                if dist < bestDist then
-                    bestDist = dist
-                    bestObj = obj
-                end
+                candidates[#candidates + 1] = { obj = obj, dist = dist }
             end
         end
     end
-    if bestObj ~= nil then
-        return SetObjectTarget(bestObj)
+
+    table.sort(candidates, function(a, b) return a.dist < b.dist end)
+    for _, candidate in ipairs(candidates) do
+        if SetObjectTarget(candidate.obj) then
+            return true
+        end
     end
 
     if forceRecovery then
@@ -5106,8 +5108,7 @@ function TargetNearestEngagedEnemy(maxDist)
         return false
     end
     local range = maxDist or 30
-    local bestObj = nil
-    local bestDist = range
+    local candidates = {}
     for i = 0, Svc.Objects.Length - 1 do
         local obj = Svc.Objects[i]
         if obj ~= nil and obj.IsTargetable and not obj.IsDead and not IsUnusableTarget(obj) then
@@ -5128,15 +5129,18 @@ function TargetNearestEngagedEnemy(maxDist)
                 and wrappedObj ~= nil and wrappedObj.IsInCombat == true
             then
                 local dist = DistanceBetweenFlat(playerPos, obj.Position)
-                if dist <= bestDist then
-                    bestDist = dist
-                    bestObj = obj
+                if dist <= range then
+                    candidates[#candidates + 1] = { obj = obj, dist = dist }
                 end
             end
         end
     end
-    if bestObj ~= nil then
-        return SetObjectTarget(bestObj)
+
+    table.sort(candidates, function(a, b) return a.dist < b.dist end)
+    for _, candidate in ipairs(candidates) do
+        if SetObjectTarget(candidate.obj) then
+            return true
+        end
     end
     return false
 end
