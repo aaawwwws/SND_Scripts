@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.57
+version: 3.1.58
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.58   修正: FATE中の攻撃者スキャンがHostile判定失敗または先頭300件
+                制限で攻撃者を取りこぼす問題を修正。
     -> 3.1.57   修正: FATE終了直後に終了済みFATEがActive扱いで残敵スキャンの
                 フォールバックが無効になり、攻撃者を取得できない問題を修正。
     -> 3.1.56   修正: FATE完了後の待機中に攻撃されると、InActiveFateの状態に
@@ -4970,7 +4972,7 @@ function TargetNearestAttackingEnemy(forceRecovery)
     local recoveryFallbackAllowed = forceRecovery == true
         or CurrentFate == nil or CurrentFate.fateObject == nil
         or not IsFateActive(CurrentFate.fateObject)
-    local maxIndex = math.min(Svc.Objects.Length - 1, 300)
+    local maxIndex = Svc.Objects.Length - 1
     for i = 0, maxIndex do
         local objOk, obj = pcall(function() return Svc.Objects[i] end)
         if objOk and obj then
@@ -4983,17 +4985,21 @@ function TargetNearestAttackingEnemy(forceRecovery)
                 and not IsUnusableTarget(obj) and targetable and not isDead and hp > 0
             then
                 local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
+                local structuralHostile = IsHostileObjectSafe(obj)
                 local hostile = IsActuallyHostileObjectSafe(obj, wrappedObj)
                 local structuralFallback = recoveryFallbackAllowed
-                    and IsHostileObjectSafe(obj)
+                    and structuralHostile
                     and Svc.Condition[CharacterCondition.inCombat]
                     and wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                 local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
+                local structuralAttacker = structuralHostile
+                    and Svc.Condition[CharacterCondition.inCombat]
+                    and targetingPlayer
                 local combatFallback = Svc.Condition[CharacterCondition.inCombat]
                     and wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                 engaged = wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                     and (targetingPlayer or combatFallback)
-                    and (hostile or structuralFallback)
+                    and (hostile or structuralFallback or structuralAttacker)
             end
             if engaged then
                 local dist = DistanceBetweenFlat(playerPos, pos)
@@ -5028,9 +5034,8 @@ function TargetNearestEngagedEnemy(maxDist)
         local obj = Svc.Objects[i]
         if obj ~= nil and obj.IsTargetable and not obj.IsDead and not IsUnusableTarget(obj) then
             local wrappedObj = EntityWrapper(obj)
-            if wrappedObj == nil or not IsActuallyHostileObjectSafe(obj, wrappedObj) then
-                wrappedObj = nil
-            end
+            local structuralHostile = IsHostileObjectSafe(obj)
+            local actualHostile = wrappedObj ~= nil and IsActuallyHostileObjectSafe(obj, wrappedObj)
             local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
             local combatFallback = Svc.Condition[CharacterCondition.inCombat]
                 and wrappedObj ~= nil and wrappedObj.IsInCombat == true
@@ -5040,7 +5045,7 @@ function TargetNearestEngagedEnemy(maxDist)
                 and tonumber(wrappedObj.FateId) == tonumber(CurrentFate.fateId)
             local allowedCombatFallback = combatFallback and (not activeFate or currentFateTarget)
             local allowedTarget = targetingPlayer or allowedCombatFallback
-            if allowedTarget
+            if allowedTarget and (actualHostile or (structuralHostile and targetingPlayer))
                 and (not activeFate or currentFateTarget or targetingPlayer)
                 and wrappedObj ~= nil and wrappedObj.IsInCombat == true
             then
