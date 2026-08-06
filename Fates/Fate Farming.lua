@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.55
+version: 3.1.57
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,10 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.57   修正: FATE終了直後に終了済みFATEがActive扱いで残敵スキャンの
+                フォールバックが無効になり、攻撃者を取得できない問題を修正。
+    -> 3.1.56   修正: FATE完了後の待機中に攻撃されると、InActiveFateの状態に
+                よって戦闘復旧へ遷移せず立ち止まる問題を修正。
     -> 3.1.55   修正: Combatant扱いのNPCが現在ターゲットとして残る場合があるため、
                 スクリプトが承認した敵または実Hostile対象だけを戦闘対象に限定。
     -> 3.1.54   修正: Wrathの停止検知時にログだけで再ONしていなかったため、
@@ -4952,7 +4956,7 @@ function FallbackBattleTargetOrReturnToFate()
     return TargetNearestAttackingEnemy()
 end
 
-function TargetNearestAttackingEnemy()
+function TargetNearestAttackingEnemy(forceRecovery)
     if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying] then
         return false
     end
@@ -4963,7 +4967,8 @@ function TargetNearestAttackingEnemy()
     local playerPos = player.Position
     local bestObj = nil
     local bestDist = 9999
-    local recoveryFallbackAllowed = CurrentFate == nil or CurrentFate.fateObject == nil
+    local recoveryFallbackAllowed = forceRecovery == true
+        or CurrentFate == nil or CurrentFate.fateObject == nil
         or not IsFateActive(CurrentFate.fateObject)
     local maxIndex = math.min(Svc.Objects.Length - 1, 300)
     for i = 0, maxIndex do
@@ -8466,6 +8471,7 @@ function DoFate()
             return
         else
             DidFate = true
+            LastFateEndTime = os.clock()
             Dalamud.Log("[FATE] No continuation for " .. CurrentFate.fateName)
             -- Turn off combat mods immediately so Wrath/BMR don't attack nearby
             -- non-FATE mobs during the post-FATE wait.
@@ -11744,7 +11750,7 @@ function FateFarming:Run()
     LastMovePosition                      = nil
     GotCollectionsFullCredit              = false
     WaitingForFateRewards                 = nil
-    LastFateEndTime                       = os.clock()
+    LastFateEndTime                       = 0
     LastStuckCheckTime                    = os.clock()
     local initialPosition                 = GetLocalPlayerPosition()
     LastStuckCheckPosition                = initialPosition or Vector3(0, 0, 0)
@@ -12405,7 +12411,9 @@ function FateFarming:Run()
                 -- moveToFate every tick, so no movement ever gets issued.
                 and not (Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.flying])
                 and (
-                    not InActiveFate()
+                    ((LastFateEndTime or 0) > 0
+                        and os.clock() - (LastFateEndTime or 0) <= 30)
+                    or not InActiveFate()
                     or (InActiveFate() and nearestFate ~= nil and IsCollectionsFate(nearestFate.Name) and nearestFate.Progress == 100)
                 )
             then
@@ -12462,6 +12470,27 @@ function FateFarming:Run()
                 -- Party Play: global teleport acceptance (runs regardless of state)
                 if GetPartyPlayActive() and FollowPartyLeaderZone == true then
                     AcceptTeleportOfferLocation("")
+                end
+
+                local postFateCombat = Svc.Condition[CharacterCondition.inCombat]
+                    and not Svc.Condition[CharacterCondition.mounted]
+                    and not Svc.Condition[CharacterCondition.flying]
+                    and (LastFateEndTime or 0) > 0
+                    and os.clock() - (LastFateEndTime or 0) <= 30
+                if postFateCombat then
+                    TurnOnCombatMods("post-FATE combat recovery")
+                    if Svc.Targets.Target == nil
+                        or not IsAllowedCombatTarget(Svc.Targets.Target)
+                    then
+                        if Svc.Targets.Target ~= nil then
+                            ClearTarget()
+                        end
+                        if TargetNearestAttackingEnemy(true) then
+                            Dalamud.Log("[FATE] Post-FATE recovery targeted the attacking Combatant.")
+                        else
+                            Dalamud.Log("[FATE] Post-FATE recovery found no attacking Combatant.")
+                        end
+                    end
                 end
 
                 -- NPC interaction states can issue direct target commands. If
