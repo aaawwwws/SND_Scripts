@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.58
+version: 3.1.60
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,9 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.60   追加: 戦闘中のNPCターゲット原因を特定するTargetDiag /echoログを追加。
+    -> 3.1.59   修正: FATE後の攻撃者スキャンで候補を取得できない場合に、
+                Combatant確認付きの/battletargetフォールバックを追加。
     -> 3.1.58   修正: FATE中の攻撃者スキャンがHostile判定失敗または先頭300件
                 制限で攻撃者を取りこぼす問題を修正。
     -> 3.1.57   修正: FATE終了直後に終了済みFATEがActive扱いで残敵スキャンの
@@ -884,6 +887,7 @@ UnusableTargetNameBlacklist = nil
 UnusableTargetBlacklistActive = false
 LastAcceptedCombatTargetKey = nil
 LastAcceptedCombatTargetName = nil
+CombatTargetDiagnosticLastAt = 0
 
 -- FATE座標の床スナップキャッシュ（地中目的地の防止用）
 FateGroundPosCacheFateId = nil
@@ -2134,6 +2138,45 @@ function GetTargetObjectName(obj)
     return nil
 end
 
+function EchoCombatTargetDiagnostic(reason, obj)
+    local now = os.clock()
+    if now - (CombatTargetDiagnosticLastAt or 0) < 1 then
+        return
+    end
+    CombatTargetDiagnosticLastAt = now
+
+    local function ReadProperty(target, property)
+        if target == nil then return "nil" end
+        local ok, value = pcall(function() return target[property] end)
+        return ok and tostring(value) or "error"
+    end
+
+    local name = GetTargetObjectName(obj) or "nil"
+    local wrappedOk, wrappedObj = pcall(function() return obj ~= nil and EntityWrapper(obj) or nil end)
+    local fateId = wrappedOk and wrappedObj ~= nil and tostring(wrappedObj.FateId) or "nil"
+    local structural = obj ~= nil and IsHostileObjectSafe(obj) or false
+    local actual = obj ~= nil and IsActuallyHostileObjectSafe(obj, wrappedObj) or false
+    local currentFateId = CurrentFate ~= nil and tostring(CurrentFate.fateId) or "nil"
+    local message = string.format(
+        "[FATE] TargetDiag reason=%s name=%s kind=%s sub=%s fate=%s hp=%s targetable=%s dead=%s structural=%s actual=%s inCombat=%s currentFate=%s state=%s",
+        tostring(reason or "unknown"),
+        name,
+        ReadProperty(obj, "ObjectKind"),
+        ReadProperty(obj, "SubKind"),
+        fateId,
+        ReadProperty(obj, "CurrentHp"),
+        ReadProperty(obj, "IsTargetable"),
+        ReadProperty(obj, "IsDead"),
+        tostring(structural),
+        tostring(actual),
+        tostring(Svc.Condition[CharacterCondition.inCombat]),
+        currentFateId,
+        tostring(State)
+    )
+    Dalamud.Log(message)
+    yield("/echo " .. message)
+end
+
 function RememberAcceptedCombatTarget(obj)
     LastAcceptedCombatTargetKey = GetUnusableTargetKey(obj)
     LastAcceptedCombatTargetName = GetTargetObjectName(obj)
@@ -2184,6 +2227,9 @@ function SetObjectTarget(obj)
         local targetOk, target = pcall(function() return Svc.Targets.Target end)
         if targetOk and target ~= nil then
             if IsSameGameObject(target, obj) then
+                if not IsActuallyHostileObjectSafe(target) then
+                    EchoCombatTargetDiagnostic("set_non_actual", target)
+                end
                 RememberAcceptedCombatTarget(obj)
                 return true
             end
@@ -2191,6 +2237,9 @@ function SetObjectTarget(obj)
                 and GetTargetObjectName(target) == GetTargetObjectName(obj)
             local changedFromEmpty = previousTarget == nil and IsHostileObjectSafe(target)
             if sameName or changedFromEmpty then
+                if not IsActuallyHostileObjectSafe(target) then
+                    EchoCombatTargetDiagnostic("set_non_actual", target)
+                end
                 RememberAcceptedCombatTarget(obj)
                 return true
             end
@@ -2207,12 +2256,18 @@ function SetObjectTarget(obj)
         local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
         if targetOk and currentTarget ~= nil then
             if IsSameGameObject(currentTarget, obj) then
+                if not IsActuallyHostileObjectSafe(currentTarget) then
+                    EchoCombatTargetDiagnostic("set_non_actual", currentTarget)
+                end
                 RememberAcceptedCombatTarget(obj)
                 return true
             end
             local sameName = GetTargetObjectName(currentTarget) ~= nil
                 and GetTargetObjectName(currentTarget) == GetTargetObjectName(obj)
             if sameName or (previousTarget == nil and IsHostileObjectSafe(currentTarget)) then
+                if not IsActuallyHostileObjectSafe(currentTarget) then
+                    EchoCombatTargetDiagnostic("set_non_actual", currentTarget)
+                end
                 RememberAcceptedCombatTarget(obj)
                 return true
             end
@@ -2228,6 +2283,9 @@ function TargetNpcIfSafe(npcName)
         or IsUnusableTargetName(npcName)
         or Svc.Condition[CharacterCondition.inCombat]
     then
+        if Svc.Condition[CharacterCondition.inCombat] then
+            EchoCombatTargetDiagnostic("npc_command:" .. tostring(npcName), Svc.Targets.Target)
+        end
         return false
     end
     return SafeYield("/target " .. tostring(npcName))
@@ -4955,7 +5013,7 @@ function FallbackBattleTargetOrReturnToFate()
     -- Never use the generic /battletarget fallback: it can select a non-enemy
     -- object or an enemy unrelated to the active FATE. Use the same guarded
     -- Combatant-only scan as the normal target acquisition path.
-    return TargetNearestAttackingEnemy()
+    return TargetNearestAttackingEnemy(true)
 end
 
 function TargetNearestAttackingEnemy(forceRecovery)
@@ -5012,6 +5070,26 @@ function TargetNearestAttackingEnemy(forceRecovery)
     end
     if bestObj ~= nil then
         return SetObjectTarget(bestObj)
+    end
+
+    if forceRecovery then
+        SafeYield("/battletarget")
+        yield("/wait 0.1")
+        local currentTarget = Svc.Targets.Target
+        if currentTarget ~= nil
+            and IsHostileObjectSafe(currentTarget)
+            and (IsActuallyHostileObjectSafe(currentTarget)
+                or IsObjectTargetingLocalPlayer(currentTarget))
+        then
+            RememberAcceptedCombatTarget(currentTarget)
+            return true
+        end
+        if currentTarget ~= nil then
+            ClearTarget()
+        end
+    end
+    if forceRecovery or Svc.Condition[CharacterCondition.inCombat] then
+        EchoCombatTargetDiagnostic("attacker_scan_none", nil)
     end
     return false
 end
@@ -8052,7 +8130,7 @@ function HandleUnexpectedCombat()
     -- targets whatever is trying to kill you
     if Svc.Targets.Target == nil then
         Dalamud.Log("[FATE] UnexpectedCombat: no target, attempting acquisition")
-        if not TargetNearestAttackingEnemy() then
+        if not TargetNearestAttackingEnemy(true) then
             FallbackBattleTargetOrReturnToFate()
             yield("/wait 0.3")
         end
@@ -11782,6 +11860,7 @@ function FateFarming:Run()
     UnusableTargetBlacklistActive         = false
     LastAcceptedCombatTargetKey           = nil
     LastAcceptedCombatTargetName          = nil
+    CombatTargetDiagnosticLastAt          = 0
     FateGroundPosCacheFateId              = nil
     FateGroundPosCacheRaw                 = nil
     FateGroundPosCacheSnapped             = nil
@@ -12505,6 +12584,7 @@ function FateFarming:Run()
                     and Svc.Targets.Target ~= nil
                     and not IsAllowedCombatTarget(Svc.Targets.Target)
                 then
+                    EchoCombatTargetDiagnostic("combat_non_enemy", Svc.Targets.Target)
                     BlacklistUnusableTarget(Svc.Targets.Target, "non-hostile target during combat")
                     ClearTarget()
                     if not (Svc.Condition[CharacterCondition.mounted]
