@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.63
+version: 3.1.64
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.64   修正: 木人/NPCを一度ターゲット設定してから解除していたため、
+                SetObjectTargetの実行前に非Hostile対象を拒否。
     -> 3.1.63   修正: 備蓄用の物資箱など、BattleNpc/SubKind/FateIdは一致するが
                 実HostileではないFATEオブジェクトを敵候補から除外。
     -> 3.1.62   修正: FATE中にスクリプト未承認のHostile対象を許可していたため、
@@ -2226,6 +2228,10 @@ function SetObjectTarget(obj)
         return false
     end
     if IsUnusableTarget(obj) then
+        return false
+    end
+    if not IsActuallyHostileObjectSafe(obj) then
+        EchoCombatTargetDiagnostic("candidate_rejected_non_actual", obj)
         return false
     end
 
