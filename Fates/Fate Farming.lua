@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.62
+version: 3.1.63
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.63   修正: 備蓄用の物資箱など、BattleNpc/SubKind/FateIdは一致するが
+                実HostileではないFATEオブジェクトを敵候補から除外。
     -> 3.1.62   修正: FATE中にスクリプト未承認のHostile対象を許可していたため、
                 NPCが一瞬ターゲットに残る問題を修正。
     -> 3.1.61   修正: 攻撃者候補を最寄り1体だけ試して失敗時に終了していたため、
@@ -2241,21 +2243,23 @@ function SetObjectTarget(obj)
         local targetOk, target = pcall(function() return Svc.Targets.Target end)
         if targetOk and target ~= nil then
             if IsSameGameObject(target, obj) then
-                if not IsActuallyHostileObjectSafe(target) then
-                    EchoCombatTargetDiagnostic("set_non_actual", target)
+                if IsActuallyHostileObjectSafe(target) then
+                    RememberAcceptedCombatTarget(obj)
+                    return true
                 end
-                RememberAcceptedCombatTarget(obj)
-                return true
+                EchoCombatTargetDiagnostic("set_non_actual", target)
+                pcall(function() Svc.Targets.Target = nil end)
             end
             local sameName = GetTargetObjectName(target) ~= nil
                 and GetTargetObjectName(target) == GetTargetObjectName(obj)
             local changedFromEmpty = previousTarget == nil and IsHostileObjectSafe(target)
             if sameName or changedFromEmpty then
-                if not IsActuallyHostileObjectSafe(target) then
-                    EchoCombatTargetDiagnostic("set_non_actual", target)
+                if IsActuallyHostileObjectSafe(target) then
+                    RememberAcceptedCombatTarget(obj)
+                    return true
                 end
-                RememberAcceptedCombatTarget(obj)
-                return true
+                EchoCombatTargetDiagnostic("set_non_actual", target)
+                pcall(function() Svc.Targets.Target = nil end)
             end
             pcall(function() Svc.Targets.Target = nil end)
         end
@@ -2270,20 +2274,22 @@ function SetObjectTarget(obj)
         local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
         if targetOk and currentTarget ~= nil then
             if IsSameGameObject(currentTarget, obj) then
-                if not IsActuallyHostileObjectSafe(currentTarget) then
-                    EchoCombatTargetDiagnostic("set_non_actual", currentTarget)
+                if IsActuallyHostileObjectSafe(currentTarget) then
+                    RememberAcceptedCombatTarget(obj)
+                    return true
                 end
-                RememberAcceptedCombatTarget(obj)
-                return true
+                EchoCombatTargetDiagnostic("set_non_actual", currentTarget)
+                pcall(function() Svc.Targets.Target = nil end)
             end
             local sameName = GetTargetObjectName(currentTarget) ~= nil
                 and GetTargetObjectName(currentTarget) == GetTargetObjectName(obj)
             if sameName or (previousTarget == nil and IsHostileObjectSafe(currentTarget)) then
-                if not IsActuallyHostileObjectSafe(currentTarget) then
-                    EchoCombatTargetDiagnostic("set_non_actual", currentTarget)
+                if IsActuallyHostileObjectSafe(currentTarget) then
+                    RememberAcceptedCombatTarget(obj)
+                    return true
                 end
-                RememberAcceptedCombatTarget(obj)
-                return true
+                EchoCombatTargetDiagnostic("set_non_actual", currentTarget)
+                pcall(function() Svc.Targets.Target = nil end)
             end
         end
         pcall(function() Svc.Targets.Target = nil end)
@@ -2594,7 +2600,7 @@ function GetFateEnemyScanEntries(playerPos)
         local obj = Svc.Objects[i]
         if obj ~= nil and obj.IsTargetable and not obj.IsDead and not IsUnusableTarget(obj) then
             local wrappedObj = EntityWrapper(obj)
-            if wrappedObj ~= nil and IsHostileObjectSafe(obj) then
+            if wrappedObj ~= nil and IsActuallyHostileObjectSafe(obj, wrappedObj) then
                 entries[#entries + 1] = {
                     obj = obj,
                     wrappedObj = wrappedObj,
@@ -5041,9 +5047,6 @@ function TargetNearestAttackingEnemy(forceRecovery)
     end
     local playerPos = player.Position
     local candidates = {}
-    local recoveryFallbackAllowed = forceRecovery == true
-        or CurrentFate == nil or CurrentFate.fateObject == nil
-        or not IsFateActive(CurrentFate.fateObject)
     local maxIndex = Svc.Objects.Length - 1
     for i = 0, maxIndex do
         local objOk, obj = pcall(function() return Svc.Objects[i] end)
@@ -5059,10 +5062,6 @@ function TargetNearestAttackingEnemy(forceRecovery)
                 local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
                 local structuralHostile = IsHostileObjectSafe(obj)
                 local hostile = IsActuallyHostileObjectSafe(obj, wrappedObj)
-                local structuralFallback = recoveryFallbackAllowed
-                    and structuralHostile
-                    and Svc.Condition[CharacterCondition.inCombat]
-                    and wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                 local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
                 local structuralAttacker = structuralHostile
                     and Svc.Condition[CharacterCondition.inCombat]
@@ -5071,7 +5070,7 @@ function TargetNearestAttackingEnemy(forceRecovery)
                     and wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                 engaged = wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                     and (targetingPlayer or combatFallback)
-                    and (hostile or structuralFallback or structuralAttacker)
+                    and (hostile or structuralAttacker)
             end
             if engaged then
                 local dist = DistanceBetweenFlat(playerPos, pos)
