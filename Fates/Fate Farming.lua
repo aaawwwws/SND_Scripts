@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.61
+version: 3.1.62
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.62   修正: FATE中にスクリプト未承認のHostile対象を許可していたため、
+                NPCが一瞬ターゲットに残る問題を修正。
     -> 3.1.61   修正: 攻撃者候補を最寄り1体だけ試して失敗時に終了していたため、
                 距離順に複数候補を順送りでターゲットするよう修正。
     -> 3.1.60   追加: 戦闘中のNPCターゲット原因を特定するTargetDiag /echoログを追加。
@@ -2059,6 +2061,16 @@ function IsAllowedCombatTarget(obj)
         return true
     end
 
+    -- While an active FATE is running, only targets selected by this script are
+    -- allowed. This prevents NPC interaction commands or external auto-target
+    -- changes from stealing the combat target, even if the object is a hostile
+    -- BattleNpc-shaped object.
+    if CurrentFate ~= nil and CurrentFate.fateObject ~= nil
+        and IsFateActive(CurrentFate.fateObject)
+    then
+        return false
+    end
+
     return IsActuallyHostileObjectSafe(obj)
 end
 
@@ -2287,6 +2299,7 @@ function TargetNpcIfSafe(npcName)
     then
         if Svc.Condition[CharacterCondition.inCombat] then
             EchoCombatTargetDiagnostic("npc_command:" .. tostring(npcName), Svc.Targets.Target)
+            ClearTarget()
         end
         return false
     end
