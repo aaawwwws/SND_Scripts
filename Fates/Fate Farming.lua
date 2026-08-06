@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.53
+version: 3.1.54
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.54   修正: Wrathの停止検知時にログだけで再ONしていなかったため、
+                FATE中に数秒攻撃が止まる問題を修正。
     -> 3.1.53   修正: Limsa Lominsa Lower DecksをLifestreamが解決できない環境で、
                 リムサ・ロミンサへテレポートできない問題を修正。
     -> 3.1.52   修正: FATE終了後の残敵スキャンでHostile判定に失敗すると、
@@ -7745,6 +7747,10 @@ function MaybeRearmWrathAuto()
     MarkWrathAutoPulse(now)
     if stalled then
         Dalamud.Log(string.format("[FATE] Wrath keepalive observed stall: no cast for %.1fs.", sinceNoCast))
+        SafeYield("/wrath auto on")
+        WrathAutoEnabled = true
+        MarkWrathAutoPulse(now)
+        Dalamud.Log("[FATE] Wrath keepalive re-enabled auto rotation.")
     end
 end
 
@@ -7806,6 +7812,13 @@ function TurnOnCombatMods(rotationMode)
 end
 
 function TurnOffCombatMods(reason)
+    if CurrentFate ~= nil and CurrentFate.fateObject ~= nil
+        and IsFateActive(CurrentFate.fateObject)
+        and Svc.Condition[CharacterCondition.inCombat]
+    then
+        Dalamud.Log("[FATE] Ignoring combat-mod shutdown during active FATE combat.")
+        return
+    end
     local reasonText = ""
     if reason ~= nil and tostring(reason) ~= "" then
         reasonText = " (" .. tostring(reason) .. ")"
