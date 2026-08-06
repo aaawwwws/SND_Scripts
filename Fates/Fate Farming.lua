@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.65
+version: 3.1.66
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.66   修正: FATE後の/battletargetがactual=falseの環境差で解除され、
+                選択だけで実ターゲットにならない問題を修正。
     -> 3.1.65   修正: FATE後のFateId=0残敵がHostile判定の環境差で候補から
                 除外されるため、復旧スキャン時のみ戦闘中Combatantを許可。
     -> 3.1.64   修正: 木人/NPCを一度ターゲット設定してから解除していたため、
@@ -5120,7 +5122,8 @@ function TargetNearestAttackingEnemy(forceRecovery)
         if currentTarget ~= nil
             and IsHostileObjectSafe(currentTarget)
             and (IsActuallyHostileObjectSafe(currentTarget)
-                or IsObjectTargetingLocalPlayer(currentTarget))
+                or IsObjectTargetingLocalPlayer(currentTarget)
+                or (Svc.Condition[CharacterCondition.inCombat] and forceRecovery))
         then
             RememberAcceptedCombatTarget(currentTarget)
             return true
