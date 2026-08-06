@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.67
+version: 3.1.68
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.68   修正: 敵が自分をターゲットしていてもIsInCombatの反映前に
+                候補から除外していたため、攻撃者検出を両条件のORに統合。
     -> 3.1.67   修正: FATE完了後の長い後処理待機中に攻撃されても、待機が終わる
                 まで攻撃者をターゲットしない問題を修正。
     -> 3.1.66   修正: FATE後の/battletargetがactual=falseの環境差で解除され、
@@ -2245,7 +2247,9 @@ function SetObjectTarget(obj, allowRecoveryFallback)
         return false
     end
     local recoveryTargetAllowed = allowRecoveryFallback == true
-        and IsRecoveryCombatantObject(obj)
+        and IsHostileObjectSafe(obj)
+        and Svc.Condition[CharacterCondition.inCombat]
+        and (IsRecoveryCombatantObject(obj) or IsObjectTargetingLocalPlayer(obj))
     if not IsActuallyHostileObjectSafe(obj) and not recoveryTargetAllowed then
         EchoCombatTargetDiagnostic("candidate_rejected_non_actual", obj)
         return false
@@ -2265,7 +2269,9 @@ function SetObjectTarget(obj, allowRecoveryFallback)
         local targetOk, target = pcall(function() return Svc.Targets.Target end)
         if targetOk and target ~= nil then
             local acceptedRecoveryTarget = allowRecoveryFallback == true
-                and IsRecoveryCombatantObject(target)
+                and IsHostileObjectSafe(target)
+                and Svc.Condition[CharacterCondition.inCombat]
+                and (IsRecoveryCombatantObject(target) or IsObjectTargetingLocalPlayer(target))
             if IsSameGameObject(target, obj) then
                 if IsActuallyHostileObjectSafe(target) or acceptedRecoveryTarget then
                     RememberAcceptedCombatTarget(obj)
@@ -2298,7 +2304,9 @@ function SetObjectTarget(obj, allowRecoveryFallback)
         local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
         if targetOk and currentTarget ~= nil then
             local acceptedRecoveryTarget = allowRecoveryFallback == true
-                and IsRecoveryCombatantObject(currentTarget)
+                and IsHostileObjectSafe(currentTarget)
+                and Svc.Condition[CharacterCondition.inCombat]
+                and (IsRecoveryCombatantObject(currentTarget) or IsObjectTargetingLocalPlayer(currentTarget))
             if IsSameGameObject(currentTarget, obj) then
                 if IsActuallyHostileObjectSafe(currentTarget) or acceptedRecoveryTarget then
                     RememberAcceptedCombatTarget(obj)
@@ -5099,8 +5107,8 @@ function TargetNearestAttackingEnemy(forceRecovery)
                     and targetingPlayer
                 local combatFallback = Svc.Condition[CharacterCondition.inCombat]
                     and wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
-                engaged = wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
-                    and (targetingPlayer or combatFallback)
+                engaged = wrappedOk and wrappedObj ~= nil
+                    and (targetingPlayer or wrappedObj.IsInCombat == true)
                     and (hostile or structuralFallback or structuralAttacker)
             end
             if engaged then
@@ -5170,7 +5178,8 @@ function TargetNearestEngagedEnemy(maxDist)
             local allowedTarget = targetingPlayer or allowedCombatFallback
             if allowedTarget and (actualHostile or (structuralHostile and targetingPlayer))
                 and (not activeFate or currentFateTarget or targetingPlayer)
-                and wrappedObj ~= nil and wrappedObj.IsInCombat == true
+                and wrappedObj ~= nil
+                and (wrappedObj.IsInCombat == true or targetingPlayer)
             then
                 local dist = DistanceBetweenFlat(playerPos, obj.Position)
                 if dist <= range then
