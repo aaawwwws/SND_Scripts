@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.64
+version: 3.1.65
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.65   修正: FATE後のFateId=0残敵がHostile判定の環境差で候補から
+                除外されるため、復旧スキャン時のみ戦闘中Combatantを許可。
     -> 3.1.64   修正: 木人/NPCを一度ターゲット設定してから解除していたため、
                 SetObjectTargetの実行前に非Hostile対象を拒否。
     -> 3.1.63   修正: 備蓄用の物資箱など、BattleNpc/SubKind/FateIdは一致するが
@@ -2056,6 +2058,14 @@ function IsActuallyHostileObjectSafe(obj, wrappedObj)
     return ok and result == true
 end
 
+function IsRecoveryCombatantObject(obj)
+    if not IsHostileObjectSafe(obj) or not Svc.Condition[CharacterCondition.inCombat] then
+        return false
+    end
+    local ok, wrappedObj = pcall(function() return EntityWrapper(obj) end)
+    return ok and wrappedObj ~= nil and wrappedObj.IsInCombat == true
+end
+
 function IsAllowedCombatTarget(obj)
     if not IsHostileObjectSafe(obj) then
         return false
@@ -2223,14 +2233,16 @@ function BlacklistUnusableTarget(obj, reason)
     return
 end
 
-function SetObjectTarget(obj)
+function SetObjectTarget(obj, allowRecoveryFallback)
     if obj == nil then
         return false
     end
     if IsUnusableTarget(obj) then
         return false
     end
-    if not IsActuallyHostileObjectSafe(obj) then
+    local recoveryTargetAllowed = allowRecoveryFallback == true
+        and IsRecoveryCombatantObject(obj)
+    if not IsActuallyHostileObjectSafe(obj) and not recoveryTargetAllowed then
         EchoCombatTargetDiagnostic("candidate_rejected_non_actual", obj)
         return false
     end
@@ -2248,8 +2260,10 @@ function SetObjectTarget(obj)
         yield("/wait 0.1")
         local targetOk, target = pcall(function() return Svc.Targets.Target end)
         if targetOk and target ~= nil then
+            local acceptedRecoveryTarget = allowRecoveryFallback == true
+                and IsRecoveryCombatantObject(target)
             if IsSameGameObject(target, obj) then
-                if IsActuallyHostileObjectSafe(target) then
+                if IsActuallyHostileObjectSafe(target) or acceptedRecoveryTarget then
                     RememberAcceptedCombatTarget(obj)
                     return true
                 end
@@ -2260,7 +2274,7 @@ function SetObjectTarget(obj)
                 and GetTargetObjectName(target) == GetTargetObjectName(obj)
             local changedFromEmpty = previousTarget == nil and IsHostileObjectSafe(target)
             if sameName or changedFromEmpty then
-                if IsActuallyHostileObjectSafe(target) then
+                if IsActuallyHostileObjectSafe(target) or acceptedRecoveryTarget then
                     RememberAcceptedCombatTarget(obj)
                     return true
                 end
@@ -2279,8 +2293,10 @@ function SetObjectTarget(obj)
         yield("/wait 0.1")
         local targetOk, currentTarget = pcall(function() return Svc.Targets.Target end)
         if targetOk and currentTarget ~= nil then
+            local acceptedRecoveryTarget = allowRecoveryFallback == true
+                and IsRecoveryCombatantObject(currentTarget)
             if IsSameGameObject(currentTarget, obj) then
-                if IsActuallyHostileObjectSafe(currentTarget) then
+                if IsActuallyHostileObjectSafe(currentTarget) or acceptedRecoveryTarget then
                     RememberAcceptedCombatTarget(obj)
                     return true
                 end
@@ -2290,7 +2306,7 @@ function SetObjectTarget(obj)
             local sameName = GetTargetObjectName(currentTarget) ~= nil
                 and GetTargetObjectName(currentTarget) == GetTargetObjectName(obj)
             if sameName or (previousTarget == nil and IsHostileObjectSafe(currentTarget)) then
-                if IsActuallyHostileObjectSafe(currentTarget) then
+                if IsActuallyHostileObjectSafe(currentTarget) or acceptedRecoveryTarget then
                     RememberAcceptedCombatTarget(obj)
                     return true
                 end
@@ -5053,6 +5069,9 @@ function TargetNearestAttackingEnemy(forceRecovery)
     end
     local playerPos = player.Position
     local candidates = {}
+    local recoveryFallbackAllowed = forceRecovery == true
+        or CurrentFate == nil or CurrentFate.fateObject == nil
+        or not IsFateActive(CurrentFate.fateObject)
     local maxIndex = Svc.Objects.Length - 1
     for i = 0, maxIndex do
         local objOk, obj = pcall(function() return Svc.Objects[i] end)
@@ -5068,6 +5087,8 @@ function TargetNearestAttackingEnemy(forceRecovery)
                 local wrappedOk, wrappedObj = pcall(function() return EntityWrapper(obj) end)
                 local structuralHostile = IsHostileObjectSafe(obj)
                 local hostile = IsActuallyHostileObjectSafe(obj, wrappedObj)
+                local structuralFallback = recoveryFallbackAllowed
+                    and IsRecoveryCombatantObject(obj)
                 local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
                 local structuralAttacker = structuralHostile
                     and Svc.Condition[CharacterCondition.inCombat]
@@ -5076,7 +5097,7 @@ function TargetNearestAttackingEnemy(forceRecovery)
                     and wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                 engaged = wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
                     and (targetingPlayer or combatFallback)
-                    and (hostile or structuralAttacker)
+                    and (hostile or structuralFallback or structuralAttacker)
             end
             if engaged then
                 local dist = DistanceBetweenFlat(playerPos, pos)
@@ -5087,7 +5108,7 @@ function TargetNearestAttackingEnemy(forceRecovery)
 
     table.sort(candidates, function(a, b) return a.dist < b.dist end)
     for _, candidate in ipairs(candidates) do
-        if SetObjectTarget(candidate.obj) then
+        if SetObjectTarget(candidate.obj, forceRecovery == true) then
             return true
         end
     end
