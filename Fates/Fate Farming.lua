@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.69
+version: 3.1.70
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.70   改善: FATE終了直後に即ターゲットせず、短い待機後に戦闘中の
+                攻撃者を取得する。マウント/テレポート失敗時の停止を防止。
     -> 3.1.69   修正: Forlornが通常Hostile判定で除外され、優先ターゲットに
                 ならない場合がある問題を修正。
     -> 3.1.68   修正: 敵が自分をターゲットしていてもIsInCombatの反映前に
@@ -8148,6 +8150,16 @@ function HandleUnexpectedCombat()
     TurnOnCombatMods("manual")
     yield("/wait 0.3")
 
+    local postFateElapsed = os.clock() - (LastFateEndTime or 0)
+    if Svc.Condition[CharacterCondition.inCombat]
+        and Svc.Targets.Target == nil
+        and (LastFateEndTime or 0) > 0
+        and postFateElapsed < (PostFateCombatTargetDelaySeconds or 1.5)
+    then
+        yield("/wait 0.25")
+        return
+    end
+
     -- A FATE/NPC interaction can leave a non-hostile target selected when the
     -- state changes into unexpected combat. Remove it before looking for the
     -- actual attacker; otherwise the acquisition branch below is skipped.
@@ -12665,6 +12677,7 @@ function FateFarming:Run()
                     and not Svc.Condition[CharacterCondition.mounted]
                     and not Svc.Condition[CharacterCondition.flying]
                     and (LastFateEndTime or 0) > 0
+                    and os.clock() - (LastFateEndTime or 0) >= (PostFateCombatTargetDelaySeconds or 1.5)
                     and os.clock() - (LastFateEndTime or 0) <= 30
                 if postFateCombat then
                     TurnOnCombatMods("post-FATE combat recovery")
