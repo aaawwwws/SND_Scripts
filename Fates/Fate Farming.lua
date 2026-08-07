@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.70
+version: 3.1.71
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -327,6 +327,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.71   修正: FATE中は記憶済みターゲットでもactual=falseのNPC/箱を
+                維持できていたため、実Hostileを必須化。
     -> 3.1.70   改善: FATE終了直後に即ターゲットせず、短い待機後に戦闘中の
                 攻撃者を取得する。マウント/テレポート失敗時の停止を防止。
     -> 3.1.69   修正: Forlornが通常Hostile判定で除外され、優先ターゲットに
@@ -2081,21 +2083,17 @@ function IsAllowedCombatTarget(obj)
         return false
     end
 
-    if IsRememberedCombatTarget(obj) then
-        return true
-    end
-
     -- While an active FATE is running, only targets selected by this script are
     -- allowed. This prevents NPC interaction commands or external auto-target
     -- changes from stealing the combat target, even if the object is a hostile
     -- BattleNpc-shaped object.
-    if CurrentFate ~= nil and CurrentFate.fateObject ~= nil
+    local activeFate = CurrentFate ~= nil and CurrentFate.fateObject ~= nil
         and IsFateActive(CurrentFate.fateObject)
-    then
-        return false
+    if activeFate then
+        return IsActuallyHostileObjectSafe(obj) and IsRememberedCombatTarget(obj)
     end
 
-    return IsActuallyHostileObjectSafe(obj)
+    return IsRememberedCombatTarget(obj) or IsActuallyHostileObjectSafe(obj)
 end
 
 function IsSameGameObject(first, second)
@@ -5133,6 +5131,7 @@ function TargetNearestAttackingEnemy(forceRecovery)
                 local targetingPlayer = IsObjectTargetingLocalPlayer(obj)
                 local structuralAttacker = structuralHostile
                     and Svc.Condition[CharacterCondition.inCombat]
+                    and recoveryFallbackAllowed
                     and targetingPlayer
                 local combatFallback = Svc.Condition[CharacterCondition.inCombat]
                     and wrappedOk and wrappedObj ~= nil and wrappedObj.IsInCombat == true
@@ -5205,7 +5204,9 @@ function TargetNearestEngagedEnemy(maxDist)
                 and tonumber(wrappedObj.FateId) == tonumber(CurrentFate.fateId)
             local allowedCombatFallback = combatFallback and (not activeFate or currentFateTarget)
             local allowedTarget = targetingPlayer or allowedCombatFallback
-            if allowedTarget and (actualHostile or (structuralHostile and targetingPlayer))
+            local activeTargetAllowed = actualHostile
+                or ((not activeFate) and structuralHostile and targetingPlayer)
+            if allowedTarget and activeTargetAllowed
                 and (not activeFate or currentFateTarget or targetingPlayer)
                 and wrappedObj ~= nil
                 and (wrappedObj.IsInCombat == true or targetingPlayer)
